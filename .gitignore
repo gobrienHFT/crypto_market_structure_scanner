@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+*.lnk
+__pycache__/
+*.py[cod]
+.pytest_cache/
+logs/
+runtime_logs/

@@ -8,8 +8,11 @@ from ldo_roe_loop_bot import (
     DEFAULT_MAKER_FEE_RATE,
     FundingSnapshot,
     PlannedTrade,
+    RuntimeStats,
     SymbolRules,
+    TradeRecord,
     adverse_volatility_reason,
+    apply_scan_profile,
     closed_hour_change_pct,
     directional_volatility_from_klines,
     entry_moved_away,
@@ -25,12 +28,14 @@ from ldo_roe_loop_bot import (
     liquidity_metrics,
     market_flow_direction,
     margin_utilization_pct,
+    minimum_available_balance_for_symbol,
     minimum_viable_take_profit_price,
     plan_trade,
     position_leverage,
     post_only_close_price,
     quote_volume_windows,
     recent_quote_volume_from_klines,
+    recent_range_pct_from_klines,
     realized_equity_profit_ok,
     realized_trade_profit,
     realized_trade_profit_ok,
@@ -747,7 +752,7 @@ def test_auto_trade_plan_falls_back_when_btc_quantity_is_below_minimum() -> None
     symbol, _, _, plan = selected
     assert symbol == "ETHUSDT"
     assert plan.symbol == "ETHUSDT"
-    assert client.leverage_changes == ["BTCUSDT", "ETHUSDT"]
+    assert client.leverage_changes == ["ETHUSDT"]
 
 
 def test_auto_trade_plan_uses_doge_with_leverage_bump_for_tiny_balance() -> None:
@@ -886,6 +891,96 @@ def test_effective_entry_leverage_returns_base_when_fixed_symbol_is_viable() -> 
 def test_position_leverage_prefers_exchange_value() -> None:
     assert position_leverage({"leverage": "7"}, 3) == 7
     assert position_leverage({"leverage": "0"}, 3) == 3
+
+
+def test_minimum_available_balance_for_symbol_uses_maximum_exchange_requirement() -> None:
+    rules = SymbolRules(
+        symbol="BSBUSDT",
+        tick_size=Decimal("0.00001"),
+        qty_step=Decimal("1"),
+        min_qty=Decimal("1"),
+        min_notional=Decimal("5"),
+    )
+
+    needed = minimum_available_balance_for_symbol(
+        rules=rules,
+        mark_price=Decimal("0.44"),
+        allocation_pct=Decimal("0.99"),
+        fee_buffer_pct=Decimal("0.002"),
+        leverage=125,
+    )
+
+    assert needed > Decimal("0.04")
+    assert needed < Decimal("0.041")
+
+
+def test_recent_range_pct_from_klines() -> None:
+    klines = [
+        [0, "1.00", "1.10", "0.90", "1.00"],
+        [0, "1.00", "1.20", "0.95", "1.10"],
+    ]
+
+    assert recent_range_pct_from_klines(klines) == Decimal("0.2727272727272727272727272727")
+
+
+def test_runtime_stats_writes_trade_and_snapshot_csv(tmp_path) -> None:
+    stats = RuntimeStats()
+    stats.configure_persistence(
+        stats_csv=tmp_path / "stats.csv",
+        trades_csv=tmp_path / "trades.csv",
+        snapshot_interval_seconds=1,
+    )
+    stats.record_trade(
+        TradeRecord(
+            symbol="BSBUSDT",
+            direction="LONG",
+            outcome="take_profit",
+            started_at=1,
+            ended_at=2,
+            duration_seconds=1,
+            equity_before=Decimal("1"),
+            equity_after=Decimal("1.01"),
+            equity_delta=Decimal("0.01"),
+            pnl=Decimal("0.01"),
+            pnl_source="income",
+            realized_pnl=Decimal("0.02"),
+            commission=Decimal("-0.01"),
+            funding_fee=Decimal("0"),
+            income_net=Decimal("0.01"),
+        )
+    )
+
+    assert "session_pnl" in (tmp_path / "stats.csv").read_text()
+    assert "BSBUSDT" in (tmp_path / "trades.csv").read_text()
+
+
+def test_apply_scan_profile_all_does_not_restore_default_min_profit_allowlist() -> None:
+    args = SimpleNamespace(
+        scan_profile="liquidity",
+        take_profit_mode="min-viable",
+        scan_symbols="ALL",
+        scan_min_volume_multiple=Decimal("2"),
+        scan_min_recent_volume_ratio=Decimal("1"),
+        scan_min_quote_volume_usdt=Decimal("1000000"),
+        scan_max_spread_pct=Decimal("0.20"),
+        scan_min_depth_1pct_usdt=Decimal("2500"),
+        scan_min_funding_rate=Decimal("0"),
+        scan_allow_against_momentum=False,
+        safety_funding_buffer_seconds=300.0,
+        safety_recent_vol_minutes=10,
+        safety_min_recent_quote_volume_usdt=Decimal("50000"),
+        safety_min_recent_volatility_pct=Decimal("0.50"),
+        safety_max_adverse_vol_ratio=Decimal("1.20"),
+        safety_liquidity_window_seconds=30.0,
+        safety_liquidity_samples=4,
+        max_same_symbol_streak=2,
+        green_exit_after_seconds=600.0,
+        max_hold_seconds=3600.0,
+    )
+
+    apply_scan_profile(args)
+
+    assert args._scan_symbol_allowlist == set()
 
 
 def test_scan_auto_symbol_prefers_highest_positive_funding_after_filters() -> None:

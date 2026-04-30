@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import builtins
+import csv
 import os
 import time
 from collections import deque
@@ -145,15 +146,36 @@ class RuntimeStats:
         self.start_equity: Decimal | None = None
         self.current_equity: Decimal | None = None
         self.trades: list[TradeRecord] = []
+        self.stats_csv: Path | None = None
+        self.trades_csv: Path | None = None
+        self.snapshot_interval_seconds = 30.0
+        self._last_snapshot_at = 0.0
+
+    def configure_persistence(
+        self,
+        *,
+        stats_csv: Path | None,
+        trades_csv: Path | None,
+        snapshot_interval_seconds: float,
+    ) -> None:
+        self.stats_csv = stats_csv
+        self.trades_csv = trades_csv
+        self.snapshot_interval_seconds = max(1.0, float(snapshot_interval_seconds))
+        for path in (self.stats_csv, self.trades_csv):
+            if path is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
 
     def observe_equity(self, equity: Decimal) -> None:
         if self.start_equity is None:
             self.start_equity = equity
         self.current_equity = equity
+        self.write_snapshot_if_due()
 
     def record_trade(self, record: TradeRecord) -> None:
         self.observe_equity(record.equity_after)
         self.trades.append(record)
+        self.append_trade_csv(record)
+        self.write_snapshot(force=True)
 
     def _window(self, seconds: float) -> list[TradeRecord]:
         cutoff = time.time() - seconds
@@ -176,41 +198,144 @@ class RuntimeStats:
     def _win_count(records: list[TradeRecord]) -> int:
         return sum(1 for record in records if record.pnl > 0)
 
-    def lines(self) -> list[str]:
+    @staticmethod
+    def _decimal_csv(value: Decimal) -> str:
+        return format(value, "f")
+
+    @staticmethod
+    def _duration_average(records: list[TradeRecord]) -> Decimal:
+        if not records:
+            return Decimal("0")
+        total = sum((Decimal(str(record.duration_seconds)) for record in records), Decimal("0"))
+        return total / Decimal(len(records))
+
+    def summary_metrics(self) -> dict[str, Any]:
         now = time.time()
         uptime_seconds = max(1.0, now - self.started_at)
         last_hour = self._window(3600)
         last_day = self._window(86400)
         total_pnl = self._sum_delta(self.trades)
-        hourly_pnl = self._sum_delta(last_hour)
-        daily_pnl = self._sum_delta(last_day)
-        projected_daily = (total_pnl / Decimal(str(uptime_seconds))) * Decimal("86400")
-        session_trades_per_hour = (Decimal(len(self.trades)) / Decimal(str(uptime_seconds))) * Decimal("3600")
-        wins = self._win_count(self.trades)
-        losses = sum(1 for record in self.trades if record.pnl < 0)
-        flat = len(self.trades) - wins - losses
-        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at))
-        uptime = _format_duration(uptime_seconds)
+        wins = [record for record in self.trades if record.pnl > 0]
+        losses = [record for record in self.trades if record.pnl < 0]
+        flat = len(self.trades) - len(wins) - len(losses)
+        gross_profit = self._sum_delta(wins)
+        gross_loss = abs(self._sum_delta(losses))
+        win_rate = Decimal(len(wins)) / Decimal(len(self.trades)) if self.trades else Decimal("0")
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else Decimal("0")
+        best_trade = max((record.pnl for record in self.trades), default=Decimal("0"))
+        worst_trade = min((record.pnl for record in self.trades), default=Decimal("0"))
         start_equity = self.start_equity if self.start_equity is not None else Decimal("0")
         current_equity = self.current_equity if self.current_equity is not None else start_equity
+        projected_daily = (total_pnl / Decimal(str(uptime_seconds))) * Decimal("86400")
+        trades_per_hour = (Decimal(len(self.trades)) / Decimal(str(uptime_seconds))) * Decimal("3600")
+        return {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at)),
+            "uptime_seconds": Decimal(str(uptime_seconds)),
+            "start_equity": start_equity,
+            "current_equity": current_equity,
+            "session_equity_delta": current_equity - start_equity,
+            "closed_trades": len(self.trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "flat": flat,
+            "win_rate": win_rate,
+            "session_pnl": total_pnl,
+            "pnl_1h": self._sum_delta(last_hour),
+            "pnl_24h": self._sum_delta(last_day),
+            "projected_daily_pnl": projected_daily,
+            "avg_profit_per_trade": self._average_delta(self.trades),
+            "avg_win": self._average_delta(wins),
+            "avg_loss": self._average_delta(losses),
+            "profit_factor": profit_factor,
+            "best_trade": best_trade,
+            "worst_trade": worst_trade,
+            "avg_duration_seconds": self._duration_average(self.trades),
+            "trades_last_1h": len(last_hour),
+            "trades_per_hour": trades_per_hour,
+        }
+
+    def write_snapshot_if_due(self) -> None:
+        if self.stats_csv is None:
+            return
+        now = time.monotonic()
+        if now - self._last_snapshot_at >= self.snapshot_interval_seconds:
+            self.write_snapshot(force=True)
+
+    def write_snapshot(self, *, force: bool = False) -> None:
+        if self.stats_csv is None:
+            return
+        if not force and time.monotonic() - self._last_snapshot_at < self.snapshot_interval_seconds:
+            return
+        row = self.summary_metrics()
+        self._append_csv(self.stats_csv, row)
+        self._last_snapshot_at = time.monotonic()
+
+    def append_trade_csv(self, record: TradeRecord) -> None:
+        if self.trades_csv is None:
+            return
+        self._append_csv(
+            self.trades_csv,
+            {
+                "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.started_at)),
+                "ended": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.ended_at)),
+                "symbol": record.symbol,
+                "direction": record.direction,
+                "outcome": record.outcome,
+                "duration_seconds": Decimal(str(record.duration_seconds)),
+                "equity_before": record.equity_before,
+                "equity_after": record.equity_after,
+                "equity_delta": record.equity_delta,
+                "pnl": record.pnl,
+                "pnl_source": record.pnl_source,
+                "realized_pnl": record.realized_pnl,
+                "commission": record.commission,
+                "funding_fee": record.funding_fee,
+                "income_net": record.income_net,
+            },
+        )
+
+    def _append_csv(self, path: Path, row: dict[str, Any]) -> None:
+        serialised = {
+            key: self._decimal_csv(value) if isinstance(value, Decimal) else value
+            for key, value in row.items()
+        }
+        write_header = not path.exists() or path.stat().st_size == 0
+        with path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(serialised.keys()))
+            if write_header:
+                writer.writeheader()
+            writer.writerow(serialised)
+
+    def lines(self) -> list[str]:
+        summary = self.summary_metrics()
+        uptime = _format_duration(float(summary["uptime_seconds"]))
 
         lines = [
             "PNL ANALYSIS - press D for main log",
             "",
-            f"Started: {started}",
+            f"Started: {summary['started']}",
             f"Uptime: {uptime}",
-            f"Start equity: {_format_decimal(start_equity)} USDT",
-            f"Current equity: {_format_decimal(current_equity)} USDT",
-            f"Session equity delta: {_format_decimal(current_equity - start_equity)} USDT",
+            f"Start equity: {_format_decimal(summary['start_equity'])} USDT",
+            f"Current equity: {_format_decimal(summary['current_equity'])} USDT",
+            f"Session equity delta: {_format_decimal(summary['session_equity_delta'])} USDT",
             "",
-            f"Closed trades: {len(self.trades)} total, {wins} win, {losses} loss, {flat} flat",
-            f"Session PnL: {_format_decimal(total_pnl)} USDT",
-            f"Last 1h PnL: {_format_decimal(hourly_pnl)} USDT",
-            f"Last 24h PnL: {_format_decimal(daily_pnl)} USDT",
-            f"Projected daily PnL at current session pace: {_format_decimal(projected_daily)} USDT",
-            f"Avg profit/trade: {_format_decimal(self._average_delta(self.trades))} USDT",
-            f"Trades last 1h: {len(last_hour)}",
-            f"Trades/hour, session avg: {_format_decimal(session_trades_per_hour)}",
+            (
+                f"Closed trades: {summary['closed_trades']} total, {summary['wins']} win, "
+                f"{summary['losses']} loss, {summary['flat']} flat"
+            ),
+            f"Win rate: {_format_decimal(summary['win_rate'] * Decimal('100'))}%",
+            f"Session PnL: {_format_decimal(summary['session_pnl'])} USDT",
+            f"Last 1h PnL: {_format_decimal(summary['pnl_1h'])} USDT",
+            f"Last 24h PnL: {_format_decimal(summary['pnl_24h'])} USDT",
+            f"Projected daily PnL at current session pace: {_format_decimal(summary['projected_daily_pnl'])} USDT",
+            f"Avg profit/trade: {_format_decimal(summary['avg_profit_per_trade'])} USDT",
+            f"Avg win/loss: {_format_decimal(summary['avg_win'])} / {_format_decimal(summary['avg_loss'])} USDT",
+            f"Profit factor: {_format_decimal(summary['profit_factor'])}",
+            f"Best/worst trade: {_format_decimal(summary['best_trade'])} / {_format_decimal(summary['worst_trade'])} USDT",
+            f"Avg duration: {_format_duration(float(summary['avg_duration_seconds']))}",
+            f"Trades last 1h: {summary['trades_last_1h']}",
+            f"Trades/hour, session avg: {_format_decimal(summary['trades_per_hour'])}",
         ]
 
         if self.trades:
@@ -359,6 +484,8 @@ class ConsoleView:
         if throttle and not force and now - self._last_render_at < 1.0:
             return
         self._last_render_at = now
+        if force:
+            self.stats.write_snapshot(force=True)
         os.system("cls" if os.name == "nt" else "clear")
         for line in self.stats.lines():
             _RAW_PRINT(line)
@@ -1392,6 +1519,22 @@ def planned_quantity_and_notional(
     return quantity, quantity * mark_price
 
 
+def minimum_available_balance_for_symbol(
+    *,
+    rules: SymbolRules,
+    mark_price: Decimal,
+    allocation_pct: Decimal,
+    fee_buffer_pct: Decimal,
+    leverage: int,
+) -> Decimal:
+    denominator = allocation_pct * (Decimal("1") - fee_buffer_pct) * Decimal(max(1, leverage))
+    if denominator <= 0:
+        return Decimal("0")
+    min_qty_notional = rules.min_qty * mark_price
+    required_notional = max(rules.min_notional, min_qty_notional)
+    return required_notional / denominator
+
+
 def leverage_for_exchange_minimums(
     *,
     rules: SymbolRules,
@@ -1416,6 +1559,49 @@ def leverage_for_exchange_minimums(
     return int(base_leverage)
 
 
+def recent_range_pct_from_klines(klines: list[list[Any]]) -> Decimal:
+    highs: list[Decimal] = []
+    lows: list[Decimal] = []
+    closes: list[Decimal] = []
+    for row in klines:
+        if len(row) < 5:
+            continue
+        highs.append(_decimal(row[2]))
+        lows.append(_decimal(row[3]))
+        closes.append(_decimal(row[4]))
+    if not highs or not lows or not closes or closes[-1] <= 0:
+        return Decimal("0")
+    return ((max(highs) - min(lows)) / closes[-1]).copy_abs()
+
+
+def volatility_adjusted_leverage_cap(
+    client: BinanceFuturesPublic,
+    symbol: str,
+    *,
+    args: argparse.Namespace,
+) -> int:
+    max_leverage = int(getattr(args, "max_min_notional_leverage", args.leverage))
+    if not getattr(args, "volatility_adjusted_leverage", False):
+        return max_leverage
+    minutes = max(2, int(getattr(args, "volatility_window_minutes", 15)))
+    try:
+        range_pct = recent_range_pct_from_klines(client.klines(symbol, interval="1m", limit=minutes))
+    except Exception as exc:
+        print(f"Volatility leverage check unavailable for {symbol}: {exc}. Using max {max_leverage}x.")
+        return max_leverage
+    if range_pct <= 0:
+        return max_leverage
+    risk_budget = getattr(args, "volatility_roe_budget", Decimal("0.12"))
+    raw_cap = int((risk_budget / range_pct).to_integral_value(rounding=ROUND_FLOOR))
+    cap = max(1, min(max_leverage, raw_cap))
+    if cap < max_leverage:
+        print(
+            f"Volatility cap for {symbol}: recent {minutes}m range "
+            f"{_format_decimal(range_pct * Decimal('100'))}% -> max {cap}x."
+        )
+    return cap
+
+
 def effective_entry_leverage(
     *,
     symbol: str,
@@ -1424,11 +1610,13 @@ def effective_entry_leverage(
     available_balance: Decimal,
     args: argparse.Namespace,
     auto_symbol: bool,
+    max_leverage: int | None = None,
 ) -> int:
     base_leverage = int(args.leverage)
     if not auto_symbol and not getattr(args, "adaptive_min_notional_leverage", False):
         return base_leverage
 
+    leverage_ceiling = max_leverage if max_leverage is not None else getattr(args, "max_min_notional_leverage", base_leverage)
     effective_leverage = leverage_for_exchange_minimums(
         rules=rules,
         mark_price=mark_price,
@@ -1436,12 +1624,33 @@ def effective_entry_leverage(
         allocation_pct=args.allocation_pct,
         fee_buffer_pct=args.fee_buffer_pct,
         base_leverage=base_leverage,
-        max_leverage=getattr(args, "max_min_notional_leverage", base_leverage),
+        max_leverage=leverage_ceiling,
     )
     if effective_leverage > base_leverage:
         print(
             f"Bumping {symbol.upper()} leverage from {base_leverage}x to {effective_leverage}x "
             "for this entry so available balance can satisfy exchange minimum size."
+        )
+    quantity, notional = planned_quantity_and_notional(
+        rules=rules,
+        mark_price=mark_price,
+        available_balance=available_balance,
+        allocation_pct=args.allocation_pct,
+        fee_buffer_pct=args.fee_buffer_pct,
+        leverage=effective_leverage,
+    )
+    if quantity < rules.min_qty or notional < rules.min_notional:
+        needed = minimum_available_balance_for_symbol(
+            rules=rules,
+            mark_price=mark_price,
+            allocation_pct=args.allocation_pct,
+            fee_buffer_pct=args.fee_buffer_pct,
+            leverage=max(1, int(leverage_ceiling)),
+        )
+        print(
+            f"{symbol.upper()} is not live-tradable at current equity: needs about "
+            f"{_format_decimal(needed)} USDT available at {int(leverage_ceiling)}x "
+            "to satisfy exchange minimum size."
         )
     return effective_leverage
 
@@ -2422,6 +2631,7 @@ def select_auto_trade_plan(
                 direction=direction,
                 rules=rules,
             )
+            leverage_ceiling = volatility_adjusted_leverage_cap(client, symbol, args=args)
             effective_leverage = effective_entry_leverage(
                 symbol=symbol,
                 rules=rules,
@@ -2429,9 +2639,8 @@ def select_auto_trade_plan(
                 available_balance=available,
                 args=args,
                 auto_symbol=True,
+                max_leverage=leverage_ceiling,
             )
-            apply_margin_type_if_requested(client, symbol=symbol, args=args)
-            client.change_initial_leverage(symbol, effective_leverage)
             plan = plan_trade(
                 rules=rules,
                 symbol=symbol,
@@ -2463,6 +2672,8 @@ def select_auto_trade_plan(
             print(f"Skipping {symbol} this scan: {underutilized}")
             continue
 
+        apply_margin_type_if_requested(client, symbol=symbol, args=args)
+        client.change_initial_leverage(symbol, effective_leverage)
         print(f"Selected auto symbol: {symbol}")
         return symbol, rules, live_maker_fee_rate, plan
 
@@ -2479,8 +2690,15 @@ def effective_scan_profile(args: argparse.Namespace) -> str:
 def apply_scan_profile(args: argparse.Namespace) -> None:
     profile = effective_scan_profile(args)
     setattr(args, "_effective_scan_profile", profile)
-    allowlist = parse_symbol_list(getattr(args, "scan_symbols", ""))
-    if not allowlist and profile == "liquidity" and args.take_profit_mode == "min-viable":
+    raw_scan_symbols = str(getattr(args, "scan_symbols", "") or "").strip()
+    allow_all_symbols = raw_scan_symbols.upper() == "ALL"
+    allowlist = parse_symbol_list(raw_scan_symbols)
+    if (
+        not allowlist
+        and not allow_all_symbols
+        and profile == "liquidity"
+        and args.take_profit_mode == "min-viable"
+    ):
         allowlist = set(DEFAULT_MIN_PROFIT_SYMBOLS)
     setattr(args, "_scan_symbol_allowlist", allowlist)
     if profile != "liquidity":
@@ -2659,6 +2877,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="For fixed-symbol runs, use the lowest leverage from --leverage up to --max-min-notional-leverage that satisfies exchange minimum size.",
     )
+    parser.add_argument(
+        "--volatility-adjusted-leverage",
+        action="store_true",
+        help="Cap entry leverage using the recent 1m high/low range so volatile coins require lower leverage or are skipped.",
+    )
+    parser.add_argument("--volatility-window-minutes", type=int, default=15)
+    parser.add_argument(
+        "--volatility-roe-budget",
+        type=Decimal,
+        default=Decimal("0.12"),
+        help="Approximate ROE move budget for volatility leverage capping, e.g. 0.12 means recent range should not imply more than 12% ROE.",
+    )
     parser.add_argument("--take-profit-mode", choices=("fixed-roe", "min-viable"), default="fixed-roe")
     parser.add_argument("--take-profit-roe", type=Decimal, default=DEFAULT_TAKE_PROFIT_ROE)
     parser.add_argument("--stop-loss-roe", type=Decimal, default=DEFAULT_STOP_LOSS_ROE)
@@ -2735,6 +2965,22 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated symbol allowlist for auto mode. Use ALL to allow every scanned symbol.",
     )
     parser.add_argument("--base-url", default=os.environ.get("BINANCE_FAPI_BASE", "https://fapi.binance.com"))
+    parser.add_argument(
+        "--stats-csv",
+        default="",
+        help="Optional CSV file for the same aggregate stats shown by the F dashboard.",
+    )
+    parser.add_argument(
+        "--trades-csv",
+        default="",
+        help="Optional CSV file for closed-trade accounting rows.",
+    )
+    parser.add_argument(
+        "--stats-snapshot-seconds",
+        type=float,
+        default=30.0,
+        help="How often to append aggregate stats snapshots while the bot is running.",
+    )
     parser.add_argument("--check-auth", action="store_true", help="Check signed Binance futures auth without trading.")
     parser.add_argument("--live", action="store_true", help="Place real futures orders.")
     parser.add_argument(
@@ -2750,6 +2996,11 @@ def main() -> int:
     args = parse_args()
     setattr(args, "_skip_symbols", set())
     setattr(args, "_cooldown_until", {})
+    STATS.configure_persistence(
+        stats_csv=Path(args.stats_csv) if args.stats_csv else None,
+        trades_csv=Path(args.trades_csv) if args.trades_csv else None,
+        snapshot_interval_seconds=args.stats_snapshot_seconds,
+    )
     symbol = str(args.symbol).upper()
     auto_symbol = symbol == "AUTO"
     flow_mode = str(args.mode or "").lower() == "flow"
@@ -2772,6 +3023,10 @@ def main() -> int:
         raise SystemExit("--leverage must be at least 1.")
     if args.max_min_notional_leverage < args.leverage:
         args.max_min_notional_leverage = args.leverage
+    if args.volatility_window_minutes < 2:
+        raise SystemExit("--volatility-window-minutes must be at least 2.")
+    if args.volatility_roe_budget <= 0:
+        raise SystemExit("--volatility-roe-budget must be greater than 0.")
     if args.flow_lookback_hours < 1:
         raise SystemExit("--flow-lookback-hours must be at least 1.")
     if args.min_net_profit_usdt < 0:
@@ -2894,6 +3149,7 @@ def main() -> int:
             equity = args.dry_equity
             available = args.dry_equity
 
+        leverage_ceiling = volatility_adjusted_leverage_cap(client, symbol, args=args)
         effective_leverage = effective_entry_leverage(
             symbol=symbol,
             rules=rules,
@@ -2901,6 +3157,7 @@ def main() -> int:
             available_balance=available,
             args=args,
             auto_symbol=False,
+            max_leverage=leverage_ceiling,
         )
         plan = plan_trade(
             rules=rules,
@@ -3102,6 +3359,7 @@ def main() -> int:
         else:
             apply_margin_type_if_requested(client, symbol=symbol, args=args)
             entry_estimate = post_only_entry_price(order_book_top(client, symbol), direction=direction, rules=rules)
+            leverage_ceiling = volatility_adjusted_leverage_cap(client, symbol, args=args)
             effective_leverage = effective_entry_leverage(
                 symbol=symbol,
                 rules=rules,
@@ -3109,8 +3367,8 @@ def main() -> int:
                 available_balance=account_available_balance(account),
                 args=args,
                 auto_symbol=False,
+                max_leverage=leverage_ceiling,
             )
-            client.change_initial_leverage(symbol, effective_leverage)
             plan = plan_trade(
                 rules=rules,
                 symbol=symbol,
@@ -3128,6 +3386,7 @@ def main() -> int:
                 exit_fee_rate=live_maker_fee_rate,
                 min_net_profit=args.min_net_profit_usdt,
             )
+            client.change_initial_leverage(symbol, effective_leverage)
         print(f"\nCycle {cycle}: entering {plan.symbol} {plan.direction}")
         print_plan(plan)
         if not auto_symbol and maybe_skip_underutilized_symbol(
