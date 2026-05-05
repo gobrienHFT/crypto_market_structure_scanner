@@ -15,7 +15,7 @@ from breakouts import BreakoutRow, levels_from_klines
 from cmc_movers import fetch_cmc_movers
 from concentration_scanner import HolderRecord, ManualOverride, ScanCache, ScannerInput, TokenConcentrationScanner
 from concentration_scanner.fixtures import acceptance_fixture_results
-from concentration_scanner.perp_universe import BinancePerpUniverseBuilder, PerpUniverseCandidate
+from concentration_scanner.perp_universe import DEFAULT_SEED_PATH, BinancePerpUniverseBuilder, PerpUniverseCandidate
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
 from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
@@ -6077,7 +6077,7 @@ def _render_concentration_result(result: Any) -> None:
 def render_concentration_dashboard() -> None:
     st.title("Binance Perp Controlled-Float Scanner")
     st.caption(
-        "Automatically walks the Binance USDT perpetual universe, resolves token contracts through CoinGecko, "
+        "Automatically walks the Binance USDT perpetual universe, resolves token contracts from a local ETH/BNB seed file plus explorers, "
         "fetches holder tables, filters custody/storage false positives, and ranks controlled-float squeeze candidates."
     )
 
@@ -6086,19 +6086,19 @@ def render_concentration_dashboard() -> None:
 
     with tabs[0]:
         st.subheader("Universe builder")
-        settings = st.columns(5)
-        coingecko_pages = int(settings[0].number_input("CoinGecko pages", min_value=1, max_value=10, value=4, step=1))
-        oi_top_n = int(settings[1].number_input("Enrich OI top N", min_value=0, max_value=200, value=25, step=5))
-        holder_top_n = int(settings[2].number_input("Holder rows/scan", min_value=100, max_value=1000, value=100, step=100))
-        include_majors = settings[3].checkbox("Include majors", value=True)
-        include_stables = settings[4].checkbox("Include stables", value=True)
+        seed_file_path = st.text_input("ETH/BNB contract seed file", value=str(DEFAULT_SEED_PATH))
+        settings = st.columns(4)
+        oi_top_n = int(settings[0].number_input("Enrich OI top N", min_value=0, max_value=200, value=25, step=5))
+        holder_top_n = int(settings[1].number_input("Holder rows/scan", min_value=100, max_value=1000, value=100, step=100))
+        include_majors = settings[2].checkbox("Include majors", value=True)
+        include_stables = settings[3].checkbox("Include stables", value=True)
 
         action_cols = st.columns(4)
         if action_cols[0].button("Build Binance perp universe", type="primary"):
-            with st.spinner("Fetching Binance perpetuals and matching CoinGecko market data..."):
+            with st.spinner("Fetching Binance perpetuals and matching local/explorer contract metadata..."):
                 builder = BinancePerpUniverseBuilder()
                 candidates = builder.build_candidates(
-                    coingecko_pages=coingecko_pages,
+                    seed_path=seed_file_path,
                     include_majors=include_majors,
                     include_stables=include_stables,
                     enrich_open_interest_top_n=oi_top_n,
@@ -6110,25 +6110,25 @@ def render_concentration_dashboard() -> None:
         candidate_frame = pd.DataFrame(candidate_rows)
         if not candidate_frame.empty:
             candidate_frame = candidate_frame.sort_values(["futures_to_spot_volume_ratio", "perp_volume_24h"], ascending=[False, False])
+            candidate_cols = [
+                "symbol",
+                "base_asset",
+                "chain",
+                "contract_address",
+                "token_name",
+                "token_symbol",
+                "market_cap",
+                "spot_volume_24h",
+                "perp_volume_24h",
+                "futures_to_spot_volume_ratio",
+                "open_interest_notional",
+                "oi_to_market_cap_ratio",
+                "price_change_24h",
+                "match_confidence",
+                "skip_reason",
+            ]
             st.dataframe(
-                candidate_frame[
-                    [
-                        "symbol",
-                        "base_asset",
-                        "coingecko_id",
-                        "token_name",
-                        "market_cap",
-                        "spot_volume_24h",
-                        "perp_volume_24h",
-                        "futures_to_spot_volume_ratio",
-                        "open_interest_notional",
-                        "oi_to_market_cap_ratio",
-                        "price_change_7d",
-                        "price_change_30d",
-                        "match_confidence",
-                        "skip_reason",
-                    ]
-                ],
+                candidate_frame[[col for col in candidate_cols if col in candidate_frame.columns]],
                 use_container_width=True,
                 hide_index=True,
             )
@@ -6142,12 +6142,17 @@ def render_concentration_dashboard() -> None:
             candidates = [_candidate_from_row(row) for row in candidate_frame.head(scan_limit).to_dict("records")]
             for index, candidate in enumerate(candidates, start=1):
                 progress.progress(index / max(1, len(candidates)))
-                if not candidate.coingecko_id:
-                    failures.append(f"{candidate.symbol}: no CoinGecko match")
+                if not candidate.contract_address or not candidate.chain:
+                    failures.append(f"{candidate.symbol}: no local ETH/BNB contract match")
                     continue
                 try:
                     result = scanner.scan(
-                        ScannerInput(coin_id=candidate.coingecko_id, chain="", top_n=holder_top_n),
+                        ScannerInput(
+                            contract_address=candidate.contract_address,
+                            symbol=candidate.token_symbol or candidate.base_asset,
+                            chain=candidate.chain,
+                            top_n=holder_top_n,
+                        ),
                         perp_context=candidate.context(),
                     )
                     st.session_state["last_concentration_result"] = result
@@ -6159,7 +6164,7 @@ def render_concentration_dashboard() -> None:
                 st.warning("Some symbols could not be scanned: " + "; ".join(failures[:12]))
 
         if action_cols[3].button("Queue all matched perps") and candidate_rows:
-            matched = [row for row in candidate_rows if row.get("coingecko_id")]
+            matched = [row for row in candidate_rows if row.get("contract_address") and row.get("chain")]
             cache.enqueue("binance_perp_concentration", {"candidates": matched, "holder_top_n": holder_top_n})
             st.success(f"Queued {len(matched)} matched Binance perpetuals for batch scanning.")
 
@@ -6386,25 +6391,26 @@ def render_concentration_dashboard() -> None:
     with tabs[4]:
         st.subheader("Advanced manual tools and cache")
         with st.expander("Manual single-token scan", expanded=False):
-            input_cols = st.columns(4)
-            coin_id = input_cols[0].text_input("CoinGecko coin ID", placeholder="bio-protocol")
-            symbol = input_cols[1].text_input("Symbol", placeholder="BIO")
-            contract = input_cols[2].text_input("Contract address", placeholder="0x...")
-            chain = input_cols[3].selectbox("Chain", ["ethereum", "bsc"], index=0)
+            input_cols = st.columns(3)
+            symbol = input_cols[0].text_input("Symbol", placeholder="BIO")
+            contract = input_cols[1].text_input("Contract address", placeholder="0x...")
+            chain = input_cols[2].selectbox("Chain", ["ethereum", "bsc"], index=0)
             top_n = int(st.number_input("Top holders", min_value=20, max_value=1000, value=100, step=20))
             if st.button("Scan single token"):
-                scanner = TokenConcentrationScanner(cache=cache)
-                result = scanner.scan(
-                    ScannerInput(
-                        coin_id=coin_id.strip() or None,
-                        symbol=symbol.strip() or None,
-                        contract_address=contract.strip() or None,
-                        chain=chain,
-                        top_n=top_n,
+                if not contract.strip():
+                    st.error("Enter an Ethereum or BNB Chain contract address.")
+                else:
+                    scanner = TokenConcentrationScanner(cache=cache)
+                    result = scanner.scan(
+                        ScannerInput(
+                            symbol=symbol.strip() or None,
+                            contract_address=contract.strip(),
+                            chain=chain,
+                            top_n=top_n,
+                        )
                     )
-                )
-                st.session_state["last_concentration_result"] = result
-                st.rerun()
+                    st.session_state["last_concentration_result"] = result
+                    st.rerun()
 
         if st.button("Load acceptance fixtures"):
             for fixture_result in acceptance_fixture_results():
@@ -6419,7 +6425,7 @@ def render_concentration_dashboard() -> None:
         st.subheader("Scanner queue")
         mode = st.selectbox("Mode", ["universe", "pump", "concentration", "dominant_holder", "ravedao_archetype"])
         queue_cols = st.columns(4)
-        category = queue_cols[0].text_input("CoinGecko category")
+        seed_queue_path = queue_cols[0].text_input("Seed file", value=str(DEFAULT_SEED_PATH))
         top_n_volume = queue_cols[1].number_input("Top N by volume", min_value=0, max_value=500, value=50, step=10)
         min_holders = queue_cols[2].number_input("Minimum holder count", min_value=0, max_value=10000, value=100, step=50)
         chain_filter = queue_cols[3].multiselect("Chain filter", ["ethereum", "bsc"], default=["ethereum", "bsc"])
@@ -6427,7 +6433,7 @@ def render_concentration_dashboard() -> None:
             cache.enqueue(
                 mode,
                 {
-                    "category": category,
+                    "seed_file": seed_queue_path,
                     "top_n_by_volume": top_n_volume,
                     "minimum_holder_count": min_holders,
                     "chain_filter": chain_filter,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .cache import ScanCache
@@ -45,7 +45,7 @@ class TokenConcentrationScanner:
         registry: ChainRegistry | None = None,
         cache: ScanCache | None = None,
     ) -> None:
-        self.coingecko = coingecko or CoinGeckoClient()
+        self.coingecko = coingecko
         self.registry = registry or ChainRegistry()
         self.cache = cache
         self.concentration = ConcentrationEngine()
@@ -55,6 +55,8 @@ class TokenConcentrationScanner:
     def resolve_contract(self, scanner_input: ScannerInput) -> tuple[TokenMarketData, str, str]:
         chain = self.registry.normalize_key(scanner_input.chain)
         if scanner_input.coin_id:
+            if self.coingecko is None:
+                raise ValueError("CoinGecko lookup is disabled; provide a contract address and chain.")
             raw = self.coingecko.fetch_coin(scanner_input.coin_id)
             market = self.coingecko.parse_market_data(raw)
             if scanner_input.chain:
@@ -71,23 +73,24 @@ class TokenConcentrationScanner:
                 raise ValueError(f"No supported Ethereum/BNB Chain contract found for CoinGecko ID {scanner_input.coin_id}.")
             return market, chain, contract
         if scanner_input.contract_address:
-            return (
-                TokenMarketData(
-                    coin_id=scanner_input.symbol.lower(),
+            adapter = self.registry.get(chain)
+            try:
+                market = ExplorerClient(adapter).fetch_token_metadata(
+                    scanner_input.contract_address,
+                    fallback_symbol=scanner_input.symbol,
+                )
+            except Exception:
+                market = TokenMarketData(
+                    coin_id=f"{chain}:{scanner_input.contract_address.lower()}",
                     name=scanner_input.symbol.upper() if scanner_input.symbol else scanner_input.contract_address[:10],
                     symbol=scanner_input.symbol.upper(),
-                    platforms={self.registry.get(chain).coingecko_platform: scanner_input.contract_address},
-                ),
-                chain,
-                scanner_input.contract_address,
-            )
+                    platforms={adapter.coingecko_platform: scanner_input.contract_address},
+                    canonical_chain=chain,
+                )
+            return (market, chain, scanner_input.contract_address)
         if scanner_input.symbol:
-            search = self.coingecko.search(scanner_input.symbol)
-            coins = search.get("coins", []) if isinstance(search, dict) else []
-            if coins:
-                coin_id = str(coins[0].get("id", ""))
-                return self.resolve_contract(ScannerInput(coin_id=coin_id, chain=chain))
-        raise ValueError("Provide a CoinGecko coin ID, symbol, or contract address.")
+            raise ValueError("Symbol-only lookup is disabled; provide a contract address and chain.")
+        raise ValueError("Provide a contract address and chain.")
 
     def scan(
         self,
@@ -133,6 +136,7 @@ class TokenConcentrationScanner:
         overrides: list[ManualOverride] | None = None,
         perp_context: PerpMarketContext | None = None,
     ) -> TokenScanResult:
+        market = self._with_perp_market_data(market, perp_context or PerpMarketContext())
         classifier = HolderClassifier(
             token_name=market.name,
             token_symbol=market.symbol,
@@ -242,6 +246,8 @@ class TokenConcentrationScanner:
         return numerator / denominator
 
     def prioritized_universe(self, *, category: str = "", limit: int = 100) -> list[dict[str, Any]]:
+        if self.coingecko is None:
+            return []
         rows = self.coingecko.markets(category=category or None, order="volume_desc", per_page=min(250, limit))
         def priority(row: dict[str, Any]) -> float:
             market_cap = float(row.get("market_cap") or 0.0)
@@ -254,3 +260,25 @@ class TokenConcentrationScanner:
                 + (fdv / market_cap * 5 if market_cap > 0 else 0)
             )
         return sorted(rows, key=priority, reverse=True)[:limit]
+
+    def _with_perp_market_data(self, market: TokenMarketData, context: PerpMarketContext) -> TokenMarketData:
+        current_price = market.current_price if market.current_price is not None else context.current_price
+        quoted_supply_value = (
+            current_price * market.total_supply
+            if current_price is not None and market.total_supply is not None
+            else None
+        )
+        return replace(
+            market,
+            current_price=current_price,
+            market_cap=market.market_cap if market.market_cap is not None else quoted_supply_value,
+            fully_diluted_valuation=(
+                market.fully_diluted_valuation
+                if market.fully_diluted_valuation is not None
+                else quoted_supply_value
+            ),
+            volume_24h=market.volume_24h if market.volume_24h is not None else context.perp_volume_24h,
+            price_change_24h=market.price_change_24h if market.price_change_24h is not None else context.price_change_24h,
+            price_change_7d=market.price_change_7d if market.price_change_7d is not None else context.price_change_7d,
+            price_change_30d=market.price_change_30d if market.price_change_30d is not None else context.price_change_30d,
+        )

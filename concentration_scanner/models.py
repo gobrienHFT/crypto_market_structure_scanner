@@ -367,6 +367,7 @@ class ThinFloatStats:
 class PerpMarketContext:
     binance_symbol: str = ""
     base_asset: str = ""
+    current_price: float | None = None
     perp_volume_24h: float | None = None
     spot_volume_24h: float | None = None
     futures_to_spot_volume_ratio: float | None = None
@@ -376,6 +377,7 @@ class PerpMarketContext:
     oi_to_adjusted_float_market_cap_ratio: float | None = None
     volume_to_adjusted_float_market_cap: float | None = None
     volume_to_market_cap_ratio: float | None = None
+    price_change_24h: float | None = None
     price_change_7d: float | None = None
     price_change_30d: float | None = None
     is_pre_ignition_price_action: bool = False

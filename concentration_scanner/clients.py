@@ -25,6 +25,42 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _decode_eth_call_string(value: Any) -> str:
+    text = str(value or "")
+    if not text.startswith("0x") or text == "0x":
+        return ""
+    raw = text[2:]
+    try:
+        data = bytes.fromhex(raw)
+    except ValueError:
+        return ""
+    if not data:
+        return ""
+
+    # ABI dynamic string: offset word, length word, then UTF-8 bytes.
+    if len(data) >= 64:
+        try:
+            offset = int.from_bytes(data[:32], "big")
+            length = int.from_bytes(data[offset : offset + 32], "big")
+            if offset + 32 + length <= len(data):
+                return data[offset + 32 : offset + 32 + length].decode("utf-8", errors="ignore").strip("\x00 ")
+        except Exception:
+            pass
+
+    # Common bytes32 symbol/name fallback.
+    return data.rstrip(b"\x00").decode("utf-8", errors="ignore").strip("\x00 ")
+
+
+def _decode_eth_call_uint(value: Any) -> int | None:
+    text = str(value or "")
+    if not text.startswith("0x") or text == "0x":
+        return None
+    try:
+        return int(text, 16)
+    except ValueError:
+        return None
+
+
 class CoinGeckoClient:
     def __init__(
         self,
@@ -189,6 +225,77 @@ class ExplorerClient:
             raise ApiClientError(f"{self.adapter.explorer_name} HTTP {response.status_code}: {response.text[:250]}")
         data = response.json()
         return data if isinstance(data, dict) else {}
+
+    def _proxy_eth_call(self, contract_address: str, selector: str) -> Any:
+        data = self._get(
+            {
+                "module": "proxy",
+                "action": "eth_call",
+                "to": contract_address,
+                "data": selector,
+                "tag": "latest",
+            }
+        )
+        return data.get("result")
+
+    def fetch_token_metadata(self, contract_address: str, *, fallback_symbol: str = "") -> TokenMarketData:
+        token_info = self._fetch_token_info(contract_address)
+        symbol = str(token_info.get("symbol") or token_info.get("tokenSymbol") or "").upper()
+        name = str(token_info.get("tokenName") or token_info.get("name") or "")
+        decimals = _to_float(token_info.get("divisor") or token_info.get("decimals"))
+        raw_supply = _to_float(token_info.get("totalSupply") or token_info.get("total_supply"))
+
+        if not symbol:
+            try:
+                symbol = _decode_eth_call_string(self._proxy_eth_call(contract_address, "0x95d89b41")).upper()
+            except Exception:
+                symbol = ""
+        if not name:
+            try:
+                name = _decode_eth_call_string(self._proxy_eth_call(contract_address, "0x06fdde03"))
+            except Exception:
+                name = ""
+        if decimals is None:
+            try:
+                decimals_uint = _decode_eth_call_uint(self._proxy_eth_call(contract_address, "0x313ce567"))
+                decimals = float(decimals_uint) if decimals_uint is not None else None
+            except Exception:
+                decimals = None
+        if raw_supply is None:
+            try:
+                raw_supply_uint = _decode_eth_call_uint(self._proxy_eth_call(contract_address, "0x18160ddd"))
+                raw_supply = float(raw_supply_uint) if raw_supply_uint is not None else None
+            except Exception:
+                raw_supply = None
+
+        total_supply = raw_supply
+        if raw_supply is not None and decimals is not None and decimals >= 0:
+            scale = 10 ** int(decimals)
+            total_supply = raw_supply / scale if raw_supply >= scale else raw_supply
+
+        symbol = symbol or fallback_symbol.upper()
+        return TokenMarketData(
+            coin_id=f"{self.adapter.key}:{contract_address.lower()}",
+            name=name or symbol or contract_address[:10],
+            symbol=symbol,
+            platforms={self.adapter.coingecko_platform: contract_address},
+            total_supply=total_supply,
+            max_supply=total_supply,
+            canonical_chain=self.adapter.key,
+            is_native_asset=False,
+        )
+
+    def _fetch_token_info(self, contract_address: str) -> dict[str, Any]:
+        try:
+            data = self._get({"module": "token", "action": "tokeninfo", "contractaddress": contract_address})
+        except Exception:
+            return {}
+        result = data.get("result")
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            return result[0]
+        if isinstance(result, dict):
+            return result
+        return {}
 
     def fetch_top_holders(self, contract_address: str, *, limit: int = 100) -> ExplorerFetchResult:
         endpoint_attempts = [

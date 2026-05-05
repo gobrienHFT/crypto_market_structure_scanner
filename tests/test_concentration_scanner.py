@@ -13,9 +13,10 @@ from concentration_scanner.fixtures import (
     tag_reserve_safe_fixture,
 )
 from concentration_scanner.models import HolderRecord, TokenMarketData
-from concentration_scanner.perp_universe import base_symbol_candidates
+from concentration_scanner.perp_universe import BinancePerpUniverseBuilder, SeedContract, base_symbol_candidates, load_seed_addresses
 from concentration_scanner.presentation import results_to_frame
 from concentration_scanner.scanner import TokenConcentrationScanner
+from binance_futures import FuturesSymbol
 
 
 def test_chain_adapter_selection() -> None:
@@ -187,6 +188,55 @@ def test_manipulable_whales_leaderboard_prioritizes_filtered_whales() -> None:
 def test_binance_perp_multiplier_symbol_candidates() -> None:
     assert base_symbol_candidates("1000PEPE") == ["1000PEPE", "PEPE"]
     assert "MOG" in base_symbol_candidates("1000000MOG")
+
+
+def test_seed_address_loader_accepts_raw_comma_file(tmp_path) -> None:
+    seed = tmp_path / "seed.txt"
+    seed.write_text("0x1111111111111111111111111111111111111111, bad, 0x2222222222222222222222222222222222222222")
+    assert load_seed_addresses(seed) == [
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+    ]
+
+
+def test_binance_perp_universe_uses_seed_contracts_without_coingecko() -> None:
+    class FakeBinance:
+        def perpetual_usdt_symbols(self) -> list[FuturesSymbol]:
+            return [
+                FuturesSymbol(symbol="API3USDT", base_asset="API3", quote_asset="USDT", underlying_type="COIN"),
+                FuturesSymbol(symbol="1000PEPEUSDT", base_asset="1000PEPE", quote_asset="USDT", underlying_type="COIN"),
+            ]
+
+        def ticker_24hr(self) -> list[dict]:
+            return [
+                {"symbol": "API3USDT", "lastPrice": "2", "quoteVolume": "1000", "priceChangePercent": "25"},
+                {"symbol": "1000PEPEUSDT", "lastPrice": "0.001", "quoteVolume": "2000", "priceChangePercent": "80"},
+            ]
+
+        def open_interest(self, symbol: str) -> dict:
+            return {"openInterest": "10"}
+
+    class FakeSpot:
+        def ticker_24hr(self) -> list[dict]:
+            return [{"symbol": "API3USDT", "quoteVolume": "100"}]
+
+    builder = BinancePerpUniverseBuilder(
+        binance=FakeBinance(),  # type: ignore[arg-type]
+        spot=FakeSpot(),  # type: ignore[arg-type]
+        seed_contracts=[
+            SeedContract(chain="ethereum", contract_address="0xapi3", token_symbol="API3", token_name="API3", total_supply=1_000),
+            SeedContract(chain="bsc", contract_address="0xpepe", token_symbol="PEPE", token_name="Pepe", total_supply=1_000_000),
+        ],
+    )
+    candidates = builder.build_candidates(enrich_open_interest_top_n=2)
+    api3 = next(item for item in candidates if item.symbol == "API3USDT")
+    pepe = next(item for item in candidates if item.symbol == "1000PEPEUSDT")
+    assert api3.contract_address == "0xapi3"
+    assert api3.coingecko_id == ""
+    assert api3.futures_to_spot_volume_ratio == 10
+    assert api3.market_cap == 2_000
+    assert api3.context().current_price == 2
+    assert pepe.contract_address == "0xpepe"
 
 
 def test_generated_summaries_avoid_legal_accusatory_language() -> None:
