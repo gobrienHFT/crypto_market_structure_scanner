@@ -10,7 +10,9 @@ from .models import (
     ClassifiedHolder,
     ConcentrationMetrics,
     ContractControlStats,
+    MasterSqueezeScore,
     ManipulableWhaleMetrics,
+    PerpMarketContext,
     RepresentationStats,
     RiskFlags,
     RiskScores,
@@ -159,6 +161,8 @@ class ScanCache:
             status=ScannerStatus(**payload.get("status", {})),
             summary=payload.get("summary", ""),
             key_flags=list(payload.get("key_flags", [])),
+            perp_context=PerpMarketContext(**payload.get("perp_context", {})),
+            master_score=MasterSqueezeScore(**payload.get("master_score", {})),
         )
 
     def enqueue(self, mode: str, payload: dict[str, Any]) -> int:

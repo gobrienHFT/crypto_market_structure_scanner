@@ -262,6 +262,10 @@ class BinanceFuturesPublic:
         data = self._get("/futures/data/openInterestHist", params=params)
         return data if isinstance(data, list) else []
 
+    def open_interest(self, symbol: str) -> dict[str, Any]:
+        data = self._get("/fapi/v1/openInterest", {"symbol": symbol.upper()})
+        return data if isinstance(data, dict) else {}
+
     def taker_buy_sell_volume(
         self,
         symbol: str,

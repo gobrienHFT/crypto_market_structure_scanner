@@ -23,6 +23,20 @@ def result_to_row(result: TokenScanResult) -> dict[str, Any]:
         "price_change_24h": result.token.price_change_24h,
         "price_change_7d": result.token.price_change_7d,
         "price_change_30d": result.token.price_change_30d,
+        "binance_symbol": result.perp_context.binance_symbol,
+        "perp_volume_24h": result.perp_context.perp_volume_24h,
+        "spot_volume_24h": result.perp_context.spot_volume_24h,
+        "futures_to_spot_volume_ratio": result.perp_context.futures_to_spot_volume_ratio,
+        "open_interest_notional": result.perp_context.open_interest_notional,
+        "oi_to_market_cap_ratio": result.perp_context.oi_to_market_cap_ratio,
+        "oi_to_adjusted_float_market_cap_ratio": result.perp_context.oi_to_adjusted_float_market_cap_ratio,
+        "volume_to_adjusted_float_market_cap": result.perp_context.volume_to_adjusted_float_market_cap,
+        "master_score": result.master_score.master_score,
+        "pre_pump_risk_score": result.master_score.pre_pump_risk_score,
+        "controlled_float_squeeze_score": result.master_score.controlled_float_squeeze_score,
+        "insider_whale_concentration_score": result.master_score.insider_whale_concentration_score,
+        "master_label": result.master_score.master_label,
+        "master_reasons": ", ".join(result.master_score.ranked_reasons),
         "current_price": result.token.current_price,
         "all_time_low_price": result.token.all_time_low_price,
         "all_time_high_price": result.token.all_time_high_price,
@@ -101,6 +115,8 @@ def cache_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
         manipulable = payload.get("manipulable", {})
         thin = payload.get("thin_float", {})
         holders = payload.get("holders", [])
+        perp = payload.get("perp_context", {})
+        master = payload.get("master_score", {})
         top_1 = holders[0] if holders else {}
         representation = payload.get("representation", {})
         parsed.append(
@@ -118,6 +134,20 @@ def cache_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "price_change_24h": token.get("price_change_24h"),
                 "price_change_7d": token.get("price_change_7d"),
                 "price_change_30d": token.get("price_change_30d"),
+                "binance_symbol": perp.get("binance_symbol"),
+                "perp_volume_24h": perp.get("perp_volume_24h"),
+                "spot_volume_24h": perp.get("spot_volume_24h"),
+                "futures_to_spot_volume_ratio": perp.get("futures_to_spot_volume_ratio"),
+                "open_interest_notional": perp.get("open_interest_notional"),
+                "oi_to_market_cap_ratio": perp.get("oi_to_market_cap_ratio"),
+                "oi_to_adjusted_float_market_cap_ratio": perp.get("oi_to_adjusted_float_market_cap_ratio"),
+                "volume_to_adjusted_float_market_cap": perp.get("volume_to_adjusted_float_market_cap"),
+                "master_score": master.get("master_score"),
+                "pre_pump_risk_score": master.get("pre_pump_risk_score"),
+                "controlled_float_squeeze_score": master.get("controlled_float_squeeze_score"),
+                "insider_whale_concentration_score": master.get("insider_whale_concentration_score"),
+                "master_label": master.get("master_label"),
+                "master_reasons": ", ".join(master.get("ranked_reasons", [])),
                 "all_time_low_price": token.get("all_time_low_price"),
                 "all_time_high_price": token.get("all_time_high_price"),
                 "ath_multiple_from_atl": thin.get("ath_multiple_from_atl"),

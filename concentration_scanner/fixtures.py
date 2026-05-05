@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import ContractControlStats, HolderRecord, TokenMarketData, TokenScanResult
+from .models import ContractControlStats, HolderRecord, PerpMarketContext, TokenMarketData, TokenScanResult
 from .scanner import TokenConcentrationScanner
 
 
@@ -172,7 +172,26 @@ def clean_manipulable_whale_fixture() -> TokenScanResult:
         all_time_high_price=1.2,
         peak_market_cap=1_200_000_000,
     )
-    return scanner.build_result(market=market, chain="ethereum", contract="0xwhale", holders=holders)
+    return scanner.build_result(
+        market=market,
+        chain="ethereum",
+        contract="0xwhale",
+        holders=holders,
+        perp_context=PerpMarketContext(
+            binance_symbol="WHALEUSDT",
+            base_asset="WHALE",
+            perp_volume_24h=5_000_000_000,
+            spot_volume_24h=400_000_000,
+            futures_to_spot_volume_ratio=12.5,
+            open_interest_notional=350_000_000,
+            oi_to_market_cap_ratio=0.35,
+            price_change_7d=65,
+            price_change_30d=180,
+            is_pre_ignition_price_action=True,
+            perps_bigger_than_spot=True,
+            oi_pressure_flag=True,
+        ),
+    )
 
 
 def binance_false_positive_fixture() -> TokenScanResult:

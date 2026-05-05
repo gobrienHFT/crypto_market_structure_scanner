@@ -4,7 +4,9 @@ from .models import (
     ClassifiedHolder,
     ConcentrationMetrics,
     ContractControlStats,
+    MasterSqueezeScore,
     ManipulableWhaleMetrics,
+    PerpMarketContext,
     RepresentationStats,
     RiskFlags,
     RiskScores,
@@ -344,6 +346,114 @@ class RiskScoringEngine:
         if "deployer_funded" in manipulable.key_forensic_flags:
             score += 20
         return cap_score(score)
+
+    def compute_master_score(
+        self,
+        *,
+        metrics: ConcentrationMetrics,
+        manipulable: ManipulableWhaleMetrics,
+        thin: ThinFloatStats,
+        scores: RiskScores,
+        flags: RiskFlags,
+        perp: PerpMarketContext | None = None,
+    ) -> MasterSqueezeScore:
+        perp = perp or PerpMarketContext()
+        reasons: list[str] = []
+
+        insider = cap_score(
+            max(
+                scores.manipulable_whale_score,
+                _points(manipulable.largest_manipulable_holder_pct, [(10, 35), (20, 65), (50, 90), (75, 100)]),
+                _points(manipulable.cluster_manipulable_supply_pct, [(10, 40), (20, 65), (40, 90)]),
+                _points(metrics.adjusted_top_5_pct, [(60, 55), (80, 75), (90, 90)]),
+            )
+        )
+        if insider >= 75:
+            reasons.append("large non-custody whale or linked cluster controls tradable float")
+        elif insider >= 50:
+            reasons.append("meaningful non-custody holder concentration remains after filtering")
+
+        derivative = cap_score(
+            _points(perp.futures_to_spot_volume_ratio, [(5, 35), (10, 55), (20, 80)])
+            + _points(perp.oi_to_market_cap_ratio, [(0.20, 25), (0.50, 50)])
+            + _points(perp.oi_to_adjusted_float_market_cap_ratio, [(0.50, 55), (1.0, 75)])
+        )
+        if derivative >= 75:
+            reasons.append("derivatives activity is extreme versus spot or float")
+        elif derivative >= 50:
+            reasons.append("perps/OI are large enough to add squeeze fuel")
+
+        low_float = cap_score(
+            (35 if thin.circulating_to_total_supply_pct is not None and thin.circulating_to_total_supply_pct < 20 else 0)
+            + (30 if thin.circulating_to_total_supply_pct is not None and thin.circulating_to_total_supply_pct < 10 else 0)
+            + (25 if thin.fdv_to_market_cap_ratio is not None and thin.fdv_to_market_cap_ratio > 5 else 0)
+            + (25 if thin.fdv_to_market_cap_ratio is not None and thin.fdv_to_market_cap_ratio > 10 else 0)
+        )
+        if low_float >= 50:
+            reasons.append("low circulating float or FDV gap suggests market-cap optics risk")
+
+        liquidity = cap_score(
+            _points(perp.volume_to_market_cap_ratio or thin.volume_to_market_cap_ratio, [(1, 35), (2, 55), (5, 75)])
+            + _points(perp.volume_to_adjusted_float_market_cap or thin.volume_to_float_market_cap_ratio, [(1, 45), (2, 65), (5, 85)])
+        )
+        if liquidity >= 60:
+            reasons.append("volume is high versus reported market cap or adjusted float")
+
+        price_7d = perp.price_change_7d if perp.price_change_7d is not None else None
+        price_30d = perp.price_change_30d if perp.price_change_30d is not None else None
+        pre_ignition = (
+            (price_7d is not None and 20 <= price_7d <= 100)
+            or (price_30d is not None and 50 <= price_30d <= 300)
+            or perp.is_pre_ignition_price_action
+        )
+        overheated = (price_30d is not None and price_30d >= 1000) or ((thin.current_drawdown_from_ath_pct or 0.0) >= 90)
+        price_action = 70.0 if pre_ignition and not overheated else (25.0 if pre_ignition else 0.0)
+        if price_action >= 50:
+            reasons.append("price action looks pre-ignition rather than post-blowoff")
+        elif overheated:
+            reasons.append("price action is already post-blowoff or deeply drawn down")
+
+        forensic = cap_score(
+            (45 if flags.cex_distribution_cluster else 0)
+            + (35 if flags.deployer_funded_cluster else 0)
+            + (25 if flags.same_gas_funder_cluster or flags.same_token_source_cluster else 0)
+            + (20 if flags.inactive_then_moved_cluster else 0)
+        )
+        if forensic >= 50:
+            reasons.append("top-wallet movement or cluster evidence increases timing risk")
+
+        ravedao = scores.ravedao_archetype_score
+        master = cap_score(
+            insider * 0.24
+            + max(manipulable.cluster_manipulable_supply_pct, 0.0) * 0.16
+            + min(metrics.adjusted_top_5_pct, 100.0) * 0.12
+            + derivative * 0.16
+            + low_float * 0.12
+            + liquidity * 0.08
+            + forensic * 0.06
+            + ravedao * 0.04
+            + price_action * 0.02
+        )
+        if insider >= 75 and derivative >= 50 and liquidity >= 50:
+            master = max(master, 85)
+        elif insider >= 65 and (derivative >= 50 or liquidity >= 60):
+            master = max(master, 75)
+        elif insider >= 50 and low_float >= 50:
+            master = max(master, 60)
+        if flags.top_holder_is_benign_storage and manipulable.largest_manipulable_holder_pct < 10:
+            master = min(master, max(scores.supply_overhang_score * 0.35, insider * 0.50))
+        if flags.manipulable_float_perp_squeeze_risk:
+            reasons.append("manipulable float and derivatives pressure overlap")
+
+        return MasterSqueezeScore(
+            controlled_float_squeeze_score=master,
+            pre_pump_risk_score=cap_score(price_action + derivative * 0.30 + liquidity * 0.20),
+            insider_whale_concentration_score=insider,
+            master_score=master,
+            master_label=risk_label(master),
+            ranked_reasons=reasons[:8],
+            one_line_mission_match=insider >= 50 and (derivative >= 35 or liquidity >= 50) and not flags.top_holder_is_benign_storage,
+        )
 
     def ravedao_score(self, *, metrics: ConcentrationMetrics, thin: ThinFloatStats) -> float:
         score = 0.0

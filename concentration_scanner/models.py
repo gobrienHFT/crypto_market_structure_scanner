@@ -364,6 +364,39 @@ class ThinFloatStats:
 
 
 @dataclass(frozen=True)
+class PerpMarketContext:
+    binance_symbol: str = ""
+    base_asset: str = ""
+    perp_volume_24h: float | None = None
+    spot_volume_24h: float | None = None
+    futures_to_spot_volume_ratio: float | None = None
+    open_interest: float | None = None
+    open_interest_notional: float | None = None
+    oi_to_market_cap_ratio: float | None = None
+    oi_to_adjusted_float_market_cap_ratio: float | None = None
+    volume_to_adjusted_float_market_cap: float | None = None
+    volume_to_market_cap_ratio: float | None = None
+    price_change_7d: float | None = None
+    price_change_30d: float | None = None
+    is_pre_ignition_price_action: bool = False
+    perps_bigger_than_spot: bool = False
+    oi_pressure_flag: bool = False
+    liquidity_churn_flag: bool = False
+    context_error: str = ""
+
+
+@dataclass(frozen=True)
+class MasterSqueezeScore:
+    controlled_float_squeeze_score: float = 0.0
+    pre_pump_risk_score: float = 0.0
+    insider_whale_concentration_score: float = 0.0
+    master_score: float = 0.0
+    master_label: str = "Low"
+    ranked_reasons: list[str] = field(default_factory=list)
+    one_line_mission_match: bool = False
+
+
+@dataclass(frozen=True)
 class ScannerStatus:
     last_market_data_fetch_at: str = ""
     last_holder_fetch_at: str = ""
@@ -391,6 +424,8 @@ class TokenScanResult:
     manipulable: ManipulableWhaleMetrics = field(default_factory=ManipulableWhaleMetrics)
     wallet_forensics: list[WalletForensics] = field(default_factory=list)
     wallet_clusters: list[WalletCluster] = field(default_factory=list)
+    perp_context: PerpMarketContext = field(default_factory=PerpMarketContext)
+    master_score: MasterSqueezeScore = field(default_factory=MasterSqueezeScore)
 
     def to_dict(self) -> dict[str, Any]:
         return serialise_value(self)

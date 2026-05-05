@@ -24,6 +24,7 @@ The Streamlit dashboard now includes an `On-Chain Concentration` mode for struct
 - computes raw and adjusted concentration, adjusted float, Gini, HHI, RaveDAO-type thin-float metrics, controlled-float flags, wrapped-representation guardrails, and structural-risk scores
 - adds a manipulable-whale filter that separates CEX/custody/storage/vesting/bridge/wrapper/LP/burn/reserve holders from unresolved wallets and linked wallet clusters that may control tradable float
 - exposes a `Manipulable Whales` leaderboard sorted by largest manipulable holder, manipulable-whale score, cluster supply, and filtered top-holder control
+- adds a Binance perpetual universe scanner that automatically matches futures symbols to CoinGecko IDs/contracts and ranks controlled-float squeeze candidates by insider/whale concentration, linked clusters, futures-vs-spot volume, OI pressure, adjusted-float churn, low-float/FDV gaps, and RaveDAO-type structure
 - stores scan results in `data/concentration_scanner.sqlite`
 - supports manual holder category overrides with immediate recomputation
 - includes cached fixture scans for RaveDAO-like, LAB-like, BIO-like, and wrapped KAVA-like acceptance cases

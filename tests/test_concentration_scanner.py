@@ -13,6 +13,7 @@ from concentration_scanner.fixtures import (
     tag_reserve_safe_fixture,
 )
 from concentration_scanner.models import HolderRecord, TokenMarketData
+from concentration_scanner.perp_universe import base_symbol_candidates
 from concentration_scanner.presentation import results_to_frame
 from concentration_scanner.scanner import TokenConcentrationScanner
 
@@ -151,6 +152,9 @@ def test_clean_manipulable_whale_ranks_extreme() -> None:
     result = clean_manipulable_whale_fixture()
     assert result.manipulable.largest_manipulable_holder_pct == 58.0
     assert result.scores.manipulable_whale_score == 100
+    assert result.master_score.master_label == "Extreme"
+    assert result.master_score.one_line_mission_match
+    assert result.master_score.pre_pump_risk_score >= 75
     assert result.flags.deployer_funded_cluster
     assert result.flags.same_gas_funder_cluster
     assert result.flags.cex_distribution_cluster
@@ -178,6 +182,11 @@ def test_manipulable_whales_leaderboard_prioritizes_filtered_whales() -> None:
     )
     assert filtered.iloc[0]["symbol"] == "WHALE"
     assert filtered.loc[filtered["symbol"] == "BCHV", "manipulable_whale_score"].iloc[0] < 50
+
+
+def test_binance_perp_multiplier_symbol_candidates() -> None:
+    assert base_symbol_candidates("1000PEPE") == ["1000PEPE", "PEPE"]
+    assert "MOG" in base_symbol_candidates("1000000MOG")
 
 
 def test_generated_summaries_avoid_legal_accusatory_language() -> None:

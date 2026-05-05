@@ -10,9 +10,11 @@ from .clients import CoinGeckoClient, ExplorerClient
 from .concentration import ConcentrationEngine
 from .manipulable import ManipulableWhaleEngine
 from .models import (
+    ConcentrationMetrics,
     ContractControlStats,
     HolderRecord,
     ManipulableWhaleMetrics,
+    PerpMarketContext,
     ScannerStatus,
     TokenMarketData,
     TokenScanResult,
@@ -65,6 +67,8 @@ class TokenConcentrationScanner:
                     if contract:
                         chain = adapter.key
                         break
+            if not contract:
+                raise ValueError(f"No supported Ethereum/BNB Chain contract found for CoinGecko ID {scanner_input.coin_id}.")
             return market, chain, contract
         if scanner_input.contract_address:
             return (
@@ -85,7 +89,13 @@ class TokenConcentrationScanner:
                 return self.resolve_contract(ScannerInput(coin_id=coin_id, chain=chain))
         raise ValueError("Provide a CoinGecko coin ID, symbol, or contract address.")
 
-    def scan(self, scanner_input: ScannerInput, *, overrides: list[ManualOverride] | None = None) -> TokenScanResult:
+    def scan(
+        self,
+        scanner_input: ScannerInput,
+        *,
+        overrides: list[ManualOverride] | None = None,
+        perp_context: PerpMarketContext | None = None,
+    ) -> TokenScanResult:
         market_fetch_at = utc_now_iso()
         market, chain, contract = self.resolve_contract(scanner_input)
         adapter = self.registry.get(chain)
@@ -105,6 +115,7 @@ class TokenConcentrationScanner:
             scanner_error=holder_result.error,
             partial=holder_result.partial,
             overrides=overrides,
+            perp_context=perp_context,
         )
 
     def build_result(
@@ -120,6 +131,7 @@ class TokenConcentrationScanner:
         scanner_error: str = "",
         partial: bool = False,
         overrides: list[ManualOverride] | None = None,
+        perp_context: PerpMarketContext | None = None,
     ) -> TokenScanResult:
         classifier = HolderClassifier(
             token_name=market.name,
@@ -137,6 +149,7 @@ class TokenConcentrationScanner:
         )
         if partial:
             metrics = metrics.__class__(**{**metrics.__dict__, "partial_result": True, "data_confidence": "low"})
+        perp = self._with_adjusted_float_context(perp_context or PerpMarketContext(), market=market, metrics=metrics)
         control = contract_control or ContractControlStats()
         thin = self.risk.compute_thin_float_stats(market, metrics)
         manipulable_metrics, wallet_forensics, wallet_clusters = self.manipulable.compute(
@@ -158,6 +171,14 @@ class TokenConcentrationScanner:
             wallet_clusters = []
         flags = self.risk.compute_flags(holders=classified, metrics=metrics, market=market, thin=thin, manipulable=manipulable_metrics)
         scores = self.risk.compute_scores(metrics=metrics, contract=control, thin=thin, flags=flags, manipulable=manipulable_metrics)
+        master = self.risk.compute_master_score(
+            metrics=metrics,
+            manipulable=manipulable_metrics,
+            thin=thin,
+            scores=scores,
+            flags=flags,
+            perp=perp,
+        )
         key_flags = self.risk.key_flags(flags, representation)
         status = ScannerStatus(
             last_market_data_fetch_at=market_fetch_at,
@@ -184,10 +205,41 @@ class TokenConcentrationScanner:
             status=status,
             summary=summary,
             key_flags=key_flags,
+            perp_context=perp,
+            master_score=master,
         )
         if self.cache is not None:
             self.cache.upsert_result(result)
         return result
+
+    def _with_adjusted_float_context(
+        self,
+        context: PerpMarketContext,
+        *,
+        market: TokenMarketData,
+        metrics: ConcentrationMetrics,
+    ) -> PerpMarketContext:
+        market_cap = market.market_cap
+        adjusted_float_market_cap = (
+            market_cap * metrics.adjusted_float_pct_total_supply / 100.0
+            if market_cap is not None and metrics.adjusted_float_pct_total_supply > 0
+            else None
+        )
+        return PerpMarketContext(
+            **{
+                **context.__dict__,
+                "spot_volume_24h": context.spot_volume_24h if context.spot_volume_24h is not None else market.volume_24h,
+                "volume_to_market_cap_ratio": self._ratio(context.perp_volume_24h or market.volume_24h, market_cap),
+                "volume_to_adjusted_float_market_cap": self._ratio(context.perp_volume_24h or market.volume_24h, adjusted_float_market_cap),
+                "oi_to_adjusted_float_market_cap_ratio": self._ratio(context.open_interest_notional, adjusted_float_market_cap),
+            }
+        )
+
+    @staticmethod
+    def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+        if numerator is None or denominator is None or denominator <= 0:
+            return None
+        return numerator / denominator
 
     def prioritized_universe(self, *, category: str = "", limit: int = 100) -> list[dict[str, Any]]:
         rows = self.coingecko.markets(category=category or None, order="volume_desc", per_page=min(250, limit))

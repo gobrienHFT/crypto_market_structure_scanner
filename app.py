@@ -15,6 +15,7 @@ from breakouts import BreakoutRow, levels_from_klines
 from cmc_movers import fetch_cmc_movers
 from concentration_scanner import HolderRecord, ManualOverride, ScanCache, ScannerInput, TokenConcentrationScanner
 from concentration_scanner.fixtures import acceptance_fixture_results
+from concentration_scanner.perp_universe import BinancePerpUniverseBuilder, PerpUniverseCandidate
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
 from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
@@ -5848,6 +5849,15 @@ def _concentration_cache() -> ScanCache:
     return ScanCache(APP_DIR / "data" / "concentration_scanner.sqlite")
 
 
+def _candidate_from_row(row: dict[str, Any]) -> PerpUniverseCandidate:
+    fields = PerpUniverseCandidate.__dataclass_fields__.keys()
+    return PerpUniverseCandidate(**{field: row.get(field) for field in fields})
+
+
+def _candidate_rows(candidates: list[PerpUniverseCandidate]) -> list[dict[str, Any]]:
+    return [candidate.__dict__ for candidate in candidates]
+
+
 def _raw_holder(holder: Any) -> HolderRecord:
     raw = holder.raw_holder if hasattr(holder, "raw_holder") else holder
     return HolderRecord(
@@ -5881,12 +5891,13 @@ def _render_concentration_result(result: Any) -> None:
     if result.status.scanner_error:
         st.warning(result.status.scanner_error)
 
-    metric_cols = st.columns(5)
-    metric_cols[0].metric("Risk Label", result.scores.risk_label)
-    metric_cols[1].metric("Risk Score", f"{result.scores.composite_structural_manipulation_risk_score:.1f}")
-    metric_cols[2].metric("RaveDAO Score", f"{result.scores.ravedao_archetype_score:.1f}")
-    metric_cols[3].metric("Raw Top 1", f"{result.concentration.raw_top_1_pct:.2f}%")
-    metric_cols[4].metric("Adjusted Top 1", f"{result.concentration.adjusted_top_1_pct:.2f}%")
+    metric_cols = st.columns(6)
+    metric_cols[0].metric("Master Score", f"{result.master_score.master_score:.1f}")
+    metric_cols[1].metric("Master Label", result.master_score.master_label)
+    metric_cols[2].metric("Manipulable Whale", f"{result.scores.manipulable_whale_score:.1f}")
+    metric_cols[3].metric("RaveDAO Score", f"{result.scores.ravedao_archetype_score:.1f}")
+    metric_cols[4].metric("Raw Top 1", f"{result.concentration.raw_top_1_pct:.2f}%")
+    metric_cols[5].metric("Adjusted Top 5", f"{result.concentration.adjusted_top_5_pct:.2f}%")
 
     st.info(result.summary)
     if result.representation.wrapped_representation_warning:
@@ -5895,9 +5906,19 @@ def _render_concentration_result(result: Any) -> None:
             "Global ownership should not be inferred without native-chain holder data."
         )
 
-    tabs = st.tabs(["Holders", "Risk Model", "Manipulable Filter", "Forensics", "Clusters", "Thin-Float View", "Contract Controls", "Manual Overrides"])
+    tabs = st.tabs(["Mission Score", "Holders", "Risk Model", "Manipulable Filter", "Forensics", "Clusters", "Thin-Float View", "Contract Controls", "Manual Overrides"])
 
     with tabs[0]:
+        mission_cols = st.columns(4)
+        mission_cols[0].metric("Controlled-Float Squeeze", f"{result.master_score.controlled_float_squeeze_score:.1f}")
+        mission_cols[1].metric("Pre-Pump Risk", f"{result.master_score.pre_pump_risk_score:.1f}")
+        mission_cols[2].metric("Insider/Whale Concentration", f"{result.master_score.insider_whale_concentration_score:.1f}")
+        mission_cols[3].metric("Futures / Spot", f"{result.perp_context.futures_to_spot_volume_ratio:.2f}x" if result.perp_context.futures_to_spot_volume_ratio is not None else "n/a")
+        st.write("Ranked reasons")
+        st.dataframe(pd.DataFrame({"reason": result.master_score.ranked_reasons}), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame([result.perp_context.__dict__]), use_container_width=True, hide_index=True)
+
+    with tabs[1]:
         holders_df = pd.DataFrame(
             [
                 {
@@ -5918,7 +5939,7 @@ def _render_concentration_result(result: Any) -> None:
         )
         st.dataframe(holders_df, use_container_width=True, hide_index=True)
 
-    with tabs[1]:
+    with tabs[2]:
         risk_cols = st.columns(2)
         score_row = {
             "concentration_score": result.scores.concentration_score,
@@ -5936,7 +5957,7 @@ def _render_concentration_result(result: Any) -> None:
         risk_cols[1].write("Active structural-risk flags")
         risk_cols[1].dataframe(pd.DataFrame({"flag": active_flags}), use_container_width=True, hide_index=True)
 
-    with tabs[2]:
+    with tabs[3]:
         whale = result.manipulable
         whale_cols = st.columns(5)
         whale_cols[0].metric("Manipulable Whale Score", f"{result.scores.manipulable_whale_score:.1f}")
@@ -5947,19 +5968,19 @@ def _render_concentration_result(result: Any) -> None:
         st.info(whale.evidence_summary or "Manipulable-whale evidence is not available for this scan.")
         st.dataframe(pd.DataFrame([whale.__dict__]), use_container_width=True, hide_index=True)
 
-    with tabs[3]:
+    with tabs[4]:
         if result.wallet_forensics:
             st.dataframe(pd.DataFrame([item.__dict__ for item in result.wallet_forensics]), use_container_width=True, hide_index=True)
         else:
             st.info("Wallet forensics have not been computed for this result.")
 
-    with tabs[4]:
+    with tabs[5]:
         if result.wallet_clusters:
             st.dataframe(pd.DataFrame([item.__dict__ for item in result.wallet_clusters]), use_container_width=True, hide_index=True)
         else:
             st.info("No linked top-holder clusters were detected in this sample.")
 
-    with tabs[5]:
+    with tabs[6]:
         thin = result.thin_float
         thin_cols = st.columns(4)
         thin_cols[0].metric("ATH Multiple", f"{thin.ath_multiple_from_atl:.2f}x" if thin.ath_multiple_from_atl is not None else "n/a")
@@ -5968,10 +5989,10 @@ def _render_concentration_result(result: Any) -> None:
         thin_cols[3].metric("FDV / Market Cap", f"{thin.fdv_to_market_cap_ratio:.2f}x" if thin.fdv_to_market_cap_ratio is not None else "n/a")
         st.dataframe(pd.DataFrame([thin.__dict__]), use_container_width=True, hide_index=True)
 
-    with tabs[6]:
+    with tabs[7]:
         st.dataframe(pd.DataFrame([result.contract_control.__dict__]), use_container_width=True, hide_index=True)
 
-    with tabs[7]:
+    with tabs[8]:
         st.caption("Override a holder category, then recompute adjusted float and structural-risk scores immediately.")
         if result.holders:
             holder_options = {
@@ -6038,6 +6059,7 @@ def _render_concentration_result(result: Any) -> None:
                     holder_fetch_at=result.status.last_holder_fetch_at,
                     scanner_error=result.status.scanner_error,
                     partial=result.concentration.partial_result,
+                    perp_context=result.perp_context,
                     overrides=[
                         ManualOverride(
                             address=holder_options[selected_holder],
@@ -6046,7 +6068,6 @@ def _render_concentration_result(result: Any) -> None:
                             note=note,
                         )
                     ],
-                    status=result.status,
                 )
                 _concentration_cache().upsert_result(recomputed)
                 st.session_state["last_concentration_result"] = recomputed
@@ -6054,97 +6075,134 @@ def _render_concentration_result(result: Any) -> None:
 
 
 def render_concentration_dashboard() -> None:
-    st.title("On-Chain Token Concentration Scanner")
+    st.title("Binance Perp Controlled-Float Scanner")
     st.caption(
-        "Structural-risk scanner for holder concentration, controlled-float structures, RaveDAO-type thin-float distortion, "
-        "and wrapped-representation guardrails. Outputs are not legal conclusions and require wallet identity investigation."
+        "Automatically walks the Binance USDT perpetual universe, resolves token contracts through CoinGecko, "
+        "fetches holder tables, filters custody/storage false positives, and ranks controlled-float squeeze candidates."
     )
 
     cache = _concentration_cache()
-    tabs = st.tabs(["Manual Scan", "Global Concentration Leaderboard", "RaveDAO-Type Tokens", "Manipulable Whales", "Scanner Queue / Cache"])
+    tabs = st.tabs(["Binance Perp Scanner", "Controlled-Float Candidates", "Manipulable Whales", "RaveDAO-Type Tokens", "Advanced / Cache"])
 
     with tabs[0]:
-        input_cols = st.columns(4)
-        coin_id = input_cols[0].text_input("CoinGecko coin ID", placeholder="bio-protocol")
-        symbol = input_cols[1].text_input("Symbol", placeholder="BIO")
-        contract = input_cols[2].text_input("Contract address", placeholder="0x...")
-        chain = input_cols[3].selectbox("Chain", ["ethereum", "bsc"], index=0)
+        st.subheader("Universe builder")
+        settings = st.columns(5)
+        coingecko_pages = int(settings[0].number_input("CoinGecko pages", min_value=1, max_value=10, value=4, step=1))
+        oi_top_n = int(settings[1].number_input("Enrich OI top N", min_value=0, max_value=200, value=25, step=5))
+        holder_top_n = int(settings[2].number_input("Holder rows/scan", min_value=100, max_value=1000, value=100, step=100))
+        include_majors = settings[3].checkbox("Include majors", value=True)
+        include_stables = settings[4].checkbox("Include stables", value=True)
 
-        scan_cols = st.columns(4)
-        top_n = int(scan_cols[0].number_input("Top holders", min_value=20, max_value=1000, value=100, step=20))
-        exclude_majors = scan_cols[1].checkbox("Exclude majors", value=True)
-        exclude_stables = scan_cols[2].checkbox("Exclude stablecoins", value=True)
-        exclude_wrapped = scan_cols[3].checkbox("Exclude wrapped assets", value=True)
+        action_cols = st.columns(4)
+        if action_cols[0].button("Build Binance perp universe", type="primary"):
+            with st.spinner("Fetching Binance perpetuals and matching CoinGecko market data..."):
+                builder = BinancePerpUniverseBuilder()
+                candidates = builder.build_candidates(
+                    coingecko_pages=coingecko_pages,
+                    include_majors=include_majors,
+                    include_stables=include_stables,
+                    enrich_open_interest_top_n=oi_top_n,
+                )
+            st.session_state["perp_universe_candidates"] = _candidate_rows(candidates)
+            st.success(f"Loaded {len(candidates)} Binance perpetual candidates.")
 
-        action_cols = st.columns(3)
-        if action_cols[0].button("Scan token", type="primary"):
-            if not (coin_id or symbol or contract):
-                st.error("Enter a CoinGecko ID, symbol, or contract address.")
-            else:
-                scanner = TokenConcentrationScanner(cache=cache)
-                with st.spinner("Resolving metadata, fetching holders, and computing concentration risk..."):
+        candidate_rows = st.session_state.get("perp_universe_candidates", [])
+        candidate_frame = pd.DataFrame(candidate_rows)
+        if not candidate_frame.empty:
+            candidate_frame = candidate_frame.sort_values(["futures_to_spot_volume_ratio", "perp_volume_24h"], ascending=[False, False])
+            st.dataframe(
+                candidate_frame[
+                    [
+                        "symbol",
+                        "base_asset",
+                        "coingecko_id",
+                        "token_name",
+                        "market_cap",
+                        "spot_volume_24h",
+                        "perp_volume_24h",
+                        "futures_to_spot_volume_ratio",
+                        "open_interest_notional",
+                        "oi_to_market_cap_ratio",
+                        "price_change_7d",
+                        "price_change_30d",
+                        "match_confidence",
+                        "skip_reason",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        scan_limit = int(action_cols[1].number_input("Scan top N now", min_value=1, max_value=500, value=25, step=5))
+        if action_cols[2].button("Scan ranked candidates") and candidate_rows:
+            scanner = TokenConcentrationScanner(cache=cache)
+            progress = st.progress(0.0)
+            scanned = 0
+            failures: list[str] = []
+            candidates = [_candidate_from_row(row) for row in candidate_frame.head(scan_limit).to_dict("records")]
+            for index, candidate in enumerate(candidates, start=1):
+                progress.progress(index / max(1, len(candidates)))
+                if not candidate.coingecko_id:
+                    failures.append(f"{candidate.symbol}: no CoinGecko match")
+                    continue
+                try:
                     result = scanner.scan(
-                        ScannerInput(
-                            coin_id=coin_id.strip() or None,
-                            symbol=symbol.strip() or None,
-                            contract_address=contract.strip() or None,
-                            chain=chain,
-                            top_n=top_n,
-                            exclude_majors=exclude_majors,
-                            exclude_stablecoins=exclude_stables,
-                            exclude_wrapped_assets=exclude_wrapped,
-                        )
+                        ScannerInput(coin_id=candidate.coingecko_id, chain="", top_n=holder_top_n),
+                        perp_context=candidate.context(),
                     )
-                st.session_state["last_concentration_result"] = result
-                st.rerun()
+                    st.session_state["last_concentration_result"] = result
+                    scanned += 1
+                except Exception as exc:
+                    failures.append(f"{candidate.symbol}: {exc}")
+            st.success(f"Scanned {scanned} Binance perp token contracts.")
+            if failures:
+                st.warning("Some symbols could not be scanned: " + "; ".join(failures[:12]))
 
-        if action_cols[1].button("Load acceptance fixtures"):
-            for fixture_result in acceptance_fixture_results():
-                cache.upsert_result(fixture_result)
-            st.success("Loaded RaveDAO, LAB, BIO, and wrapped KAVA acceptance fixtures.")
-
-        cached_rows = cache.list_rows()
-        if action_cols[2].button("Show most recent cached scan") and cached_rows:
-            st.session_state["last_concentration_result"] = cache.load_result(cached_rows[0]["cache_key"])
-            st.rerun()
+        if action_cols[3].button("Queue all matched perps") and candidate_rows:
+            matched = [row for row in candidate_rows if row.get("coingecko_id")]
+            cache.enqueue("binance_perp_concentration", {"candidates": matched, "holder_top_n": holder_top_n})
+            st.success(f"Queued {len(matched)} matched Binance perpetuals for batch scanning.")
 
         result = st.session_state.get("last_concentration_result")
         if result is not None:
             _render_concentration_result(result)
-        else:
-            st.info("Run a scan or load the acceptance fixtures to populate the scanner.")
 
     with tabs[1]:
         frame = cache_rows_to_frame(cache.list_rows())
         if frame.empty:
-            st.info("No cached concentration scans yet.")
+            st.info("No cached Binance perp concentration scans yet.")
         else:
             filter_cols = st.columns(5)
-            only_unknown_top = filter_cols[0].checkbox("Unknown top holder only")
-            top1_over_20 = filter_cols[1].checkbox("Top 1 >20%")
+            pre_ignition_only = filter_cols[0].checkbox("Pre-ignition only", value=False)
+            top1_over_20 = filter_cols[1].checkbox("Raw top 1 >20%")
             top5_over_60 = filter_cols[2].checkbox("Top 5 >60%")
-            raw100_over_95 = filter_cols[3].checkbox("Top 100 >95%")
-            extreme_only = filter_cols[4].checkbox("Extreme only")
+            perps_spot_5 = filter_cols[3].checkbox("Futures/spot >5x")
+            high_master = filter_cols[4].checkbox("High/Extreme master")
             filtered = frame.copy()
-            if only_unknown_top:
-                filtered = filtered[filtered["top_1_category"].isin(["unknown_wallet", "unknown_contract", "unexplained_whale", "possible_insider"])]
+            if pre_ignition_only:
+                price_7d = pd.to_numeric(filtered["price_change_7d"], errors="coerce")
+                price_30d = pd.to_numeric(filtered["price_change_30d"], errors="coerce")
+                filtered = filtered[(price_7d.between(20, 100, inclusive="both")) | (price_30d.between(50, 300, inclusive="both"))]
             if top1_over_20:
-                filtered = filtered[filtered["raw_top_1_pct"] > 20]
+                filtered = filtered[pd.to_numeric(filtered["raw_top_1_pct"], errors="coerce") > 20]
             if top5_over_60:
-                filtered = filtered[filtered["raw_top_5_pct"] > 60]
-            if raw100_over_95:
-                filtered = filtered[filtered["raw_top_100_pct"] > 95]
-            if extreme_only:
-                filtered = filtered[filtered["risk_label"] == "Extreme"]
+                filtered = filtered[pd.to_numeric(filtered["raw_top_5_pct"], errors="coerce") > 60]
+            if perps_spot_5:
+                filtered = filtered[pd.to_numeric(filtered["futures_to_spot_volume_ratio"], errors="coerce") > 5]
+            if high_master:
+                filtered = filtered[filtered["master_label"].isin(["High", "Extreme"])]
             sort_cols = [
-                "adjusted_top_1_pct",
-                "largest_unexplained_holder_pct",
+                "master_score",
+                "largest_manipulable_holder_pct",
+                "cluster_manipulable_supply_pct",
                 "adjusted_top_5_pct",
-                "risk_score",
+                "futures_to_spot_volume_ratio",
+                "oi_to_adjusted_float_market_cap_ratio",
                 "ravedao_archetype_score",
             ]
             filtered = filtered.sort_values(sort_cols, ascending=[False] * len(sort_cols))
             display_cols = [
+                "binance_symbol",
                 "token",
                 "symbol",
                 "chain",
@@ -6153,6 +6211,16 @@ def render_concentration_dashboard() -> None:
                 "market_cap",
                 "fdv",
                 "volume_24h",
+                "perp_volume_24h",
+                "spot_volume_24h",
+                "futures_to_spot_volume_ratio",
+                "open_interest_notional",
+                "oi_to_market_cap_ratio",
+                "oi_to_adjusted_float_market_cap_ratio",
+                "volume_to_adjusted_float_market_cap",
+                "master_score",
+                "master_label",
+                "pre_pump_risk_score",
                 "price_change_24h",
                 "price_change_7d",
                 "price_change_30d",
@@ -6165,6 +6233,8 @@ def render_concentration_dashboard() -> None:
                 "adjusted_top_5_pct",
                 "adjusted_top_10_pct",
                 "largest_unexplained_holder_pct",
+                "largest_manipulable_holder_pct",
+                "cluster_manipulable_supply_pct",
                 "top_1_label",
                 "top_1_category",
                 "top_1_confidence",
@@ -6174,11 +6244,78 @@ def render_concentration_dashboard() -> None:
                 "ravedao_archetype_score",
                 "risk_score",
                 "risk_label",
+                "master_reasons",
                 "key_flags",
             ]
             st.dataframe(filtered[[col for col in display_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
 
     with tabs[2]:
+        frame = cache_rows_to_frame(cache.list_rows())
+        if frame.empty:
+            st.info("No cached manipulable-whale scans yet.")
+        else:
+            filter_cols = st.columns(6)
+            exclude_cex = filter_cols[0].checkbox("Exclude CEX top holders", value=True)
+            exclude_storage = filter_cols[1].checkbox("Exclude storage top holders", value=False)
+            holder_over_10 = filter_cols[2].checkbox("Top manipulable >10%")
+            holder_over_20 = filter_cols[3].checkbox("Top manipulable >20%")
+            cluster_over_20 = filter_cols[4].checkbox("Cluster >20%")
+            high_confidence = filter_cols[5].checkbox("High confidence only")
+            hide_wrapped = st.checkbox("Hide wrapped/bridged representations", value=True)
+            filtered = frame.copy()
+            if hide_wrapped and "wrapped_representation_warning" in filtered.columns:
+                filtered = filtered[~filtered["wrapped_representation_warning"].fillna(False).astype(bool)]
+            if exclude_cex:
+                filtered = filtered[filtered["top_1_category"] != "exchange"]
+            if exclude_storage:
+                filtered = filtered[~filtered["top_1_category"].isin(["bridge", "wrapper", "liquidity_pool", "burn", "vesting", "treasury", "treasury_reserve", "dao_multisig_reserve", "protocol_contract", "protocol_storage"])]
+            if holder_over_10:
+                filtered = filtered[filtered["largest_manipulable_holder_pct"] > 10]
+            if holder_over_20:
+                filtered = filtered[filtered["largest_manipulable_holder_pct"] > 20]
+            if cluster_over_20:
+                filtered = filtered[filtered["cluster_manipulable_supply_pct"] > 20]
+            if high_confidence:
+                filtered = filtered[filtered["cluster_confidence"].isin(["high", "medium"])]
+            sort_cols = [
+                "largest_manipulable_holder_pct",
+                "manipulable_whale_score",
+                "cluster_manipulable_supply_pct",
+                "filtered_top_5_manipulable_pct",
+            ]
+            filtered = filtered.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+            whale_cols = [
+                "binance_symbol",
+                "token",
+                "symbol",
+                "chain",
+                "contract",
+                "price",
+                "market_cap",
+                "fdv",
+                "perp_volume_24h",
+                "spot_volume_24h",
+                "futures_to_spot_volume_ratio",
+                "open_interest_notional",
+                "largest_manipulable_holder_pct",
+                "largest_manipulable_holder_address",
+                "largest_manipulable_holder_category",
+                "largest_manipulable_holder_score",
+                "filtered_top_5_manipulable_pct",
+                "filtered_top_10_manipulable_pct",
+                "cluster_manipulable_supply_pct",
+                "cluster_confidence",
+                "cex_storage_supply_pct",
+                "treasury_storage_supply_pct",
+                "vesting_lockup_supply_pct",
+                "supply_overhang_score",
+                "manipulable_whale_score",
+                "key_forensic_flags",
+                "confidence",
+            ]
+            st.dataframe(filtered[[col for col in whale_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
+
+    with tabs[3]:
         frame = cache_rows_to_frame(cache.list_rows())
         if frame.empty:
             st.info("No cached RaveDAO-type scans yet.")
@@ -6246,69 +6383,39 @@ def render_concentration_dashboard() -> None:
             ]
             st.dataframe(filtered[[col for col in rave_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
 
-    with tabs[3]:
-        frame = cache_rows_to_frame(cache.list_rows())
-        if frame.empty:
-            st.info("No cached manipulable-whale scans yet.")
-        else:
-            filter_cols = st.columns(6)
-            exclude_cex = filter_cols[0].checkbox("Exclude CEX top holders", value=True)
-            exclude_storage = filter_cols[1].checkbox("Exclude storage top holders", value=False)
-            holder_over_10 = filter_cols[2].checkbox("Top manipulable >10%")
-            holder_over_20 = filter_cols[3].checkbox("Top manipulable >20%")
-            cluster_over_20 = filter_cols[4].checkbox("Cluster >20%")
-            high_confidence = filter_cols[5].checkbox("High confidence only")
-            hide_wrapped = st.checkbox("Hide wrapped/bridged representations", value=True)
-            filtered = frame.copy()
-            if hide_wrapped and "wrapped_representation_warning" in filtered.columns:
-                filtered = filtered[~filtered["wrapped_representation_warning"].fillna(False).astype(bool)]
-            if exclude_cex:
-                filtered = filtered[filtered["top_1_category"] != "exchange"]
-            if exclude_storage:
-                filtered = filtered[~filtered["top_1_category"].isin(["bridge", "wrapper", "liquidity_pool", "burn", "vesting", "treasury", "treasury_reserve", "dao_multisig_reserve", "protocol_contract", "protocol_storage"])]
-            if holder_over_10:
-                filtered = filtered[filtered["largest_manipulable_holder_pct"] > 10]
-            if holder_over_20:
-                filtered = filtered[filtered["largest_manipulable_holder_pct"] > 20]
-            if cluster_over_20:
-                filtered = filtered[filtered["cluster_manipulable_supply_pct"] > 20]
-            if high_confidence:
-                filtered = filtered[filtered["cluster_confidence"].isin(["high", "medium"])]
-            sort_cols = [
-                "largest_manipulable_holder_pct",
-                "manipulable_whale_score",
-                "cluster_manipulable_supply_pct",
-                "filtered_top_5_manipulable_pct",
-            ]
-            filtered = filtered.sort_values(sort_cols, ascending=[False] * len(sort_cols))
-            whale_cols = [
-                "token",
-                "symbol",
-                "chain",
-                "contract",
-                "price",
-                "market_cap",
-                "fdv",
-                "volume_24h",
-                "largest_manipulable_holder_pct",
-                "largest_manipulable_holder_address",
-                "largest_manipulable_holder_category",
-                "largest_manipulable_holder_score",
-                "filtered_top_5_manipulable_pct",
-                "filtered_top_10_manipulable_pct",
-                "cluster_manipulable_supply_pct",
-                "cluster_confidence",
-                "cex_storage_supply_pct",
-                "treasury_storage_supply_pct",
-                "vesting_lockup_supply_pct",
-                "supply_overhang_score",
-                "manipulable_whale_score",
-                "key_forensic_flags",
-                "confidence",
-            ]
-            st.dataframe(filtered[[col for col in whale_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
-
     with tabs[4]:
+        st.subheader("Advanced manual tools and cache")
+        with st.expander("Manual single-token scan", expanded=False):
+            input_cols = st.columns(4)
+            coin_id = input_cols[0].text_input("CoinGecko coin ID", placeholder="bio-protocol")
+            symbol = input_cols[1].text_input("Symbol", placeholder="BIO")
+            contract = input_cols[2].text_input("Contract address", placeholder="0x...")
+            chain = input_cols[3].selectbox("Chain", ["ethereum", "bsc"], index=0)
+            top_n = int(st.number_input("Top holders", min_value=20, max_value=1000, value=100, step=20))
+            if st.button("Scan single token"):
+                scanner = TokenConcentrationScanner(cache=cache)
+                result = scanner.scan(
+                    ScannerInput(
+                        coin_id=coin_id.strip() or None,
+                        symbol=symbol.strip() or None,
+                        contract_address=contract.strip() or None,
+                        chain=chain,
+                        top_n=top_n,
+                    )
+                )
+                st.session_state["last_concentration_result"] = result
+                st.rerun()
+
+        if st.button("Load acceptance fixtures"):
+            for fixture_result in acceptance_fixture_results():
+                cache.upsert_result(fixture_result)
+            st.success("Loaded scanner acceptance fixtures.")
+
+        cached_rows = cache.list_rows()
+        if st.button("Show most recent cached scan") and cached_rows:
+            st.session_state["last_concentration_result"] = cache.load_result(cached_rows[0]["cache_key"])
+            st.rerun()
+
         st.subheader("Scanner queue")
         mode = st.selectbox("Mode", ["universe", "pump", "concentration", "dominant_holder", "ravedao_archetype"])
         queue_cols = st.columns(4)
