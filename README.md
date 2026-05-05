@@ -13,3 +13,23 @@
 - restarts automatically if the process exits
 
 Important: Binance USD-M futures currently enforce a 5 USDT minimum notional on listed perpetuals. With about 20 euro of equity, that minimum is reachable without extreme leverage, so the runner no longer allows the 125x tiny-equity mode. Rule 1 is do not blow up the account.
+
+## Crime Pump On-Chain Concentration Scanner
+
+The Streamlit dashboard now includes an `On-Chain Concentration` mode for structural-risk analysis of ERC-20/BEP-20 holder distribution:
+
+- resolves token metadata and chain contracts from CoinGecko
+- fetches top holder data through Etherscan-family explorer adapters for Ethereum and BNB Chain
+- classifies exchange, liquidity pool, bridge, staking, vesting, treasury, multisig, owner/admin, unexplained whale, burn, and unknown holders
+- computes raw and adjusted concentration, adjusted float, Gini, HHI, RaveDAO-type thin-float metrics, controlled-float flags, wrapped-representation guardrails, and structural-risk scores
+- stores scan results in `data/concentration_scanner.sqlite`
+- supports manual holder category overrides with immediate recomputation
+- includes cached fixture scans for RaveDAO-like, LAB-like, BIO-like, and wrapped KAVA-like acceptance cases
+
+API keys are read from environment variables only:
+
+- `COINGECKO_API_KEY`
+- `ETHERSCAN_API_KEY`
+- `BSCSCAN_API_KEY`
+
+The scanner uses structural-risk language only. It does not generate legal conclusions from on-chain data alone.

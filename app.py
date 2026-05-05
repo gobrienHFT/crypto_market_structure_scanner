@@ -13,6 +13,9 @@ import streamlit as st
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic
 from breakouts import BreakoutRow, levels_from_klines
 from cmc_movers import fetch_cmc_movers
+from concentration_scanner import HolderRecord, ManualOverride, ScanCache, ScannerInput, TokenConcentrationScanner
+from concentration_scanner.fixtures import acceptance_fixture_results
+from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
 from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from external_markets import (
@@ -5841,12 +5844,392 @@ def render_pnl_dashboard() -> None:
         st.write(f"- Current benchmark baseline: {_format_pnl(baseline_balance, pnl_currency)}")
 
 
-st.caption("Switch between the breakout scanner, the new cross-asset screener, and the Binance PnL dashboard.")
-dashboard_mode = st.radio("Dashboard", ("Breakouts", "Screener", "PnL"), horizontal=True)
+def _concentration_cache() -> ScanCache:
+    return ScanCache(APP_DIR / "data" / "concentration_scanner.sqlite")
+
+
+def _raw_holder(holder: Any) -> HolderRecord:
+    raw = holder.raw_holder if hasattr(holder, "raw_holder") else holder
+    return HolderRecord(
+        rank=raw.rank,
+        address=raw.address,
+        label=raw.label,
+        balance_raw=raw.balance_raw,
+        balance_decimal=raw.balance_decimal,
+        pct_total_supply=raw.pct_total_supply,
+        value_usd=raw.value_usd,
+        is_contract=raw.is_contract,
+        explorer_url=raw.explorer_url,
+        first_seen_token_transfer=raw.first_seen_token_transfer,
+        last_seen_token_transfer=raw.last_seen_token_transfer,
+        recent_inflows=raw.recent_inflows,
+        recent_outflows=raw.recent_outflows,
+        net_balance_change_24h=raw.net_balance_change_24h,
+        net_balance_change_7d=raw.net_balance_change_7d,
+        gas_funder=raw.gas_funder,
+        token_source=raw.token_source,
+        funding_source=raw.funding_source,
+    )
+
+
+def _render_concentration_result(result: Any) -> None:
+    st.subheader(f"{result.token.name} ({result.token.symbol})")
+    st.caption(
+        f"{result.chain.upper()} contract {result.contract_address} | status {result.status.scanner_status} | "
+        f"holder snapshot {result.status.last_holder_fetch_at or 'fixture/manual'}"
+    )
+    if result.status.scanner_error:
+        st.warning(result.status.scanner_error)
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Risk Label", result.scores.risk_label)
+    metric_cols[1].metric("Risk Score", f"{result.scores.composite_structural_manipulation_risk_score:.1f}")
+    metric_cols[2].metric("RaveDAO Score", f"{result.scores.ravedao_archetype_score:.1f}")
+    metric_cols[3].metric("Raw Top 1", f"{result.concentration.raw_top_1_pct:.2f}%")
+    metric_cols[4].metric("Adjusted Top 1", f"{result.concentration.adjusted_top_1_pct:.2f}%")
+
+    st.info(result.summary)
+    if result.representation.wrapped_representation_warning:
+        st.warning(
+            "This holder table appears to be a wrapped or chain-specific representation. "
+            "Global ownership should not be inferred without native-chain holder data."
+        )
+
+    tabs = st.tabs(["Holders", "Risk Model", "Thin-Float View", "Contract Controls", "Manual Overrides"])
+
+    with tabs[0]:
+        holders_df = pd.DataFrame(
+            [
+                {
+                    "rank": h.rank,
+                    "address": h.address,
+                    "label": h.label,
+                    "category": h.holder_category,
+                    "pct_total_supply": h.pct_total_supply,
+                    "balance": h.balance_decimal,
+                    "excluded_from_adjusted_float": h.excluded_from_adjusted_float,
+                    "owner_relation": h.owner_relation,
+                    "round_allocation": h.is_round_allocation,
+                    "confidence": h.evidence_confidence,
+                    "notes": h.evidence_notes,
+                }
+                for h in result.holders
+            ]
+        )
+        st.dataframe(holders_df, use_container_width=True, hide_index=True)
+
+    with tabs[1]:
+        risk_cols = st.columns(2)
+        score_row = {
+            "concentration_score": result.scores.concentration_score,
+            "unexplained_whale_score": result.scores.unexplained_whale_score,
+            "owner_related_score": result.scores.owner_related_score,
+            "protocol_control_score": result.scores.protocol_control_score,
+            "exchange_inventory_score": result.scores.exchange_inventory_score,
+            "contract_admin_score": result.scores.contract_admin_score,
+            "controlled_float_score": result.scores.controlled_float_score,
+            "distribution_risk_score": result.scores.distribution_risk_score,
+            "ravedao_archetype_score": result.scores.ravedao_archetype_score,
+        }
+        risk_cols[0].dataframe(pd.DataFrame([score_row]).T.rename(columns={0: "score"}), use_container_width=True)
+        active_flags = [name for name, value in vars(result.flags).items() if isinstance(value, bool) and value]
+        risk_cols[1].write("Active structural-risk flags")
+        risk_cols[1].dataframe(pd.DataFrame({"flag": active_flags}), use_container_width=True, hide_index=True)
+
+    with tabs[2]:
+        thin = result.thin_float
+        thin_cols = st.columns(4)
+        thin_cols[0].metric("ATH Multiple", f"{thin.ath_multiple_from_atl:.2f}x" if thin.ath_multiple_from_atl is not None else "n/a")
+        thin_cols[1].metric("Drawdown From ATH", f"{thin.current_drawdown_from_ath_pct:.2f}%" if thin.current_drawdown_from_ath_pct is not None else "n/a")
+        thin_cols[2].metric("Non-Top-100 Float", f"{thin.estimated_non_top100_float_pct:.4f}%")
+        thin_cols[3].metric("FDV / Market Cap", f"{thin.fdv_to_market_cap_ratio:.2f}x" if thin.fdv_to_market_cap_ratio is not None else "n/a")
+        st.dataframe(pd.DataFrame([thin.__dict__]), use_container_width=True, hide_index=True)
+
+    with tabs[3]:
+        st.dataframe(pd.DataFrame([result.contract_control.__dict__]), use_container_width=True, hide_index=True)
+
+    with tabs[4]:
+        st.caption("Override a holder category, then recompute adjusted float and structural-risk scores immediately.")
+        if result.holders:
+            holder_options = {
+                f"#{h.rank} {h.address[:10]}... {h.holder_category}": h.address
+                for h in result.holders
+            }
+            selected_holder = st.selectbox("Holder", list(holder_options), key="concentration_override_holder")
+            categories = [
+                "exchange",
+                "liquidity_pool",
+                "bridge",
+                "staking",
+                "vesting",
+                "treasury",
+                "dao_multisig",
+                "protocol_contract",
+                "deployer",
+                "owner",
+                "admin",
+                "proxy_admin",
+                "market_maker",
+                "possible_insider",
+                "unexplained_whale",
+                "unknown_wallet",
+                "unknown_contract",
+                "real_wallet",
+                "burn",
+            ]
+            category = st.selectbox("Override category", categories, key="concentration_override_category")
+            excluded = st.checkbox("Exclude from adjusted float", value=category in {"exchange", "liquidity_pool", "bridge", "burn", "staking", "vesting", "treasury", "protocol_contract"})
+            note = st.text_input("Override note", value="manual analyst override")
+            if st.button("Apply override and recompute"):
+                scanner = TokenConcentrationScanner(cache=_concentration_cache())
+                recomputed = scanner.build_result(
+                    market=result.token,
+                    chain=result.chain,
+                    contract=result.contract_address,
+                    holders=[_raw_holder(holder) for holder in result.holders],
+                    contract_control=result.contract_control,
+                    market_fetch_at=result.status.last_market_data_fetch_at,
+                    holder_fetch_at=result.status.last_holder_fetch_at,
+                    scanner_error=result.status.scanner_error,
+                    partial=result.concentration.partial_result,
+                    overrides=[
+                        ManualOverride(
+                            address=holder_options[selected_holder],
+                            holder_category=category,
+                            excluded_from_adjusted_float=excluded,
+                            note=note,
+                        )
+                    ],
+                    status=result.status,
+                )
+                _concentration_cache().upsert_result(recomputed)
+                st.session_state["last_concentration_result"] = recomputed
+                st.rerun()
+
+
+def render_concentration_dashboard() -> None:
+    st.title("On-Chain Token Concentration Scanner")
+    st.caption(
+        "Structural-risk scanner for holder concentration, controlled-float structures, RaveDAO-type thin-float distortion, "
+        "and wrapped-representation guardrails. Outputs are not legal conclusions and require wallet identity investigation."
+    )
+
+    cache = _concentration_cache()
+    tabs = st.tabs(["Manual Scan", "Global Concentration Leaderboard", "RaveDAO-Type Tokens", "Scanner Queue / Cache"])
+
+    with tabs[0]:
+        input_cols = st.columns(4)
+        coin_id = input_cols[0].text_input("CoinGecko coin ID", placeholder="bio-protocol")
+        symbol = input_cols[1].text_input("Symbol", placeholder="BIO")
+        contract = input_cols[2].text_input("Contract address", placeholder="0x...")
+        chain = input_cols[3].selectbox("Chain", ["ethereum", "bsc"], index=0)
+
+        scan_cols = st.columns(4)
+        top_n = int(scan_cols[0].number_input("Top holders", min_value=20, max_value=1000, value=100, step=20))
+        exclude_majors = scan_cols[1].checkbox("Exclude majors", value=True)
+        exclude_stables = scan_cols[2].checkbox("Exclude stablecoins", value=True)
+        exclude_wrapped = scan_cols[3].checkbox("Exclude wrapped assets", value=True)
+
+        action_cols = st.columns(3)
+        if action_cols[0].button("Scan token", type="primary"):
+            if not (coin_id or symbol or contract):
+                st.error("Enter a CoinGecko ID, symbol, or contract address.")
+            else:
+                scanner = TokenConcentrationScanner(cache=cache)
+                with st.spinner("Resolving metadata, fetching holders, and computing concentration risk..."):
+                    result = scanner.scan(
+                        ScannerInput(
+                            coin_id=coin_id.strip() or None,
+                            symbol=symbol.strip() or None,
+                            contract_address=contract.strip() or None,
+                            chain=chain,
+                            top_n=top_n,
+                            exclude_majors=exclude_majors,
+                            exclude_stablecoins=exclude_stables,
+                            exclude_wrapped_assets=exclude_wrapped,
+                        )
+                    )
+                st.session_state["last_concentration_result"] = result
+                st.rerun()
+
+        if action_cols[1].button("Load acceptance fixtures"):
+            for fixture_result in acceptance_fixture_results():
+                cache.upsert_result(fixture_result)
+            st.success("Loaded RaveDAO, LAB, BIO, and wrapped KAVA acceptance fixtures.")
+
+        cached_rows = cache.list_rows()
+        if action_cols[2].button("Show most recent cached scan") and cached_rows:
+            st.session_state["last_concentration_result"] = cache.load_result(cached_rows[0]["cache_key"])
+            st.rerun()
+
+        result = st.session_state.get("last_concentration_result")
+        if result is not None:
+            _render_concentration_result(result)
+        else:
+            st.info("Run a scan or load the acceptance fixtures to populate the scanner.")
+
+    with tabs[1]:
+        frame = cache_rows_to_frame(cache.list_rows())
+        if frame.empty:
+            st.info("No cached concentration scans yet.")
+        else:
+            filter_cols = st.columns(5)
+            only_unknown_top = filter_cols[0].checkbox("Unknown top holder only")
+            top1_over_20 = filter_cols[1].checkbox("Top 1 >20%")
+            top5_over_60 = filter_cols[2].checkbox("Top 5 >60%")
+            raw100_over_95 = filter_cols[3].checkbox("Top 100 >95%")
+            extreme_only = filter_cols[4].checkbox("Extreme only")
+            filtered = frame.copy()
+            if only_unknown_top:
+                filtered = filtered[filtered["top_1_category"].isin(["unknown_wallet", "unknown_contract", "unexplained_whale", "possible_insider"])]
+            if top1_over_20:
+                filtered = filtered[filtered["raw_top_1_pct"] > 20]
+            if top5_over_60:
+                filtered = filtered[filtered["raw_top_5_pct"] > 60]
+            if raw100_over_95:
+                filtered = filtered[filtered["raw_top_100_pct"] > 95]
+            if extreme_only:
+                filtered = filtered[filtered["risk_label"] == "Extreme"]
+            sort_cols = [
+                "adjusted_top_1_pct",
+                "largest_unexplained_holder_pct",
+                "adjusted_top_5_pct",
+                "risk_score",
+                "ravedao_archetype_score",
+            ]
+            filtered = filtered.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+            display_cols = [
+                "token",
+                "symbol",
+                "chain",
+                "contract",
+                "price",
+                "market_cap",
+                "fdv",
+                "volume_24h",
+                "price_change_24h",
+                "price_change_7d",
+                "price_change_30d",
+                "circulating_supply_pct",
+                "raw_top_1_pct",
+                "raw_top_5_pct",
+                "raw_top_10_pct",
+                "raw_top_100_pct",
+                "adjusted_top_1_pct",
+                "adjusted_top_5_pct",
+                "adjusted_top_10_pct",
+                "largest_unexplained_holder_pct",
+                "top_1_label",
+                "top_1_category",
+                "top_1_confidence",
+                "excluded_supply_pct",
+                "gini",
+                "holder_hhi_index",
+                "ravedao_archetype_score",
+                "risk_score",
+                "risk_label",
+                "key_flags",
+            ]
+            st.dataframe(filtered[[col for col in display_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
+
+    with tabs[2]:
+        frame = cache_rows_to_frame(cache.list_rows())
+        if frame.empty:
+            st.info("No cached RaveDAO-type scans yet.")
+        else:
+            filter_cols = st.columns(5)
+            ath20 = filter_cols[0].checkbox("ATH multiple >20x", value=False)
+            top5_90 = filter_cols[1].checkbox("Top 5 >90%", value=False)
+            top100_99 = filter_cols[2].checkbox("Top 100 >99%", value=False)
+            peak_1bn = filter_cols[3].checkbox("Peak market cap >1bn", value=False)
+            extreme_rave = filter_cols[4].checkbox("Extreme RaveDAO only", value=False)
+            filtered = frame.copy()
+            if ath20:
+                filtered = filtered[filtered["ath_multiple_from_atl"] > 20]
+            if top5_90:
+                filtered = filtered[filtered["raw_top_5_pct"] > 90]
+            if top100_99:
+                filtered = filtered[filtered["raw_top_100_pct"] > 99]
+            if peak_1bn:
+                filtered = filtered[filtered["peak_market_cap"] > 1_000_000_000]
+            if extreme_rave:
+                filtered = filtered[filtered["ravedao_archetype_score"] >= 75]
+            sort_cols = [
+                "ravedao_archetype_score",
+                "ath_multiple_from_atl",
+                "raw_top_1_pct",
+                "raw_top_5_pct",
+                "peak_market_cap",
+                "current_drawdown_from_ath_pct",
+            ]
+            filtered = filtered.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+            rave_cols = [
+                "token",
+                "symbol",
+                "chain",
+                "contract",
+                "current_price",
+                "all_time_low_price",
+                "all_time_high_price",
+                "ath_multiple_from_atl",
+                "current_drawdown_from_ath_pct",
+                "current_market_cap",
+                "peak_market_cap",
+                "current_fdv",
+                "peak_fdv",
+                "raw_top_1_pct",
+                "raw_top_5_pct",
+                "raw_top_10_pct",
+                "raw_top_100_pct",
+                "adjusted_top_1_pct",
+                "adjusted_top_5_pct",
+                "largest_unexplained_holder_pct",
+                "top_1_label",
+                "top_1_category",
+                "top_1_confidence",
+                "estimated_non_top100_float_pct",
+                "estimated_non_top10_float_pct",
+                "peak_value_of_non_top100_float",
+                "top_1_wallet_peak_value",
+                "top_5_wallet_peak_value",
+                "gini",
+                "whale_concentration_pct",
+                "ravedao_archetype_score",
+                "risk_label",
+                "key_flags",
+            ]
+            st.dataframe(filtered[[col for col in rave_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
+
+    with tabs[3]:
+        st.subheader("Scanner queue")
+        mode = st.selectbox("Mode", ["universe", "pump", "concentration", "dominant_holder", "ravedao_archetype"])
+        queue_cols = st.columns(4)
+        category = queue_cols[0].text_input("CoinGecko category")
+        top_n_volume = queue_cols[1].number_input("Top N by volume", min_value=0, max_value=500, value=50, step=10)
+        min_holders = queue_cols[2].number_input("Minimum holder count", min_value=0, max_value=10000, value=100, step=50)
+        chain_filter = queue_cols[3].multiselect("Chain filter", ["ethereum", "bsc"], default=["ethereum", "bsc"])
+        if st.button("Queue scanner job"):
+            cache.enqueue(
+                mode,
+                {
+                    "category": category,
+                    "top_n_by_volume": top_n_volume,
+                    "minimum_holder_count": min_holders,
+                    "chain_filter": chain_filter,
+                },
+            )
+            st.success("Scanner job queued for the backend batch runner.")
+        st.dataframe(pd.DataFrame(cache.queue_rows()), use_container_width=True, hide_index=True)
+
+
+st.caption("Switch between the breakout scanner, the cross-asset screener, Binance PnL, and on-chain concentration tooling.")
+dashboard_mode = st.radio("Dashboard", ("Breakouts", "Screener", "PnL", "On-Chain Concentration"), horizontal=True)
 
 if dashboard_mode == "Breakouts":
     render_breakout_dashboard()
 elif dashboard_mode == "Screener":
     render_screener_dashboard()
-else:
+elif dashboard_mode == "PnL":
     render_pnl_dashboard()
+else:
+    render_concentration_dashboard()
