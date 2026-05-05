@@ -10,6 +10,7 @@ from .models import (
     ClassifiedHolder,
     ConcentrationMetrics,
     ContractControlStats,
+    ManipulableWhaleMetrics,
     RepresentationStats,
     RiskFlags,
     RiskScores,
@@ -17,6 +18,8 @@ from .models import (
     ThinFloatStats,
     TokenMarketData,
     TokenScanResult,
+    WalletCluster,
+    WalletForensics,
     utc_now_iso,
 )
 
@@ -147,6 +150,9 @@ class ScanCache:
             concentration=ConcentrationMetrics(**payload.get("concentration", {})),
             contract_control=ContractControlStats(**payload.get("contract_control", {})),
             representation=RepresentationStats(**payload.get("representation", {})),
+            manipulable=ManipulableWhaleMetrics(**payload.get("manipulable", {})),
+            wallet_forensics=[WalletForensics(**item) for item in payload.get("wallet_forensics", [])],
+            wallet_clusters=[WalletCluster(**item) for item in payload.get("wallet_clusters", [])],
             thin_float=ThinFloatStats(**payload.get("thin_float", {})),
             scores=RiskScores(**payload.get("scores", {})),
             flags=RiskFlags(**payload.get("flags", {})),

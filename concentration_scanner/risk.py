@@ -4,12 +4,31 @@ from .models import (
     ClassifiedHolder,
     ConcentrationMetrics,
     ContractControlStats,
+    ManipulableWhaleMetrics,
     RepresentationStats,
     RiskFlags,
     RiskScores,
     ThinFloatStats,
     TokenMarketData,
 )
+
+
+BENIGN_STORAGE_CATEGORIES = {
+    "exchange",
+    "bridge",
+    "wrapper",
+    "liquidity_pool",
+    "burn",
+    "staking",
+    "vesting",
+    "treasury",
+    "treasury_reserve",
+    "dao_multisig_reserve",
+    "protocol_contract",
+    "protocol_storage",
+    "claim_distribution_reserve",
+}
+MANUAL_REVIEW_CATEGORIES = {"unknown_contract", "dao_multisig", "market_maker"}
 
 
 def cap_score(value: float) -> float:
@@ -95,8 +114,17 @@ class RiskScoringEngine:
         metrics: ConcentrationMetrics,
         market: TokenMarketData,
         thin: ThinFloatStats,
+        manipulable: ManipulableWhaleMetrics | None = None,
     ) -> RiskFlags:
         top_1_category = holders[0].holder_category if holders else "unknown_wallet"
+        top_holder_benign = top_1_category in BENIGN_STORAGE_CATEGORIES
+        storage_supply = (
+            (manipulable.cex_storage_supply_pct if manipulable else metrics.exchange_supply_pct_top_100)
+            + (manipulable.protocol_storage_supply_pct if manipulable else metrics.protocol_related_supply_pct)
+            + (manipulable.treasury_storage_supply_pct if manipulable else 0.0)
+            + (manipulable.vesting_lockup_supply_pct if manipulable else 0.0)
+            + (manipulable.bridge_wrapper_supply_pct if manipulable else 0.0)
+        )
         circulating_pct = thin.circulating_to_total_supply_pct
         fdv_ratio = thin.fdv_to_market_cap_ratio
         volume_mcap = thin.volume_to_market_cap_ratio
@@ -170,6 +198,22 @@ class RiskScoringEngine:
             fake_headline_market_cap_risk=thin.estimated_non_top100_float_pct < 1 and metrics.raw_top_100_pct > 99,
             thin_float_mark_to_market=thin.estimated_non_top100_float_pct < 5 and (thin.peak_market_cap or 0.0) > 100_000_000,
             peak_valuation_distortion=thin.estimated_non_top100_float_pct < 1 and (thin.peak_market_cap or 0.0) > 1_000_000_000,
+            cex_false_positive_risk=top_1_category == "exchange" and metrics.raw_top_1_pct > 20,
+            custody_dominated_holder_table=(manipulable.cex_storage_supply_pct if manipulable else metrics.exchange_supply_pct_top_100) > 30,
+            storage_dominated_holder_table=storage_supply > 50,
+            top_holder_is_benign_storage=top_holder_benign,
+            top_holder_requires_manual_review=top_1_category in MANUAL_REVIEW_CATEGORIES,
+            deployer_funded_cluster=bool(manipulable and "deployer_funded" in manipulable.key_forensic_flags),
+            same_gas_funder_cluster=bool(manipulable and "same_gas_funder" in manipulable.key_forensic_flags),
+            same_token_source_cluster=bool(manipulable and "same_token_source" in manipulable.key_forensic_flags),
+            cex_distribution_cluster=bool(manipulable and "cex_distribution_after_pump" in manipulable.key_forensic_flags),
+            inactive_then_moved_cluster=bool(manipulable and "balance_decreased_after_price_expansion" in manipulable.key_forensic_flags),
+            multi_token_pump_wallet_cluster=bool(manipulable and "multi_token_pump_wallet_cluster" in manipulable.key_forensic_flags),
+            manipulable_float_perp_squeeze_risk=bool(
+                manipulable
+                and (manipulable.largest_manipulable_holder_pct > 20 or manipulable.cluster_manipulable_supply_pct > 30)
+                and ((thin.volume_to_market_cap_ratio or 0.0) > 1 or (thin.volume_to_float_market_cap_ratio or 0.0) > 1)
+            ),
         )
 
     def compute_scores(
@@ -179,6 +223,7 @@ class RiskScoringEngine:
         contract: ContractControlStats,
         thin: ThinFloatStats,
         flags: RiskFlags,
+        manipulable: ManipulableWhaleMetrics | None = None,
     ) -> RiskScores:
         concentration = cap_score(
             _points(metrics.raw_top_5_pct, [(50, 20), (60, 35), (80, 50)])
@@ -206,8 +251,27 @@ class RiskScoringEngine:
         distribution = cap_score(
             (20 if flags.possible_distribution_wallets else 0)
             + (35 if flags.high_unexplained_whale_control and flags.possible_distribution_wallets else 0)
+            + (50 if flags.cex_distribution_cluster else 0)
+            + (20 if flags.inactive_then_moved_cluster else 0)
         )
         ravedao = self.ravedao_score(metrics=metrics, thin=thin)
+        manipulable_whale = self.manipulable_whale_score(manipulable) if manipulable else 0.0
+        custody = cap_score(((manipulable.cex_storage_supply_pct if manipulable else metrics.exchange_supply_pct_top_100) * 1.4))
+        protocol_storage = cap_score(
+            (
+                (manipulable.protocol_storage_supply_pct if manipulable else metrics.protocol_related_supply_pct)
+                + (manipulable.bridge_wrapper_supply_pct if manipulable else 0.0)
+            )
+            * 1.2
+        )
+        supply_overhang = cap_score(
+            (
+                (manipulable.treasury_storage_supply_pct if manipulable else 0.0)
+                + (manipulable.vesting_lockup_supply_pct if manipulable else 0.0)
+                + (manipulable.protocol_storage_supply_pct if manipulable else metrics.protocol_related_supply_pct)
+            )
+            * 1.3
+        )
         composite = cap_score(
             concentration * 0.20
             + unexplained * 0.20
@@ -222,6 +286,14 @@ class RiskScoringEngine:
             composite = max(composite, 50.0)
         if flags.controlled_float_squeeze_structure:
             composite = max(composite, 75.0 if flags.extreme_controlled_float_squeeze_structure else 50.0)
+        adjusted_after_custody = cap_score(
+            manipulable_whale * 0.55
+            + supply_overhang * 0.20
+            + controlled_float * 0.15
+            + contract.admin_privilege_score * 0.10
+        )
+        if flags.top_holder_is_benign_storage and not flags.extreme_controlled_float_squeeze_structure and not flags.extreme_ravedao_archetype:
+            composite = min(composite, max(adjusted_after_custody, supply_overhang))
         confidence = "high" if not metrics.partial_result and contract.contract_verified else ("medium" if not metrics.partial_result else "low")
         return RiskScores(
             concentration_score=concentration,
@@ -233,10 +305,45 @@ class RiskScoringEngine:
             distribution_risk_score=distribution,
             controlled_float_score=controlled_float,
             ravedao_archetype_score=ravedao,
+            manipulable_whale_score=manipulable_whale,
+            custody_concentration_score=custody,
+            protocol_storage_score=protocol_storage,
+            supply_overhang_score=supply_overhang,
+            adjusted_score_after_custody_filter=adjusted_after_custody,
             composite_structural_manipulation_risk_score=composite,
-            risk_label=risk_label(max(composite, ravedao if ravedao >= 75 else composite)),
+            risk_label=risk_label(max(composite, supply_overhang, ravedao if ravedao >= 75 and not flags.top_holder_is_benign_storage else composite, adjusted_after_custody)),
             confidence=confidence,
         )
+
+    def manipulable_whale_score(self, manipulable: ManipulableWhaleMetrics | None) -> float:
+        if manipulable is None:
+            return 0.0
+        score = manipulable.largest_manipulable_holder_score
+        if manipulable.largest_manipulable_holder_pct > 75:
+            score = max(score, 95)
+        elif manipulable.largest_manipulable_holder_pct > 50:
+            score = max(score, 85)
+        elif manipulable.largest_manipulable_holder_pct > 20:
+            score = max(score, 65)
+        elif manipulable.largest_manipulable_holder_pct > 10:
+            score = max(score, 35)
+        if manipulable.filtered_top_5_manipulable_pct > 70:
+            score = max(score, 90)
+        elif manipulable.filtered_top_5_manipulable_pct > 50:
+            score = max(score, 75)
+        elif manipulable.filtered_top_5_manipulable_pct > 30:
+            score = max(score, 55)
+        if manipulable.cluster_manipulable_supply_pct > 40:
+            score = max(score, 85)
+        elif manipulable.cluster_manipulable_supply_pct > 20:
+            score = max(score, 65)
+        elif manipulable.cluster_manipulable_supply_pct > 10:
+            score = max(score, 40)
+        if "cex_distribution_after_pump" in manipulable.key_forensic_flags:
+            score += 20
+        if "deployer_funded" in manipulable.key_forensic_flags:
+            score += 20
+        return cap_score(score)
 
     def ravedao_score(self, *, metrics: ConcentrationMetrics, thin: ThinFloatStats) -> float:
         score = 0.0
@@ -293,13 +400,29 @@ class RiskScoringEngine:
             "wrapped representation warning": representation.wrapped_representation_warning,
             "Bitget rank-1 inventory dominance": flags.bitget_rank_1_inventory_dominance,
             "round allocation cluster": flags.round_allocation_cluster,
+            "custody false-positive guardrail": flags.cex_false_positive_risk,
+            "storage-dominated holder table": flags.storage_dominated_holder_table,
+            "top holder is benign storage": flags.top_holder_is_benign_storage,
+            "top holder requires manual review": flags.top_holder_requires_manual_review,
+            "deployer-funded cluster": flags.deployer_funded_cluster,
+            "same-gas-funder cluster": flags.same_gas_funder_cluster,
+            "same-token-source cluster": flags.same_token_source_cluster,
+            "CEX distribution cluster": flags.cex_distribution_cluster,
+            "manipulable float perp squeeze risk": flags.manipulable_float_perp_squeeze_risk,
         }
         for label, enabled in mapping.items():
             if enabled:
                 labels.append(label)
         return labels
 
-    def summary(self, *, flags: RiskFlags, representation: RepresentationStats, token_name: str) -> str:
+    def summary(
+        self,
+        *,
+        flags: RiskFlags,
+        representation: RepresentationStats,
+        token_name: str,
+        manipulable: ManipulableWhaleMetrics | None = None,
+    ) -> str:
         name = token_name or "This token"
         if representation.wrapped_representation_warning:
             return (
@@ -318,6 +441,19 @@ class RiskScoringEngine:
                 f"{name} has a controlled-float squeeze structure: low circulating supply, high top-holder concentration, "
                 "visible exchange inventory, round-allocation patterns, and recent price expansion. This does not prove manipulation, "
                 "but it indicates high float-control, liquidation-cascade, and distribution risk."
+            )
+        if flags.top_holder_is_benign_storage and manipulable:
+            return (
+                f"Raw top-holder concentration is high, but the top holder is classified as custody/storage/reserve rather than an anonymous tradable-float whale. "
+                f"After excluding CEX, LP, burn, bridge, wrapper, vesting, lockup, and confirmed reserve/storage addresses, "
+                f"the largest remaining manipulable holder controls {manipulable.largest_manipulable_holder_pct:.2f}% of supply. "
+                f"Supply-overhang risk is tracked separately at {manipulable.treasury_storage_supply_pct + manipulable.vesting_lockup_supply_pct + manipulable.protocol_storage_supply_pct:.2f}%."
+            )
+        if manipulable and manipulable.largest_manipulable_holder_score >= 75:
+            return (
+                f"After excluding custody, storage, vesting, bridges, wrappers, LPs, burns, and confirmed reserves, "
+                f"one {manipulable.largest_manipulable_holder_category} controls {manipulable.largest_manipulable_holder_pct:.2f}% of supply. "
+                "This does not prove manipulation, but it indicates extreme manipulable-whale and distribution risk. Wallet identity investigation is still required."
             )
         if flags.dominant_unexplained_holder or flags.unresolved_dominant_holder:
             return (

@@ -5895,7 +5895,7 @@ def _render_concentration_result(result: Any) -> None:
             "Global ownership should not be inferred without native-chain holder data."
         )
 
-    tabs = st.tabs(["Holders", "Risk Model", "Thin-Float View", "Contract Controls", "Manual Overrides"])
+    tabs = st.tabs(["Holders", "Risk Model", "Manipulable Filter", "Forensics", "Clusters", "Thin-Float View", "Contract Controls", "Manual Overrides"])
 
     with tabs[0]:
         holders_df = pd.DataFrame(
@@ -5937,6 +5937,29 @@ def _render_concentration_result(result: Any) -> None:
         risk_cols[1].dataframe(pd.DataFrame({"flag": active_flags}), use_container_width=True, hide_index=True)
 
     with tabs[2]:
+        whale = result.manipulable
+        whale_cols = st.columns(5)
+        whale_cols[0].metric("Manipulable Whale Score", f"{result.scores.manipulable_whale_score:.1f}")
+        whale_cols[1].metric("Largest Manipulable Holder", f"{whale.largest_manipulable_holder_pct:.2f}%")
+        whale_cols[2].metric("Filtered Top 5", f"{whale.filtered_top_5_manipulable_pct:.2f}%")
+        whale_cols[3].metric("Largest Cluster", f"{whale.cluster_manipulable_supply_pct:.2f}%")
+        whale_cols[4].metric("Supply Overhang", f"{result.scores.supply_overhang_score:.1f}")
+        st.info(whale.evidence_summary or "Manipulable-whale evidence is not available for this scan.")
+        st.dataframe(pd.DataFrame([whale.__dict__]), use_container_width=True, hide_index=True)
+
+    with tabs[3]:
+        if result.wallet_forensics:
+            st.dataframe(pd.DataFrame([item.__dict__ for item in result.wallet_forensics]), use_container_width=True, hide_index=True)
+        else:
+            st.info("Wallet forensics have not been computed for this result.")
+
+    with tabs[4]:
+        if result.wallet_clusters:
+            st.dataframe(pd.DataFrame([item.__dict__ for item in result.wallet_clusters]), use_container_width=True, hide_index=True)
+        else:
+            st.info("No linked top-holder clusters were detected in this sample.")
+
+    with tabs[5]:
         thin = result.thin_float
         thin_cols = st.columns(4)
         thin_cols[0].metric("ATH Multiple", f"{thin.ath_multiple_from_atl:.2f}x" if thin.ath_multiple_from_atl is not None else "n/a")
@@ -5945,10 +5968,10 @@ def _render_concentration_result(result: Any) -> None:
         thin_cols[3].metric("FDV / Market Cap", f"{thin.fdv_to_market_cap_ratio:.2f}x" if thin.fdv_to_market_cap_ratio is not None else "n/a")
         st.dataframe(pd.DataFrame([thin.__dict__]), use_container_width=True, hide_index=True)
 
-    with tabs[3]:
+    with tabs[6]:
         st.dataframe(pd.DataFrame([result.contract_control.__dict__]), use_container_width=True, hide_index=True)
 
-    with tabs[4]:
+    with tabs[7]:
         st.caption("Override a holder category, then recompute adjusted float and structural-risk scores immediately.")
         if result.holders:
             holder_options = {
@@ -5960,11 +5983,16 @@ def _render_concentration_result(result: Any) -> None:
                 "exchange",
                 "liquidity_pool",
                 "bridge",
+                "wrapper",
                 "staking",
                 "vesting",
                 "treasury",
+                "treasury_reserve",
                 "dao_multisig",
+                "dao_multisig_reserve",
                 "protocol_contract",
+                "protocol_storage",
+                "claim_distribution_reserve",
                 "deployer",
                 "owner",
                 "admin",
@@ -5978,7 +6006,25 @@ def _render_concentration_result(result: Any) -> None:
                 "burn",
             ]
             category = st.selectbox("Override category", categories, key="concentration_override_category")
-            excluded = st.checkbox("Exclude from adjusted float", value=category in {"exchange", "liquidity_pool", "bridge", "burn", "staking", "vesting", "treasury", "protocol_contract"})
+            excluded = st.checkbox(
+                "Exclude from adjusted float",
+                value=category
+                in {
+                    "exchange",
+                    "liquidity_pool",
+                    "bridge",
+                    "wrapper",
+                    "burn",
+                    "staking",
+                    "vesting",
+                    "treasury",
+                    "treasury_reserve",
+                    "dao_multisig_reserve",
+                    "protocol_contract",
+                    "protocol_storage",
+                    "claim_distribution_reserve",
+                },
+            )
             note = st.text_input("Override note", value="manual analyst override")
             if st.button("Apply override and recompute"):
                 scanner = TokenConcentrationScanner(cache=_concentration_cache())
@@ -6015,7 +6061,7 @@ def render_concentration_dashboard() -> None:
     )
 
     cache = _concentration_cache()
-    tabs = st.tabs(["Manual Scan", "Global Concentration Leaderboard", "RaveDAO-Type Tokens", "Scanner Queue / Cache"])
+    tabs = st.tabs(["Manual Scan", "Global Concentration Leaderboard", "RaveDAO-Type Tokens", "Manipulable Whales", "Scanner Queue / Cache"])
 
     with tabs[0]:
         input_cols = st.columns(4)
@@ -6201,6 +6247,68 @@ def render_concentration_dashboard() -> None:
             st.dataframe(filtered[[col for col in rave_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
 
     with tabs[3]:
+        frame = cache_rows_to_frame(cache.list_rows())
+        if frame.empty:
+            st.info("No cached manipulable-whale scans yet.")
+        else:
+            filter_cols = st.columns(6)
+            exclude_cex = filter_cols[0].checkbox("Exclude CEX top holders", value=True)
+            exclude_storage = filter_cols[1].checkbox("Exclude storage top holders", value=False)
+            holder_over_10 = filter_cols[2].checkbox("Top manipulable >10%")
+            holder_over_20 = filter_cols[3].checkbox("Top manipulable >20%")
+            cluster_over_20 = filter_cols[4].checkbox("Cluster >20%")
+            high_confidence = filter_cols[5].checkbox("High confidence only")
+            hide_wrapped = st.checkbox("Hide wrapped/bridged representations", value=True)
+            filtered = frame.copy()
+            if hide_wrapped and "wrapped_representation_warning" in filtered.columns:
+                filtered = filtered[~filtered["wrapped_representation_warning"].fillna(False).astype(bool)]
+            if exclude_cex:
+                filtered = filtered[filtered["top_1_category"] != "exchange"]
+            if exclude_storage:
+                filtered = filtered[~filtered["top_1_category"].isin(["bridge", "wrapper", "liquidity_pool", "burn", "vesting", "treasury", "treasury_reserve", "dao_multisig_reserve", "protocol_contract", "protocol_storage"])]
+            if holder_over_10:
+                filtered = filtered[filtered["largest_manipulable_holder_pct"] > 10]
+            if holder_over_20:
+                filtered = filtered[filtered["largest_manipulable_holder_pct"] > 20]
+            if cluster_over_20:
+                filtered = filtered[filtered["cluster_manipulable_supply_pct"] > 20]
+            if high_confidence:
+                filtered = filtered[filtered["cluster_confidence"].isin(["high", "medium"])]
+            sort_cols = [
+                "largest_manipulable_holder_pct",
+                "manipulable_whale_score",
+                "cluster_manipulable_supply_pct",
+                "filtered_top_5_manipulable_pct",
+            ]
+            filtered = filtered.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+            whale_cols = [
+                "token",
+                "symbol",
+                "chain",
+                "contract",
+                "price",
+                "market_cap",
+                "fdv",
+                "volume_24h",
+                "largest_manipulable_holder_pct",
+                "largest_manipulable_holder_address",
+                "largest_manipulable_holder_category",
+                "largest_manipulable_holder_score",
+                "filtered_top_5_manipulable_pct",
+                "filtered_top_10_manipulable_pct",
+                "cluster_manipulable_supply_pct",
+                "cluster_confidence",
+                "cex_storage_supply_pct",
+                "treasury_storage_supply_pct",
+                "vesting_lockup_supply_pct",
+                "supply_overhang_score",
+                "manipulable_whale_score",
+                "key_forensic_flags",
+                "confidence",
+            ]
+            st.dataframe(filtered[[col for col in whale_cols if col in filtered.columns]], use_container_width=True, hide_index=True)
+
+    with tabs[4]:
         st.subheader("Scanner queue")
         mode = st.selectbox("Mode", ["universe", "pump", "concentration", "dominant_holder", "ravedao_archetype"])
         queue_cols = st.columns(4)

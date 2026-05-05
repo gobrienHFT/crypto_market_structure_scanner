@@ -3,8 +3,17 @@ from __future__ import annotations
 from concentration_scanner.chains import ChainRegistry
 from concentration_scanner.classifier import HolderClassifier, ManualOverride
 from concentration_scanner.concentration import ConcentrationEngine
-from concentration_scanner.fixtures import bio_fixture, kava_wrapped_fixture, lab_fixture, ravedao_fixture
+from concentration_scanner.fixtures import (
+    binance_false_positive_fixture,
+    bio_fixture,
+    clean_manipulable_whale_fixture,
+    kava_wrapped_fixture,
+    lab_fixture,
+    ravedao_fixture,
+    tag_reserve_safe_fixture,
+)
 from concentration_scanner.models import HolderRecord, TokenMarketData
+from concentration_scanner.presentation import results_to_frame
 from concentration_scanner.scanner import TokenConcentrationScanner
 
 
@@ -123,11 +132,65 @@ def test_kava_wrapped_acceptance_case_guardrail() -> None:
     assert result.representation.holder_table_not_global_supply
     assert result.representation.native_chain_data_required
     assert result.scores.risk_label != "Extreme" or result.representation.false_positive_concentration_risk
+    assert result.scores.manipulable_whale_score < 25
+    assert result.manipulable.largest_manipulable_holder_pct == 0
+
+
+def test_tag_like_reserve_safe_suppresses_anonymous_whale_score() -> None:
+    result = tag_reserve_safe_fixture()
+    top = result.holders[0]
+    assert top.holder_category in {"treasury_reserve", "dao_multisig_reserve"}
+    assert result.flags.top_holder_is_benign_storage
+    assert result.scores.supply_overhang_score >= 75
+    assert result.scores.manipulable_whale_score < 75
+    assert result.manipulable.largest_manipulable_holder_pct < 10
+    assert "custody/storage/reserve" in result.summary
+
+
+def test_clean_manipulable_whale_ranks_extreme() -> None:
+    result = clean_manipulable_whale_fixture()
+    assert result.manipulable.largest_manipulable_holder_pct == 58.0
+    assert result.scores.manipulable_whale_score == 100
+    assert result.flags.deployer_funded_cluster
+    assert result.flags.same_gas_funder_cluster
+    assert result.flags.cex_distribution_cluster
+    assert result.scores.distribution_risk_score >= 50
+    assert result.manipulable.cluster_manipulable_supply_pct > 20
+
+
+def test_binance_false_positive_is_filtered_from_manipulable_whales() -> None:
+    result = binance_false_positive_fixture()
+    assert result.concentration.raw_top_1_pct == 45
+    assert result.manipulable.cex_storage_supply_pct > 50
+    assert result.flags.cex_false_positive_risk
+    assert result.flags.top_holder_is_benign_storage
+    assert result.scores.manipulable_whale_score < 50
+    assert result.manipulable.largest_manipulable_holder_pct <= 3
+    assert not result.flags.dominant_unexplained_holder
+
+
+def test_manipulable_whales_leaderboard_prioritizes_filtered_whales() -> None:
+    frame = results_to_frame([tag_reserve_safe_fixture(), clean_manipulable_whale_fixture(), binance_false_positive_fixture(), kava_wrapped_fixture()])
+    filtered = frame[~frame["wrapped_representation_warning"].fillna(False)]
+    filtered = filtered.sort_values(
+        ["largest_manipulable_holder_pct", "manipulable_whale_score", "cluster_manipulable_supply_pct"],
+        ascending=[False, False, False],
+    )
+    assert filtered.iloc[0]["symbol"] == "WHALE"
+    assert filtered.loc[filtered["symbol"] == "BCHV", "manipulable_whale_score"].iloc[0] < 50
 
 
 def test_generated_summaries_avoid_legal_accusatory_language() -> None:
     banned = ("confirmed fraud", "confirmed manipulation", "confirmed crime", "illegal", "scam")
-    for result in (ravedao_fixture(), lab_fixture(), bio_fixture(), kava_wrapped_fixture()):
+    for result in (
+        ravedao_fixture(),
+        lab_fixture(),
+        bio_fixture(),
+        kava_wrapped_fixture(),
+        tag_reserve_safe_fixture(),
+        clean_manipulable_whale_fixture(),
+        binance_false_positive_fixture(),
+    ):
         lower = result.summary.lower()
         for phrase in banned:
             assert phrase not in lower

@@ -113,5 +113,93 @@ def kava_wrapped_fixture() -> TokenScanResult:
     return scanner.build_result(market=market, chain="bsc", contract="0xwrappedkava", holders=_holders(percentages, labels))
 
 
+def tag_reserve_safe_fixture() -> TokenScanResult:
+    scanner = TokenConcentrationScanner()
+    percentages = [73.15, 4.0, 0.5, 0.25, 0.2] + [0.05] * 95
+    labels = ["TAG Reserve Safe", "Bitget", "Gate", "", ""]
+    market = TokenMarketData(
+        coin_id="tag-like",
+        name="TAG-like Reserve Token",
+        symbol="TAG",
+        current_price=0.08,
+        market_cap=8_000_000,
+        fully_diluted_valuation=80_000_000,
+        circulating_supply=100_000_000,
+        total_supply=1_000_000_000,
+        volume_24h=2_000_000,
+    )
+    return scanner.build_result(market=market, chain="ethereum", contract="0xtag", holders=_holders(percentages, labels))
+
+
+def clean_manipulable_whale_fixture() -> TokenScanResult:
+    scanner = TokenConcentrationScanner()
+    holders = [
+        HolderRecord(
+            rank=1,
+            address="0x00000000000000000000000000000000000000a1",
+            balance_decimal=580_000_000,
+            pct_total_supply=58.0,
+            gas_funder="0xdeployerfund",
+            token_source="0xdeployer",
+            funding_source="deployer funded fresh purpose-built wallet; sent 5% supply to MEXC CEX deposit after pump",
+            net_balance_change_7d=-50_000_000,
+        ),
+        HolderRecord(
+            rank=2,
+            address="0x00000000000000000000000000000000000000a2",
+            balance_decimal=100_000_000,
+            pct_total_supply=10.0,
+            gas_funder="0xdeployerfund",
+            token_source="0xdeployer",
+            funding_source="same gas funder as deployer",
+        ),
+        HolderRecord(rank=3, address="0x00000000000000000000000000000000000000a3", label="Uniswap LP", balance_decimal=80_000_000, pct_total_supply=8.0, is_contract=True),
+        HolderRecord(rank=4, address="0x00000000000000000000000000000000000000a4", label="Binance", balance_decimal=50_000_000, pct_total_supply=5.0),
+    ]
+    holders.extend(HolderRecord(rank=index, address=f"0x{index:040x}", balance_decimal=500_000, pct_total_supply=0.05) for index in range(5, 101))
+    market = TokenMarketData(
+        coin_id="clean-whale",
+        name="Clean Manipulable Whale",
+        symbol="WHALE",
+        current_price=1.0,
+        market_cap=1_000_000_000,
+        fully_diluted_valuation=1_000_000_000,
+        circulating_supply=1_000_000_000,
+        total_supply=1_000_000_000,
+        volume_24h=1_500_000_000,
+        price_change_30d=2_000,
+        all_time_low_price=0.05,
+        all_time_high_price=1.2,
+        peak_market_cap=1_200_000_000,
+    )
+    return scanner.build_result(market=market, chain="ethereum", contract="0xwhale", holders=holders)
+
+
+def binance_false_positive_fixture() -> TokenScanResult:
+    scanner = TokenConcentrationScanner()
+    percentages = [45, 10, 7, 5, 3] + [0.1] * 95
+    labels = ["Binance Hot Wallet", "Binance Cold Wallet", "Gate", "MEXC", ""]
+    market = TokenMarketData(
+        coin_id="binance-false-positive",
+        name="Binance Custody Heavy",
+        symbol="BCHV",
+        current_price=0.4,
+        market_cap=40_000_000,
+        fully_diluted_valuation=100_000_000,
+        circulating_supply=100_000_000,
+        total_supply=250_000_000,
+        volume_24h=8_000_000,
+    )
+    return scanner.build_result(market=market, chain="bsc", contract="0xbchv", holders=_holders(percentages, labels, supply=250_000_000))
+
+
 def acceptance_fixture_results() -> list[TokenScanResult]:
-    return [ravedao_fixture(), lab_fixture(), bio_fixture(), kava_wrapped_fixture()]
+    return [
+        ravedao_fixture(),
+        lab_fixture(),
+        bio_fixture(),
+        kava_wrapped_fixture(),
+        tag_reserve_safe_fixture(),
+        clean_manipulable_whale_fixture(),
+        binance_false_positive_fixture(),
+    ]

@@ -8,9 +8,11 @@ from .chains import ChainRegistry
 from .classifier import HolderClassifier, ManualOverride
 from .clients import CoinGeckoClient, ExplorerClient
 from .concentration import ConcentrationEngine
+from .manipulable import ManipulableWhaleEngine
 from .models import (
     ContractControlStats,
     HolderRecord,
+    ManipulableWhaleMetrics,
     ScannerStatus,
     TokenMarketData,
     TokenScanResult,
@@ -45,6 +47,7 @@ class TokenConcentrationScanner:
         self.registry = registry or ChainRegistry()
         self.cache = cache
         self.concentration = ConcentrationEngine()
+        self.manipulable = ManipulableWhaleEngine()
         self.risk = RiskScoringEngine()
 
     def resolve_contract(self, scanner_input: ScannerInput) -> tuple[TokenMarketData, str, str]:
@@ -136,9 +139,25 @@ class TokenConcentrationScanner:
             metrics = metrics.__class__(**{**metrics.__dict__, "partial_result": True, "data_confidence": "low"})
         control = contract_control or ContractControlStats()
         thin = self.risk.compute_thin_float_stats(market, metrics)
-        flags = self.risk.compute_flags(holders=classified, metrics=metrics, market=market, thin=thin)
+        manipulable_metrics, wallet_forensics, wallet_clusters = self.manipulable.compute(
+            classified,
+            adjusted_float_supply=metrics.adjusted_float_supply,
+        )
         representation = self.risk.representation_guardrail(inspected_chain=chain, market=market, metrics=metrics)
-        scores = self.risk.compute_scores(metrics=metrics, contract=control, thin=thin, flags=flags)
+        if representation.wrapped_representation_warning:
+            manipulable_metrics = ManipulableWhaleMetrics(
+                cex_storage_supply_pct=manipulable_metrics.cex_storage_supply_pct,
+                protocol_storage_supply_pct=manipulable_metrics.protocol_storage_supply_pct,
+                treasury_storage_supply_pct=manipulable_metrics.treasury_storage_supply_pct,
+                vesting_lockup_supply_pct=manipulable_metrics.vesting_lockup_supply_pct,
+                bridge_wrapper_supply_pct=max(manipulable_metrics.bridge_wrapper_supply_pct, metrics.raw_top_100_pct),
+                key_forensic_flags=["wrapped_representation_guardrail"],
+                evidence_confidence="low",
+                evidence_summary="Wrapped or chain-specific holder data is not treated as global manipulable-whale evidence without native-chain confirmation.",
+            )
+            wallet_clusters = []
+        flags = self.risk.compute_flags(holders=classified, metrics=metrics, market=market, thin=thin, manipulable=manipulable_metrics)
+        scores = self.risk.compute_scores(metrics=metrics, contract=control, thin=thin, flags=flags, manipulable=manipulable_metrics)
         key_flags = self.risk.key_flags(flags, representation)
         status = ScannerStatus(
             last_market_data_fetch_at=market_fetch_at,
@@ -147,7 +166,7 @@ class TokenConcentrationScanner:
             scanner_status="partial" if scanner_error or partial else "complete",
             scanner_error=scanner_error,
         )
-        summary = self.risk.summary(flags=flags, representation=representation, token_name=market.name or market.symbol)
+        summary = self.risk.summary(flags=flags, representation=representation, token_name=market.name or market.symbol, manipulable=manipulable_metrics)
         result = TokenScanResult(
             token=market,
             chain=chain,
@@ -156,6 +175,9 @@ class TokenConcentrationScanner:
             concentration=metrics,
             contract_control=control,
             representation=representation,
+            manipulable=manipulable_metrics,
+            wallet_forensics=wallet_forensics,
+            wallet_clusters=wallet_clusters,
             thin_float=thin,
             scores=scores,
             flags=flags,

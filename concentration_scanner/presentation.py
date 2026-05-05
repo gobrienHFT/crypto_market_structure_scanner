@@ -54,6 +54,25 @@ def result_to_row(result: TokenScanResult) -> dict[str, Any]:
         "holder_hhi_index": result.concentration.holder_hhi_index,
         "whale_concentration_pct": result.concentration.whale_concentration_pct,
         "ravedao_archetype_score": result.scores.ravedao_archetype_score,
+        "manipulable_whale_score": result.scores.manipulable_whale_score,
+        "custody_concentration_score": result.scores.custody_concentration_score,
+        "protocol_storage_score": result.scores.protocol_storage_score,
+        "supply_overhang_score": result.scores.supply_overhang_score,
+        "adjusted_score_after_custody_filter": result.scores.adjusted_score_after_custody_filter,
+        "largest_manipulable_holder_pct": result.manipulable.largest_manipulable_holder_pct,
+        "largest_manipulable_holder_address": result.manipulable.largest_manipulable_holder_address,
+        "largest_manipulable_holder_category": result.manipulable.largest_manipulable_holder_category,
+        "largest_manipulable_holder_score": result.manipulable.largest_manipulable_holder_score,
+        "filtered_top_5_manipulable_pct": result.manipulable.filtered_top_5_manipulable_pct,
+        "filtered_top_10_manipulable_pct": result.manipulable.filtered_top_10_manipulable_pct,
+        "cluster_manipulable_supply_pct": result.manipulable.cluster_manipulable_supply_pct,
+        "cluster_confidence": result.manipulable.cluster_confidence,
+        "cex_storage_supply_pct": result.manipulable.cex_storage_supply_pct,
+        "treasury_storage_supply_pct": result.manipulable.treasury_storage_supply_pct,
+        "vesting_lockup_supply_pct": result.manipulable.vesting_lockup_supply_pct,
+        "key_forensic_flags": ", ".join(result.manipulable.key_forensic_flags),
+        "wrapped_representation_warning": result.representation.wrapped_representation_warning,
+        "holder_table_not_global_supply": result.representation.holder_table_not_global_supply,
         "risk_score": result.scores.composite_structural_manipulation_risk_score,
         "risk_label": result.scores.risk_label,
         "confidence": result.scores.confidence,
@@ -79,9 +98,11 @@ def cache_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
         token = payload.get("token", {})
         concentration = payload.get("concentration", {})
         scores = payload.get("scores", {})
+        manipulable = payload.get("manipulable", {})
         thin = payload.get("thin_float", {})
         holders = payload.get("holders", [])
         top_1 = holders[0] if holders else {}
+        representation = payload.get("representation", {})
         parsed.append(
             {
                 "token": token.get("name") or row.get("token_name"),
@@ -127,6 +148,25 @@ def cache_rows_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "holder_hhi_index": concentration.get("holder_hhi_index"),
                 "whale_concentration_pct": concentration.get("whale_concentration_pct"),
                 "ravedao_archetype_score": scores.get("ravedao_archetype_score") or row.get("ravedao_score"),
+                "manipulable_whale_score": scores.get("manipulable_whale_score"),
+                "custody_concentration_score": scores.get("custody_concentration_score"),
+                "protocol_storage_score": scores.get("protocol_storage_score"),
+                "supply_overhang_score": scores.get("supply_overhang_score"),
+                "adjusted_score_after_custody_filter": scores.get("adjusted_score_after_custody_filter"),
+                "largest_manipulable_holder_pct": manipulable.get("largest_manipulable_holder_pct"),
+                "largest_manipulable_holder_address": manipulable.get("largest_manipulable_holder_address"),
+                "largest_manipulable_holder_category": manipulable.get("largest_manipulable_holder_category"),
+                "largest_manipulable_holder_score": manipulable.get("largest_manipulable_holder_score"),
+                "filtered_top_5_manipulable_pct": manipulable.get("filtered_top_5_manipulable_pct"),
+                "filtered_top_10_manipulable_pct": manipulable.get("filtered_top_10_manipulable_pct"),
+                "cluster_manipulable_supply_pct": manipulable.get("cluster_manipulable_supply_pct"),
+                "cluster_confidence": manipulable.get("cluster_confidence"),
+                "cex_storage_supply_pct": manipulable.get("cex_storage_supply_pct"),
+                "treasury_storage_supply_pct": manipulable.get("treasury_storage_supply_pct"),
+                "vesting_lockup_supply_pct": manipulable.get("vesting_lockup_supply_pct"),
+                "key_forensic_flags": ", ".join(manipulable.get("key_forensic_flags", [])),
+                "wrapped_representation_warning": representation.get("wrapped_representation_warning"),
+                "holder_table_not_global_supply": representation.get("holder_table_not_global_supply"),
                 "risk_score": scores.get("composite_structural_manipulation_risk_score") or row.get("risk_score"),
                 "risk_label": scores.get("risk_label") or row.get("risk_label"),
                 "key_flags": ", ".join(payload.get("key_flags", [])),

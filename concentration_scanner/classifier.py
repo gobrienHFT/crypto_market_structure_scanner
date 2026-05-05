@@ -26,16 +26,31 @@ EXCHANGE_KEYWORDS = (
 )
 
 OWNER_RELATED_CATEGORIES = {"deployer", "owner", "admin", "proxy_admin", "possible_insider"}
-PROTOCOL_RELATED_CATEGORIES = {"treasury", "dao_multisig", "protocol_contract", "vesting", "staking"}
+PROTOCOL_RELATED_CATEGORIES = {
+    "treasury",
+    "treasury_reserve",
+    "dao_multisig",
+    "dao_multisig_reserve",
+    "protocol_contract",
+    "protocol_storage",
+    "claim_distribution_reserve",
+    "vesting",
+    "staking",
+}
 DEFAULT_EXCLUDED_CATEGORIES = {
     "exchange",
     "liquidity_pool",
     "bridge",
+    "wrapper",
     "burn",
     "staking",
     "vesting",
     "treasury",
+    "treasury_reserve",
+    "dao_multisig_reserve",
     "protocol_contract",
+    "protocol_storage",
+    "claim_distribution_reserve",
 }
 DEAD_ADDRESSES = {
     "0x0000000000000000000000000000000000000000",
@@ -99,10 +114,22 @@ class HolderClassifier:
             category = "exchange"
             confidence = "high"
             notes.append("Explorer label contains exchange keyword")
-        elif "treasury" in label:
-            category = "treasury"
+        elif "wrapped" in label or "wrapper" in label or "custody contract" in label:
+            category = "wrapper"
             confidence = "high"
-            notes.append("Explorer label contains treasury")
+            notes.append("Explorer label contains wrapper/custody contract")
+        elif "token contract" in label or "token itself" in label:
+            category = "protocol_storage"
+            confidence = "high"
+            notes.append("Explorer label indicates token contract/protocol storage")
+        elif "claim" in label or "distribution reserve" in label or "airdrop reserve" in label:
+            category = "claim_distribution_reserve"
+            confidence = "high"
+            notes.append("Explorer label indicates claim/distribution reserve")
+        elif "treasury" in label or "reserve" in label:
+            category = "dao_multisig_reserve" if ("safe" in label or "multisig" in label or "multi-sig" in label) else ("treasury_reserve" if "reserve" in label else "treasury")
+            confidence = "high"
+            notes.append("Explorer label contains treasury/reserve")
         elif "vesting" in label or "lockup" in label or "lock-up" in label:
             category = "vesting"
             confidence = "high"
@@ -120,7 +147,7 @@ class HolderClassifier:
             confidence = "high"
             notes.append("Explorer label contains liquidity pool keyword")
         elif any(word in label for word in ("gnosis safe", "safe proxy", "multisig", "multi-sig")):
-            category = "dao_multisig"
+            category = "dao_multisig_reserve" if "reserve" in label or "treasury" in label else "dao_multisig"
             confidence = "high"
             notes.append("Explorer label contains multisig/safe keyword")
         elif self._looks_like_protocol_contract(label):

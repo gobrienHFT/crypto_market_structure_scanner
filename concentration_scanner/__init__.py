@@ -14,8 +14,11 @@ from .models import (
     ClassifiedHolder,
     ContractControlStats,
     HolderRecord,
+    ManipulableWhaleMetrics,
     TokenMarketData,
     TokenScanResult,
+    WalletCluster,
+    WalletForensics,
 )
 from .risk import RiskScoringEngine
 from .scanner import ScannerInput, TokenConcentrationScanner
@@ -29,10 +32,13 @@ __all__ = [
     "HolderClassifier",
     "HolderRecord",
     "ManualOverride",
+    "ManipulableWhaleMetrics",
     "RiskScoringEngine",
     "ScanCache",
     "ScannerInput",
     "TokenConcentrationScanner",
     "TokenMarketData",
     "TokenScanResult",
+    "WalletCluster",
+    "WalletForensics",
 ]

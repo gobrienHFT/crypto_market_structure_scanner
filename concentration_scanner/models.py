@@ -149,6 +149,97 @@ class ConcentrationMetrics:
 
 
 @dataclass(frozen=True)
+class ManipulableWhaleMetrics:
+    filtered_top_1_manipulable_pct: float = 0.0
+    filtered_top_3_manipulable_pct: float = 0.0
+    filtered_top_5_manipulable_pct: float = 0.0
+    filtered_top_10_manipulable_pct: float = 0.0
+    largest_manipulable_holder_pct: float = 0.0
+    largest_manipulable_holder_address: str = ""
+    largest_manipulable_holder_category: str = ""
+    largest_manipulable_holder_score: float = 0.0
+    manipulable_holder_count_top_20: int = 0
+    manipulable_holder_count_top_100: int = 0
+    manipulable_supply_pct_top_20: float = 0.0
+    manipulable_supply_pct_top_100: float = 0.0
+    cex_storage_supply_pct: float = 0.0
+    protocol_storage_supply_pct: float = 0.0
+    treasury_storage_supply_pct: float = 0.0
+    vesting_lockup_supply_pct: float = 0.0
+    bridge_wrapper_supply_pct: float = 0.0
+    cluster_manipulable_supply_pct: float = 0.0
+    cluster_adjusted_float_pct: float = 0.0
+    cluster_confidence: str = "low"
+    cex_outflow_7d: float = 0.0
+    suspicious_timing_score: float = 0.0
+    key_forensic_flags: list[str] = field(default_factory=list)
+    evidence_confidence: str = "low"
+    evidence_summary: str = ""
+
+
+@dataclass(frozen=True)
+class WalletForensics:
+    address: str
+    is_eoa: bool = True
+    is_contract: bool = False
+    contract_name: str = ""
+    contract_verified: bool = False
+    safe_multisig_detected: bool = False
+    safe_owners: list[str] = field(default_factory=list)
+    safe_threshold: int | None = None
+    first_seen_at: str = ""
+    wallet_age_days: float | None = None
+    first_bnb_or_eth_funder: str = ""
+    first_token_source: str = ""
+    token_source_category: str = "unknown"
+    gas_funder_category: str = "unknown"
+    deployer_relation: str = "unknown"
+    owner_admin_relation: str = "unknown"
+    shared_gas_cluster_id: str = ""
+    shared_token_source_cluster_id: str = ""
+    total_token_in: float = 0.0
+    total_token_out: float = 0.0
+    current_balance: float = 0.0
+    net_balance_change_24h: float | None = None
+    net_balance_change_7d: float | None = None
+    net_balance_change_30d: float | None = None
+    cex_deposit_outflow_24h: float = 0.0
+    cex_deposit_outflow_7d: float = 0.0
+    cex_deposit_outflow_30d: float = 0.0
+    dex_router_interactions: int = 0
+    lp_interactions: int = 0
+    number_of_unique_counterparties: int = 0
+    wallet_purity_score: float = 0.0
+    suspicious_timing_score: float = 0.0
+    manipulable_whale_score: float = 0.0
+    forensic_flags: list[str] = field(default_factory=list)
+    evidence_notes: str = ""
+
+
+@dataclass(frozen=True)
+class WalletCluster:
+    cluster_id: str
+    addresses: list[str] = field(default_factory=list)
+    cluster_reason_codes: list[str] = field(default_factory=list)
+    cluster_confidence: str = "low"
+    cluster_total_supply_pct: float = 0.0
+    cluster_adjusted_float_pct: float = 0.0
+    cluster_manipulable_supply_pct: float = 0.0
+    cluster_largest_holder_pct: float = 0.0
+    cluster_cex_outflow_24h: float = 0.0
+    cluster_cex_outflow_7d: float = 0.0
+    cluster_cex_outflow_30d: float = 0.0
+    cluster_forensic_summary: str = ""
+    deployer_funded_cluster: bool = False
+    same_gas_funder_cluster: bool = False
+    same_token_source_cluster: bool = False
+    round_allocation_cluster: bool = False
+    cex_distribution_cluster: bool = False
+    inactive_then_moved_cluster: bool = False
+    multi_token_pump_wallet_cluster: bool = False
+
+
+@dataclass(frozen=True)
 class RepresentationStats:
     inspected_chain: str = ""
     canonical_chain: str = ""
@@ -179,6 +270,11 @@ class RiskScores:
     distribution_risk_score: float = 0.0
     controlled_float_score: float = 0.0
     ravedao_archetype_score: float = 0.0
+    manipulable_whale_score: float = 0.0
+    custody_concentration_score: float = 0.0
+    protocol_storage_score: float = 0.0
+    supply_overhang_score: float = 0.0
+    adjusted_score_after_custody_filter: float = 0.0
     composite_structural_manipulation_risk_score: float = 0.0
     risk_label: str = "Low"
     confidence: str = "low"
@@ -225,6 +321,18 @@ class RiskFlags:
     fake_headline_market_cap_risk: bool = False
     thin_float_mark_to_market: bool = False
     peak_valuation_distortion: bool = False
+    cex_false_positive_risk: bool = False
+    custody_dominated_holder_table: bool = False
+    storage_dominated_holder_table: bool = False
+    top_holder_is_benign_storage: bool = False
+    top_holder_requires_manual_review: bool = False
+    deployer_funded_cluster: bool = False
+    same_gas_funder_cluster: bool = False
+    same_token_source_cluster: bool = False
+    cex_distribution_cluster: bool = False
+    inactive_then_moved_cluster: bool = False
+    multi_token_pump_wallet_cluster: bool = False
+    manipulable_float_perp_squeeze_risk: bool = False
 
 
 @dataclass(frozen=True)
@@ -280,6 +388,9 @@ class TokenScanResult:
     status: ScannerStatus
     summary: str
     key_flags: list[str] = field(default_factory=list)
+    manipulable: ManipulableWhaleMetrics = field(default_factory=ManipulableWhaleMetrics)
+    wallet_forensics: list[WalletForensics] = field(default_factory=list)
+    wallet_clusters: list[WalletCluster] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return serialise_value(self)
