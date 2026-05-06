@@ -52,6 +52,23 @@ class BreakoutRow:
     long_short_account_ratio: float
     long_account_pct: float
     short_account_pct: float
+    short_account_history_points: int
+    short_account_change_1p_pct: float
+    short_account_change_1p_pp: float
+    short_account_change_3p_pct: float
+    short_account_change_3p_pp: float
+    short_account_change_6p_pct: float
+    short_account_change_6p_pp: float
+    short_account_change_12p_pct: float
+    short_account_change_12p_pp: float
+    short_account_change_24p_pct: float
+    short_account_change_24p_pp: float
+    short_account_change_max_pct: float
+    short_account_change_max_pp: float
+    short_account_change_max_window: str
+    short_account_change_min_pct: float
+    short_account_change_min_pp: float
+    short_account_change_min_window: str
     hour_return_pct: float
     hour_return_z: float
     day_return_pct: float

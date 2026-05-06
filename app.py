@@ -97,6 +97,18 @@ def _env_value(*names: str, default: str) -> str:
     return default
 
 
+def _parse_positive_ints(raw_value: str, *, default: tuple[int, ...]) -> tuple[int, ...]:
+    parsed: list[int] = []
+    for raw_item in str(raw_value or "").split(","):
+        try:
+            item = int(raw_item.strip())
+        except Exception:
+            continue
+        if item > 0:
+            parsed.append(item)
+    return tuple(dict.fromkeys(parsed)) or default
+
+
 def _safe_float(value: Any) -> float:
     try:
         return float(value)
@@ -461,6 +473,73 @@ def _pct_change(current: Any, previous: Any) -> float:
     if math.isnan(current_f) or math.isnan(previous_f) or abs(previous_f) < 1e-12:
         return float("nan")
     return (current_f / previous_f - 1.0) * 100.0
+
+
+def _short_account_history_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "short_account_history_points": 0,
+        "short_account_change_max_pct": float("nan"),
+        "short_account_change_max_pp": float("nan"),
+        "short_account_change_max_window": "",
+        "short_account_change_min_pct": float("nan"),
+        "short_account_change_min_pp": float("nan"),
+        "short_account_change_min_window": "",
+    }
+    sorted_rows = sorted(
+        [row for row in rows if isinstance(row, dict)],
+        key=lambda row: int(float(row.get("timestamp", 0) or 0)),
+    )
+    short_values = [_share_to_pct(row.get("shortAccount")) for row in sorted_rows]
+    short_values = [value for value in short_values if not math.isnan(value)]
+    stats["short_account_history_points"] = len(short_values)
+    if not short_values:
+        return stats
+
+    current = short_values[-1]
+    pct_changes: dict[int, float] = {}
+    pp_changes: dict[int, float] = {}
+    for window in SHORT_ACCOUNT_CHANGE_WINDOWS:
+        pct_key = f"short_account_change_{window}p_pct"
+        pp_key = f"short_account_change_{window}p_pp"
+        if len(short_values) <= window:
+            stats[pct_key] = float("nan")
+            stats[pp_key] = float("nan")
+            continue
+        previous = short_values[-1 - window]
+        pp_change = current - previous
+        pct_change = _pct_change(current, previous)
+        stats[pct_key] = pct_change
+        stats[pp_key] = pp_change
+        pct_changes[window] = pct_change
+        pp_changes[window] = pp_change
+
+    valid_pct_changes = {
+        window: value
+        for window, value in pct_changes.items()
+        if not math.isnan(value)
+    }
+    valid_pp_changes = {
+        window: value
+        for window, value in pp_changes.items()
+        if not math.isnan(value)
+    }
+    if valid_pct_changes:
+        max_window = max(valid_pct_changes, key=valid_pct_changes.get)
+        min_window = min(valid_pct_changes, key=valid_pct_changes.get)
+        stats["short_account_change_max_pct"] = valid_pct_changes[max_window]
+        stats["short_account_change_max_window"] = f"{max_window}p"
+        stats["short_account_change_min_pct"] = valid_pct_changes[min_window]
+        stats["short_account_change_min_window"] = f"{min_window}p"
+    if valid_pp_changes:
+        max_pp_window = max(valid_pp_changes, key=valid_pp_changes.get)
+        min_pp_window = min(valid_pp_changes, key=valid_pp_changes.get)
+        stats["short_account_change_max_pp"] = valid_pp_changes[max_pp_window]
+        stats["short_account_change_min_pp"] = valid_pp_changes[min_pp_window]
+        if not stats["short_account_change_max_window"]:
+            stats["short_account_change_max_window"] = f"{max_pp_window}p"
+        if not stats["short_account_change_min_window"]:
+            stats["short_account_change_min_window"] = f"{min_pp_window}p"
+    return stats
 
 
 def _hourly_market_stats(klines: list[list[Any]]) -> dict[str, float]:
@@ -1207,6 +1286,21 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "emfx_lane_score",
         "funding_flip_score",
         "short_crowding_score",
+        "short_account_history_points",
+        "short_account_change_1p_pct",
+        "short_account_change_1p_pp",
+        "short_account_change_3p_pct",
+        "short_account_change_3p_pp",
+        "short_account_change_6p_pct",
+        "short_account_change_6p_pp",
+        "short_account_change_12p_pct",
+        "short_account_change_12p_pp",
+        "short_account_change_24p_pct",
+        "short_account_change_24p_pp",
+        "short_account_change_max_pct",
+        "short_account_change_max_pp",
+        "short_account_change_min_pct",
+        "short_account_change_min_pp",
         "breakout_pressure_score",
         "runway_score",
         "short_squeeze_score",
@@ -2017,6 +2111,15 @@ PNL_BENCHMARKS = [s.strip().upper() for s in _env_value("PNL_BENCHMARKS", defaul
 FUNDING_BACKTEST_WINDOWS = int(_env_value("FUNDING_BACKTEST_WINDOWS", default="4"))
 FUNDING_STREAM_SAMPLE_SECONDS = float(_env_value("FUNDING_STREAM_SAMPLE_SECONDS", default="1.0"))
 LONG_SHORT_RATIO_PERIOD = _env_value("LONG_SHORT_RATIO_PERIOD", default="1h")
+SHORT_ACCOUNT_CHANGE_WINDOWS = _parse_positive_ints(
+    _env_value("SHORT_ACCOUNT_CHANGE_WINDOWS", default="1,3,6,12,24"),
+    default=(1, 3, 6, 12, 24),
+)
+LONG_SHORT_RATIO_HISTORY_LIMIT = max(
+    int(_env_value("LONG_SHORT_RATIO_HISTORY_LIMIT", default="25")),
+    max(SHORT_ACCOUNT_CHANGE_WINDOWS, default=1) + 1,
+    2,
+)
 CRIME_PUMP_PERIOD = _env_value("CRIME_PUMP_PERIOD", default="1h")
 CRIME_DEPTH_LIMIT = int(_env_value("CRIME_DEPTH_LIMIT", default="50"))
 CRIME_HOURLY_LOOKBACK = int(_env_value("CRIME_HOURLY_LOOKBACK", default="50"))
@@ -3080,7 +3183,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
             client.global_long_short_account_ratio,
             symbol,
             period=LONG_SHORT_RATIO_PERIOD,
-            limit=1,
+            limit=LONG_SHORT_RATIO_HISTORY_LIMIT,
         )
         long_short_snapshot = long_short_rows[-1] if long_short_rows else {}
         try:
@@ -3089,6 +3192,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
             long_short_account_ratio = float("nan")
         long_account_pct = _share_to_pct(long_short_snapshot.get("longAccount"))
         short_account_pct = _share_to_pct(long_short_snapshot.get("shortAccount"))
+        short_account_history_stats = _short_account_history_stats(long_short_rows)
         hourly_stats = _hourly_market_stats(hourly_klines) if compute_crime_detail else _empty_hourly_stats()
 
         oi_rows = (
@@ -3251,6 +3355,23 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 long_short_account_ratio=long_short_account_ratio,
                 long_account_pct=long_account_pct,
                 short_account_pct=short_account_pct,
+                short_account_history_points=int(short_account_history_stats.get("short_account_history_points", 0) or 0),
+                short_account_change_1p_pct=_float_nan(short_account_history_stats.get("short_account_change_1p_pct")),
+                short_account_change_1p_pp=_float_nan(short_account_history_stats.get("short_account_change_1p_pp")),
+                short_account_change_3p_pct=_float_nan(short_account_history_stats.get("short_account_change_3p_pct")),
+                short_account_change_3p_pp=_float_nan(short_account_history_stats.get("short_account_change_3p_pp")),
+                short_account_change_6p_pct=_float_nan(short_account_history_stats.get("short_account_change_6p_pct")),
+                short_account_change_6p_pp=_float_nan(short_account_history_stats.get("short_account_change_6p_pp")),
+                short_account_change_12p_pct=_float_nan(short_account_history_stats.get("short_account_change_12p_pct")),
+                short_account_change_12p_pp=_float_nan(short_account_history_stats.get("short_account_change_12p_pp")),
+                short_account_change_24p_pct=_float_nan(short_account_history_stats.get("short_account_change_24p_pct")),
+                short_account_change_24p_pp=_float_nan(short_account_history_stats.get("short_account_change_24p_pp")),
+                short_account_change_max_pct=_float_nan(short_account_history_stats.get("short_account_change_max_pct")),
+                short_account_change_max_pp=_float_nan(short_account_history_stats.get("short_account_change_max_pp")),
+                short_account_change_max_window=str(short_account_history_stats.get("short_account_change_max_window", "") or ""),
+                short_account_change_min_pct=_float_nan(short_account_history_stats.get("short_account_change_min_pct")),
+                short_account_change_min_pp=_float_nan(short_account_history_stats.get("short_account_change_min_pp")),
+                short_account_change_min_window=str(short_account_history_stats.get("short_account_change_min_window", "") or ""),
                 hour_return_pct=hourly_stats["hour_return_pct"],
                 hour_return_z=hourly_stats["hour_return_z"],
                 day_return_pct=hourly_stats["day_return_pct"],
@@ -4140,6 +4261,43 @@ def render_breakout_dashboard() -> None:
                 format="%.1f%%",
                 help="Share of Binance accounts net short this symbol for the selected long/short ratio period.",
             ),
+            "short_account_history_points": st.column_config.NumberColumn(
+                "Short Hist N",
+                format="%d",
+                help="Number of Binance global long/short account rows used for short-account change calculations.",
+            ),
+            "short_account_change_1p_pct": st.column_config.NumberColumn("Short Δ 1p", format="%.2f%%"),
+            "short_account_change_1p_pp": st.column_config.NumberColumn("Short Δ 1p pp", format="%.2f pp"),
+            "short_account_change_3p_pct": st.column_config.NumberColumn("Short Δ 3p", format="%.2f%%"),
+            "short_account_change_3p_pp": st.column_config.NumberColumn("Short Δ 3p pp", format="%.2f pp"),
+            "short_account_change_6p_pct": st.column_config.NumberColumn("Short Δ 6p", format="%.2f%%"),
+            "short_account_change_6p_pp": st.column_config.NumberColumn("Short Δ 6p pp", format="%.2f pp"),
+            "short_account_change_12p_pct": st.column_config.NumberColumn("Short Δ 12p", format="%.2f%%"),
+            "short_account_change_12p_pp": st.column_config.NumberColumn("Short Δ 12p pp", format="%.2f pp"),
+            "short_account_change_24p_pct": st.column_config.NumberColumn("Short Δ 24p", format="%.2f%%"),
+            "short_account_change_24p_pp": st.column_config.NumberColumn("Short Δ 24p pp", format="%.2f pp"),
+            "short_account_change_max_pct": st.column_config.NumberColumn(
+                "Max Short Δ",
+                format="%.2f%%",
+                help="Largest positive relative change in short-account share across the configured lookback windows.",
+            ),
+            "short_account_change_max_pp": st.column_config.NumberColumn(
+                "Max Short Δ pp",
+                format="%.2f pp",
+                help="Largest positive percentage-point change in short-account share across the configured lookback windows.",
+            ),
+            "short_account_change_max_window": st.column_config.TextColumn("Max Short Δ Window"),
+            "short_account_change_min_pct": st.column_config.NumberColumn(
+                "Min Short Δ",
+                format="%.2f%%",
+                help="Most negative relative change in short-account share across the configured lookback windows.",
+            ),
+            "short_account_change_min_pp": st.column_config.NumberColumn(
+                "Min Short Δ pp",
+                format="%.2f pp",
+                help="Most negative percentage-point change in short-account share across the configured lookback windows.",
+            ),
+            "short_account_change_min_window": st.column_config.TextColumn("Min Short Δ Window"),
             "hour_return_pct": st.column_config.NumberColumn("1H Return", format="%.2f%%"),
             "hour_return_z": st.column_config.NumberColumn(
                 "1H Return Z",
@@ -4493,6 +4651,7 @@ def render_breakout_dashboard() -> None:
                 "Funding Flipped // Short Squeeze",
                 "20x ATH Runway",
                 "Crime Pump",
+                "Short Account Moves",
             ]
         )
 
@@ -5534,6 +5693,158 @@ def render_breakout_dashboard() -> None:
                 else:
                     st.dataframe(
                         _display_frame(flagged_crime_df, crime_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[8]:
+            st.caption(
+                "Ranks the biggest changes in Binance global short-account share by symbol. "
+                f"Period: {LONG_SHORT_RATIO_PERIOD}; windows: {', '.join(f'{window}p' for window in SHORT_ACCOUNT_CHANGE_WINDOWS)}; "
+                f"history rows requested per symbol: {LONG_SHORT_RATIO_HISTORY_LIMIT}. "
+                "Positive changes mean more accounts have moved net short; negative changes mean shorts are covering or longs are increasing."
+            )
+            short_change_cols = [
+                "symbol",
+                "base_asset",
+                "trade_bucket",
+                "trade_bucket_score",
+                "market_type",
+                "last_price",
+                "short_account_pct",
+                "long_account_pct",
+                "long_short_account_ratio",
+                "short_account_change_max_pct",
+                "short_account_change_max_pp",
+                "short_account_change_max_window",
+                "short_account_change_min_pct",
+                "short_account_change_min_pp",
+                "short_account_change_min_window",
+                "short_account_change_1p_pct",
+                "short_account_change_1p_pp",
+                "short_account_change_3p_pct",
+                "short_account_change_3p_pp",
+                "short_account_change_6p_pct",
+                "short_account_change_6p_pp",
+                "short_account_change_12p_pct",
+                "short_account_change_12p_pp",
+                "short_account_change_24p_pct",
+                "short_account_change_24p_pp",
+                "short_account_history_points",
+                "forced_buying_setup_flag",
+                "clean_convex_setup_flag",
+                "forced_buying_setup_score",
+                "clean_convex_setup_score",
+                "crowd_skew_confluence_score",
+                "short_liquidation_fuel_score",
+                "short_crowding_score",
+                "funding_flip_score",
+                "oi_delta_pct",
+                "oi_value_usdt",
+                "carry_funding_pct",
+                "day_return_pct",
+                "hour_return_pct",
+                "taker_buy_share_pct",
+                "breakout_pressure_score",
+                "convexity_entry_score",
+                "squeeze_machine_score",
+            ]
+            short_change_base_df = all_df[
+                pd.to_numeric(all_df["short_account_history_points"], errors="coerce").fillna(0) >= 2
+            ].copy()
+            short_build_df = short_change_base_df.sort_values(
+                [
+                    "short_account_change_max_pct",
+                    "short_account_change_max_pp",
+                    "short_account_pct",
+                    "oi_delta_pct",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, True],
+            )
+            short_cover_df = short_change_base_df.sort_values(
+                [
+                    "short_account_change_min_pct",
+                    "short_account_change_min_pp",
+                    "short_account_pct",
+                    "symbol",
+                ],
+                ascending=[True, True, False, True],
+            )
+            squeeze_watch_df = short_change_base_df[
+                (
+                    (pd.to_numeric(short_change_base_df["short_account_change_max_pct"], errors="coerce") >= 3.0)
+                    | (pd.to_numeric(short_change_base_df["short_account_change_max_pp"], errors="coerce") >= 1.5)
+                )
+                & (
+                    (pd.to_numeric(short_change_base_df["short_account_pct"], errors="coerce") >= 50.0)
+                    | short_change_base_df["forced_buying_setup_flag"].fillna(False).astype(bool)
+                    | (pd.to_numeric(short_change_base_df["short_liquidation_fuel_score"], errors="coerce") >= 45.0)
+                )
+            ].copy()
+            squeeze_watch_df = squeeze_watch_df.sort_values(
+                [
+                    "forced_buying_setup_flag",
+                    "clean_convex_setup_flag",
+                    "short_account_change_max_pct",
+                    "short_account_change_max_pp",
+                    "oi_delta_pct",
+                    "convexity_entry_score",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, False, False, True],
+            )
+
+            max_build = float(pd.to_numeric(short_change_base_df["short_account_change_max_pct"], errors="coerce").max()) if not short_change_base_df.empty else float("nan")
+            max_cover = float(pd.to_numeric(short_change_base_df["short_account_change_min_pct"], errors="coerce").min()) if not short_change_base_df.empty else float("nan")
+            median_current_short = float(pd.to_numeric(short_change_base_df["short_account_pct"], errors="coerce").median()) if not short_change_base_df.empty else float("nan")
+            sm1, sm2, sm3, sm4 = st.columns(4)
+            sm1.metric("Symbols with history", int(len(short_change_base_df)))
+            sm2.metric("Biggest short build", f"{max_build:.2f}%" if math.isfinite(max_build) else "n/a")
+            sm3.metric("Biggest short cover", f"{max_cover:.2f}%" if math.isfinite(max_cover) else "n/a")
+            sm4.metric("Median short accounts", f"{median_current_short:.1f}%" if math.isfinite(median_current_short) else "n/a")
+
+            build_col, cover_col = st.columns(2)
+            build_col.subheader("Shorts Piling In")
+            if short_build_df.empty:
+                build_col.info("No short-account history is available in this scan.")
+            else:
+                build_col.dataframe(
+                    _display_frame(short_build_df.head(30), short_change_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            cover_col.subheader("Shorts Covering Fast")
+            if short_cover_df.empty:
+                cover_col.info("No short-account history is available in this scan.")
+            else:
+                cover_col.dataframe(
+                    _display_frame(short_cover_df.head(30), short_change_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            st.subheader("Short Build + Convex Fuel")
+            if squeeze_watch_df.empty:
+                st.info("No symbols currently combine rising short-account share with enough squeeze/convex fuel.")
+            else:
+                st.dataframe(
+                    _display_frame(squeeze_watch_df.head(40), short_change_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show full short-account change table"):
+                if short_change_base_df.empty:
+                    st.info("No short-account history is available in this scan.")
+                else:
+                    st.dataframe(
+                        _display_frame(short_build_df, short_change_cols),
                         use_container_width=True,
                         hide_index=True,
                         column_config=breakout_column_config,
