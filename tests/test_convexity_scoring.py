@@ -37,7 +37,14 @@ class ConvexityScoringTests(unittest.TestCase):
                     "hour_trade_count_multiple": 3.1,
                     "oi_delta_pct": 8.5,
                     "taker_buy_sell_ratio": 1.45,
+                    "taker_buy_share_pct": 57,
                     "hour_close_location_pct": 82,
+                    "long_short_account_ratio": 0.56,
+                    "long_account_pct": 36,
+                    "short_account_pct": 64,
+                    "crowd_top_position_divergence_pct": -18,
+                    "crowd_top_account_divergence_pct": -12,
+                    "breakout_pressure_score": 58,
                     "broke_high_5d": True,
                     "broke_high_20d": True,
                     "broke_high_90d": False,
@@ -94,7 +101,14 @@ class ConvexityScoringTests(unittest.TestCase):
                     "hour_trade_count_multiple": 8.0,
                     "oi_delta_pct": 16.0,
                     "taker_buy_sell_ratio": 2.1,
+                    "taker_buy_share_pct": 67,
                     "hour_close_location_pct": 61,
+                    "long_short_account_ratio": 1.65,
+                    "long_account_pct": 62,
+                    "short_account_pct": 38,
+                    "crowd_top_position_divergence_pct": 10,
+                    "crowd_top_account_divergence_pct": 8,
+                    "breakout_pressure_score": 85,
                     "broke_high_5d": True,
                     "broke_high_20d": True,
                     "broke_high_90d": True,
@@ -129,6 +143,9 @@ class ConvexityScoringTests(unittest.TestCase):
         scored = apply_convexity_model(frame)
         self.assertGreater(scored.loc[0, "convexity_score"], scored.loc[1, "convexity_score"])
         self.assertGreater(scored.loc[0, "convexity_preignition_score"], 45)
+        self.assertGreater(scored.loc[0, "crowd_skew_confluence_score"], 50)
+        self.assertGreater(scored.loc[0, "clean_convex_setup_score"], scored.loc[1, "clean_convex_setup_score"])
+        self.assertTrue(bool(scored.loc[0, "clean_convex_setup_flag"]))
         self.assertTrue(bool(scored.loc[0, "pre_pump_candidate_flag"]))
         self.assertTrue(bool(scored.loc[0, "early_convexity_flag"]))
         self.assertTrue(bool(scored.loc[0, "convexity_prime_flag"]))

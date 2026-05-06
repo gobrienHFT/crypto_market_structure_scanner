@@ -136,9 +136,21 @@ def _format_pnl(value: float, currency: str | None) -> str:
 def _display_frame(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     """Return only available display columns so optional enrichments cannot crash a table."""
     source = df.loc[:, ~df.columns.duplicated()].copy()
+    requested = list(columns)
+    if {"long_account_pct", "short_account_pct"}.issubset(source.columns) and "symbol" in requested:
+        missing_account_cols = [
+            column for column in ("long_account_pct", "short_account_pct")
+            if column not in requested
+        ]
+        if missing_account_cols:
+            insert_after = "long_short_account_ratio"
+            if insert_after not in requested:
+                insert_after = "trade_bucket_score" if "trade_bucket_score" in requested else "symbol"
+            insert_at = requested.index(insert_after) + 1
+            requested[insert_at:insert_at] = missing_account_cols
     existing_columns: list[str] = []
     seen: set[str] = set()
-    for column in columns:
+    for column in requested:
         if column in source.columns and column not in seen:
             existing_columns.append(column)
             seen.add(column)
@@ -1226,6 +1238,9 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "valuation_trap_score",
         "short_liquidation_fuel_score",
         "spot_control_score",
+        "crowd_skew_confluence_score",
+        "forced_buying_setup_score",
+        "clean_convex_setup_score",
         "squeeze_machine_score",
         "convexity_entry_score",
         "convexity_score",
@@ -1254,6 +1269,8 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     float_control_confluence = all_df["float_control_confluence_flag"].fillna(False).astype(bool)
     mm_sponsor_confluence = all_df["mm_sponsor_confluence_flag"].fillna(False).astype(bool)
     ath_runway_confluence = all_df["ath_runway_confluence_flag"].fillna(False).astype(bool)
+    forced_buying_setup = all_df["forced_buying_setup_flag"].fillna(False).astype(bool)
+    clean_convex_setup = all_df["clean_convex_setup_flag"].fillna(False).astype(bool)
     squeeze_machine = all_df["squeeze_machine_flag"].fillna(False).astype(bool)
     ath_runway_20x = all_df["ath_runway_20x_flag"].fillna(False).astype(bool)
     confluence_count = all_df["convexity_confluence_count"].fillna(0.0)
@@ -1286,6 +1303,8 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     early_perp_signal = (
         perp_heavy
         | perp_squeeze_confluence
+        | forced_buying_setup
+        | (all_df["forced_buying_setup_score"] >= 50.0)
         | (all_df["perp_pressure_score"] >= 42.0)
         | (all_df["oi_delta_pct"] >= 1.0)
         | (all_df["perp_volume_to_mcap_pct"] >= 150.0)
@@ -1329,6 +1348,8 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
             | prime_convexity
             | early_convexity
             | squeeze_machine
+            | forced_buying_setup
+            | clean_convex_setup
             | (
                 (all_df["convexity_entry_score"] >= 54.0)
                 & (all_df["convexity_sponsor_score"] >= 50.0)
@@ -1444,6 +1465,9 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         + all_df["squeeze_machine_score"].fillna(0.0) * 0.18
         + all_df["short_liquidation_fuel_score"].fillna(0.0) * 0.06
         + all_df["spot_control_score"].fillna(0.0) * 0.05
+        + all_df["clean_convex_setup_score"].fillna(0.0) * 0.12
+        + all_df["forced_buying_setup_score"].fillna(0.0) * 0.08
+        + all_df["crowd_skew_confluence_score"].fillna(0.0) * 0.05
         + all_df["crime_pump_score_v2"].fillna(0.0) * 0.18
         + all_df["short_squeeze_score"].fillna(0.0) * 0.06
         + all_df["inventory_transfer_risk_score"].fillna(0.0) * 0.06
@@ -1456,6 +1480,8 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         + early_convexity.astype(float) * 8.0
         + ath_runway_20x.astype(float) * 6.0
         + squeeze_machine.astype(float) * 12.0
+        + forced_buying_setup.astype(float) * 5.0
+        + clean_convex_setup.astype(float) * 7.0
         + coinbase_lane.astype(float) * 4.0
         + owner_controlled.astype(float) * 5.0
         + perp_heavy.astype(float) * 4.0
@@ -1546,6 +1572,12 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
             triggers.append("DWF Labs portfolio")
         if pd.notna(row.get("squeeze_machine_score")) and float(row["squeeze_machine_score"]) >= 55.0:
             triggers.append("float-control/perp-squeeze machine")
+        if bool(row.get("clean_convex_setup_flag")):
+            triggers.append("clean convex setup")
+        if bool(row.get("forced_buying_setup_flag")):
+            triggers.append("forced-buying fuel")
+        if pd.notna(row.get("crowd_skew_confluence_score")) and float(row["crowd_skew_confluence_score"]) >= 55.0:
+            triggers.append("short-account skew")
         if pd.notna(row.get("short_liquidation_fuel_score")) and float(row["short_liquidation_fuel_score"]) >= 55.0:
             triggers.append("short liquidation fuel")
         if pd.notna(row.get("spot_control_score")) and float(row["spot_control_score"]) >= 55.0:
@@ -3567,6 +3599,21 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Scores CEX/spot sponsorship and possible liquidity-control proxies from venue support, CEX/DEX skew, MM presence, venue concentration, and bid support.",
             ),
+            "crowd_skew_confluence_score": st.column_config.NumberColumn(
+                "Crowd Skew",
+                format="%.1f",
+                help="Scores whether account-positioning is skewed short while top-trader positioning and funding leave room for forced buying.",
+            ),
+            "forced_buying_setup_score": st.column_config.NumberColumn(
+                "Forced Buying",
+                format="%.1f",
+                help="Scores short-account skew, OI expansion, funding flip, cool carry, perp pressure, and breakout confirmation.",
+            ),
+            "clean_convex_setup_score": st.column_config.NumberColumn(
+                "Clean Convex",
+                format="%.1f",
+                help="Entry-quality score for setups with pre-ignition pressure, float/spot control, forced-buying fuel, runway, and low late-stage penalty.",
+            ),
             "squeeze_machine_score": st.column_config.NumberColumn(
                 "Squeeze Machine",
                 format="%.1f",
@@ -3578,6 +3625,8 @@ def render_breakout_dashboard() -> None:
             "float_control_confluence_flag": st.column_config.CheckboxColumn("Float Ctrl Conf."),
             "mm_sponsor_confluence_flag": st.column_config.CheckboxColumn("MM Sponsor Conf."),
             "ath_runway_confluence_flag": st.column_config.CheckboxColumn("ATH Runway Conf."),
+            "forced_buying_setup_flag": st.column_config.CheckboxColumn("Forced Buying"),
+            "clean_convex_setup_flag": st.column_config.CheckboxColumn("Clean Convex"),
             "squeeze_machine_flag": st.column_config.CheckboxColumn("Sqz Machine"),
             "convexity_confluence_note": st.column_config.TextColumn(
                 "Confluence Note",
@@ -4276,7 +4325,12 @@ def render_breakout_dashboard() -> None:
             "convexity_confluence_count",
             "convexity_confluence_note",
             "squeeze_machine_flag",
+            "forced_buying_setup_flag",
+            "clean_convex_setup_flag",
             "squeeze_machine_score",
+            "forced_buying_setup_score",
+            "clean_convex_setup_score",
+            "crowd_skew_confluence_score",
             "short_liquidation_fuel_score",
             "spot_control_score",
             "valuation_trap_score",
@@ -4322,19 +4376,32 @@ def render_breakout_dashboard() -> None:
         convex_df = all_df[all_df["trade_bucket"] == "Convex Long"].sort_values(
             [
                 "pre_pump_candidate_flag",
+                "clean_convex_setup_flag",
+                "forced_buying_setup_flag",
                 "convexity_prime_flag",
                 "early_convexity_flag",
                 "convexity_confluence_count",
+                "clean_convex_setup_score",
+                "forced_buying_setup_score",
                 "convexity_confluence_score",
                 "trade_bucket_score",
                 "convexity_entry_score",
                 "symbol",
             ],
-            ascending=[False, False, False, False, False, False, False, True],
+            ascending=[False, False, False, False, False, False, False, False, False, False, False, True],
         )
         scalp_df = all_df[all_df["trade_bucket"] == "Scalp Only"].sort_values(
-            ["pre_pump_candidate_flag", "early_convexity_flag", "trade_bucket_score", "convexity_entry_score", "crime_pump_score", "symbol"],
-            ascending=[False, False, False, False, False, True],
+            [
+                "pre_pump_candidate_flag",
+                "clean_convex_setup_flag",
+                "forced_buying_setup_flag",
+                "early_convexity_flag",
+                "trade_bucket_score",
+                "convexity_entry_score",
+                "crime_pump_score",
+                "symbol",
+            ],
+            ascending=[False, False, False, False, False, False, False, True],
         )
         avoid_df = all_df[all_df["trade_bucket"] == "Avoid"].sort_values(
             ["convexity_too_late_flag", "trade_bucket_score", "crime_exhaustion_score", "symbol"],
@@ -4618,6 +4685,12 @@ def render_breakout_dashboard() -> None:
                 "trade_bucket",
                 "trade_bucket_score",
                 "short_squeeze_score",
+                "forced_buying_setup_flag",
+                "clean_convex_setup_flag",
+                "forced_buying_setup_score",
+                "clean_convex_setup_score",
+                "crowd_skew_confluence_score",
+                "short_liquidation_fuel_score",
                 "funding_flip_score",
                 "short_crowding_score",
                 "breakout_pressure_score",
@@ -4670,19 +4743,25 @@ def render_breakout_dashboard() -> None:
                 (all_df["funding_flip_up_flag"])
                 | (all_df["breakout_stack_count"] >= 1)
                 | (all_df["short_squeeze_score"] >= 35.0)
+                | (all_df["forced_buying_setup_score"] >= 45.0)
+                | (all_df["clean_convex_setup_score"] >= 50.0)
             ].copy()
             squeeze_ranked_df = squeeze_view_df.sort_values(
                 [
                     "active_short_squeeze_flag",
+                    "forced_buying_setup_flag",
+                    "clean_convex_setup_flag",
                     "fresh_flip_flag",
                     "funding_flip_up_flag",
+                    "forced_buying_setup_score",
+                    "clean_convex_setup_score",
                     "short_squeeze_score",
                     "funding_flip_score",
                     "breakout_stack_count",
                     "upside_to_ath_pct",
                     "symbol",
                 ],
-                ascending=[False, False, False, False, False, False, False, True],
+                ascending=[False] * 11 + [True],
             )
             fresh_flip_df = squeeze_ranked_df[squeeze_ranked_df["fresh_flip_flag"]].copy()
             active_short_df = squeeze_ranked_df[squeeze_ranked_df["active_short_squeeze_flag"]].copy()
@@ -4779,7 +4858,12 @@ def render_breakout_dashboard() -> None:
                 "convexity_confluence_count",
                 "convexity_confluence_note",
                 "squeeze_machine_flag",
+                "forced_buying_setup_flag",
+                "clean_convex_setup_flag",
                 "squeeze_machine_score",
+                "forced_buying_setup_score",
+                "clean_convex_setup_score",
+                "crowd_skew_confluence_score",
                 "short_liquidation_fuel_score",
                 "spot_control_score",
                 "valuation_trap_score",
@@ -4937,7 +5021,12 @@ def render_breakout_dashboard() -> None:
                 "exit_fragility_score",
                 "crime_pump_score_v2",
                 "squeeze_machine_flag",
+                "forced_buying_setup_flag",
+                "clean_convex_setup_flag",
                 "squeeze_machine_score",
+                "forced_buying_setup_score",
+                "clean_convex_setup_score",
+                "crowd_skew_confluence_score",
                 "short_liquidation_fuel_score",
                 "spot_control_score",
                 "valuation_trap_score",
@@ -4970,7 +5059,12 @@ def render_breakout_dashboard() -> None:
                 "convexity_confluence_count",
                 "convexity_confluence_note",
                 "squeeze_machine_flag",
+                "forced_buying_setup_flag",
+                "clean_convex_setup_flag",
                 "squeeze_machine_score",
+                "forced_buying_setup_score",
+                "clean_convex_setup_score",
+                "crowd_skew_confluence_score",
                 "short_liquidation_fuel_score",
                 "spot_control_score",
                 "valuation_trap_score",
@@ -5122,6 +5216,11 @@ def render_breakout_dashboard() -> None:
                 "convexity_confluence_score",
                 "convexity_confluence_count",
                 "convexity_confluence_note",
+                "forced_buying_setup_flag",
+                "clean_convex_setup_flag",
+                "forced_buying_setup_score",
+                "clean_convex_setup_score",
+                "crowd_skew_confluence_score",
                 "trend_confluence_score",
                 "spot_flow_confluence_score",
                 "perp_squeeze_confluence_score",
@@ -5220,9 +5319,13 @@ def render_breakout_dashboard() -> None:
                     | all_df["early_convexity_flag"].fillna(False).astype(bool)
                     | all_df["convexity_prime_flag"].fillna(False).astype(bool)
                     | all_df["squeeze_machine_flag"].fillna(False).astype(bool)
+                    | all_df["forced_buying_setup_flag"].fillna(False).astype(bool)
+                    | all_df["clean_convex_setup_flag"].fillna(False).astype(bool)
                     | (all_df["convexity_entry_score"].fillna(0.0) >= 42.0)
                     | (all_df["convexity_seed_score"].fillna(0.0) >= 55.0)
                     | (all_df["squeeze_machine_score"].fillna(0.0) >= 52.0)
+                    | (all_df["clean_convex_setup_score"].fillna(0.0) >= 54.0)
+                    | (all_df["forced_buying_setup_score"].fillna(0.0) >= 50.0)
                     | (
                         (all_df["convexity_confluence_count"].fillna(0.0) >= 3.0)
                         & (all_df["convexity_confluence_score"].fillna(0.0) >= 42.0)
@@ -5242,9 +5345,13 @@ def render_breakout_dashboard() -> None:
             top_convexity_df = candidate_view_df.sort_values(
                 [
                     "pre_pump_candidate_flag",
+                    "clean_convex_setup_flag",
+                    "forced_buying_setup_flag",
                     "squeeze_machine_flag",
                     "convexity_prime_flag",
                     "early_convexity_flag",
+                    "clean_convex_setup_score",
+                    "forced_buying_setup_score",
                     "squeeze_machine_score",
                     "convexity_confluence_count",
                     "convexity_confluence_score",
@@ -5255,7 +5362,7 @@ def render_breakout_dashboard() -> None:
                     "convexity_sponsor_score",
                     "symbol",
                 ],
-                ascending=[False, False, False, False, False, False, False, False, False, False, False, False, True],
+                ascending=[False] * 16 + [True],
             )
             if top_convexity_df.empty:
                 st.info("No symbols are showing strong pre-pump convexity right now.")
@@ -5271,9 +5378,13 @@ def render_breakout_dashboard() -> None:
             crime_convex_df = crime_view_df[crime_view_df["trade_bucket"] == "Convex Long"].sort_values(
                 [
                     "pre_pump_candidate_flag",
+                    "clean_convex_setup_flag",
+                    "forced_buying_setup_flag",
                     "squeeze_machine_flag",
                     "convexity_prime_flag",
                     "early_convexity_flag",
+                    "clean_convex_setup_score",
+                    "forced_buying_setup_score",
                     "squeeze_machine_score",
                     "convexity_confluence_count",
                     "convexity_confluence_score",
@@ -5281,11 +5392,24 @@ def render_breakout_dashboard() -> None:
                     "convexity_entry_score",
                     "symbol",
                 ],
-                ascending=[False, False, False, False, False, False, False, False, False, True],
+                ascending=[False] * 13 + [True],
             )
             crime_scalp_df = crime_view_df[crime_view_df["trade_bucket"] == "Scalp Only"].sort_values(
-                ["squeeze_machine_flag", "pre_pump_candidate_flag", "early_convexity_flag", "squeeze_machine_score", "trade_bucket_score", "convexity_entry_score", "crime_pump_score", "symbol"],
-                ascending=[False, False, False, False, False, False, False, True],
+                [
+                    "clean_convex_setup_flag",
+                    "forced_buying_setup_flag",
+                    "squeeze_machine_flag",
+                    "pre_pump_candidate_flag",
+                    "early_convexity_flag",
+                    "clean_convex_setup_score",
+                    "forced_buying_setup_score",
+                    "squeeze_machine_score",
+                    "trade_bucket_score",
+                    "convexity_entry_score",
+                    "crime_pump_score",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, False, False, False, False, False, False, False, True],
             )
             crime_avoid_df = crime_view_df[crime_view_df["trade_bucket"] == "Avoid"].sort_values(
                 ["convexity_too_late_flag", "blowoff_watch_flag", "trade_bucket_score", "exit_fragility_score", "symbol"],
@@ -5329,10 +5453,14 @@ def render_breakout_dashboard() -> None:
             ranked_crime_df = crime_view_df.sort_values(
                 [
                     "active_squeeze_flag",
+                    "clean_convex_setup_flag",
+                    "forced_buying_setup_flag",
                     "squeeze_machine_flag",
                     "pre_pump_candidate_flag",
                     "convexity_prime_flag",
                     "early_convexity_flag",
+                    "clean_convex_setup_score",
+                    "forced_buying_setup_score",
                     "squeeze_machine_score",
                     "convexity_entry_score",
                     "crime_pump_score_v2",
@@ -5365,6 +5493,10 @@ def render_breakout_dashboard() -> None:
                     False,
                     False,
                     False,
+                    False,
+                    False,
+                    False,
+                    False,
                     True,
                 ],
             )
@@ -5379,6 +5511,8 @@ def render_breakout_dashboard() -> None:
                 )
             flagged_crime_df = ranked_crime_df[
                 ranked_crime_df["pre_pump_candidate_flag"]
+                | ranked_crime_df["clean_convex_setup_flag"]
+                | ranked_crime_df["forced_buying_setup_flag"]
                 | ranked_crime_df["squeeze_machine_flag"]
                 | ranked_crime_df["convexity_prime_flag"]
                 | ranked_crime_df["early_convexity_flag"]

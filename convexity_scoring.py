@@ -24,6 +24,9 @@ CONVEXITY_SCORE_COLUMNS = [
     "valuation_trap_score",
     "short_liquidation_fuel_score",
     "spot_control_score",
+    "crowd_skew_confluence_score",
+    "forced_buying_setup_score",
+    "clean_convex_setup_score",
     "squeeze_machine_score",
     "convexity_entry_score",
     "convexity_score",
@@ -33,6 +36,8 @@ CONVEXITY_SCORE_COLUMNS = [
     "float_control_confluence_flag",
     "mm_sponsor_confluence_flag",
     "ath_runway_confluence_flag",
+    "forced_buying_setup_flag",
+    "clean_convex_setup_flag",
     "squeeze_machine_flag",
     "pre_pump_candidate_flag",
     "early_convexity_flag",
@@ -62,6 +67,16 @@ def _score_linear(df: pd.DataFrame, column: str, low: float, high: float, *, inv
     values = _numeric(df, column)
     if high <= low:
         return pd.Series(float("nan"), index=df.index, dtype="float64")
+    score = ((values - low) / (high - low) * 100.0).clip(lower=0.0, upper=100.0)
+    if invert:
+        score = 100.0 - score
+    return score
+
+
+def _score_series_linear(values: pd.Series, low: float, high: float, *, invert: bool = False) -> pd.Series:
+    values = pd.to_numeric(values, errors="coerce")
+    if high <= low:
+        return pd.Series(float("nan"), index=values.index, dtype="float64")
     score = ((values - low) / (high - low) * 100.0).clip(lower=0.0, upper=100.0)
     if invert:
         score = 100.0 - score
@@ -121,6 +136,9 @@ def _explain(row: pd.Series) -> tuple[str, str, str]:
         ("squeeze machine", _safe_value(row, "squeeze_machine_score")),
         ("mechanic confluence", _safe_value(row, "convexity_confluence_score")),
         ("short liquidation fuel", _safe_value(row, "short_liquidation_fuel_score")),
+        ("forced buying setup", _safe_value(row, "forced_buying_setup_score")),
+        ("clean early setup", _safe_value(row, "clean_convex_setup_score")),
+        ("short-account skew", _safe_value(row, "crowd_skew_confluence_score")),
         ("spot control", _safe_value(row, "spot_control_score")),
         ("DWF Labs portfolio", _safe_value(row, "dwf_labs_portfolio_score")),
         ("valuation trap", _safe_value(row, "valuation_trap_score")),
@@ -182,6 +200,10 @@ def _confluence_note(row: pd.Series) -> str:
     if bool(row.get("ath_runway_confluence_flag")):
         multiple = _safe_value(row, "ath_multiple")
         notes.append(f"{multiple:.1f}x ATH runway" if not math.isnan(multiple) else "large ATH runway")
+    if bool(row.get("forced_buying_setup_flag")):
+        notes.append("forced-buying fuel")
+    if bool(row.get("clean_convex_setup_flag")):
+        notes.append("clean early convexity")
     if bool(row.get("squeeze_machine_flag")):
         notes.append("float-control/perp-squeeze machine")
     return " | ".join(notes) if notes else "No multi-mechanic confluence yet."
@@ -200,24 +222,12 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
       + 4.00 * convexity_confluence_count
 
     squeeze_machine_score =
-        0.26 * float_control_confluence_score
-      + 0.20 * spot_control_score
-      + 0.22 * short_liquidation_fuel_score
-      + 0.14 * trend_confluence_score
-      + 0.10 * valuation_trap_score
-      + 0.08 * ath_runway_confluence_score
-      - 0.20 * convexity_late_penalty
+        controlled-float + spot-control + forced-buying/perp fuel
+      - late-stage penalty
 
     convexity_entry_score =
-        0.22 * convexity_float_score
-      + 0.23 * convexity_sponsor_score
-      + 0.18 * convexity_preignition_score
-      + 0.08 * convexity_expansion_score
-      + 0.11 * convexity_squeeze_score
-      + 0.12 * convexity_runway_score
-      + 0.12 * convexity_confluence_score
-      + 0.12 * squeeze_machine_score
-      - 0.28 * convexity_late_penalty
+        float quality + sponsor flow + pre-ignition + clean forced-buying setup
+      - late-stage penalty
 
     The intent is to rank names that still have asymmetric upside if sponsor flow persists,
     not names that are already obviously blown out.
@@ -436,6 +446,20 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
         ],
         axis=1,
     ).max(axis=1)
+    top_position_long_advantage = _score_series_linear(-_numeric(out, "crowd_top_position_divergence_pct"), 2.0, 25.0)
+    top_account_long_advantage = _score_series_linear(-_numeric(out, "crowd_top_account_divergence_pct"), 2.0, 20.0)
+    cool_or_negative_funding = _score_linear(out, "carry_funding_pct", -0.02, 0.018, invert=True)
+    out["crowd_skew_confluence_score"] = _weighted_average(
+        index,
+        [
+            (_score_linear(out, "short_account_pct", 52.0, 75.0), 0.26),
+            (_score_linear(out, "long_short_account_ratio", 0.55, 1.05, invert=True), 0.22),
+            (top_position_long_advantage, 0.17),
+            (top_account_long_advantage, 0.10),
+            (_numeric(out, "short_crowding_score"), 0.13),
+            (cool_or_negative_funding, 0.12),
+        ],
+    )
     out["valuation_trap_score"] = _weighted_average(
         index,
         [
@@ -452,14 +476,15 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
     out["short_liquidation_fuel_score"] = _weighted_average(
         index,
         [
-            (_numeric(out, "short_crowding_score"), 0.22),
-            (short_accounts_direct, 0.18),
-            (_numeric(out, "funding_flip_score"), 0.18),
+            (_numeric(out, "short_crowding_score"), 0.17),
+            (short_accounts_direct, 0.16),
+            (out["crowd_skew_confluence_score"], 0.18),
+            (_numeric(out, "funding_flip_score"), 0.15),
             (_score_linear(out, "oi_to_market_cap_pct", 3.0, 35.0), 0.12),
             (_score_linear(out, "oi_delta_pct", 0.25, 14.0), 0.11),
             (_score_linear(out, "perp_pressure_score", 28.0, 85.0), 0.09),
-            (_score_linear(out, "oi_to_24h_volume_pct", 8.0, 120.0), 0.06),
-            (_score_linear(out, "carry_funding_pct", -0.015, 0.025, invert=True), 0.04),
+            (_score_linear(out, "oi_to_24h_volume_pct", 8.0, 120.0), 0.05),
+            (cool_or_negative_funding, 0.05),
         ],
     )
     out["spot_control_score"] = _weighted_average(
@@ -477,6 +502,19 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
             (_score_linear(out, "coinbase_book_imbalance_pct", 45.0, 75.0), 0.04),
         ],
     )
+    out["forced_buying_setup_score"] = _weighted_average(
+        index,
+        [
+            (out["short_liquidation_fuel_score"], 0.24),
+            (out["crowd_skew_confluence_score"], 0.20),
+            (out["perp_squeeze_confluence_score"], 0.16),
+            (_score_linear(out, "oi_delta_pct", 0.5, 16.0), 0.12),
+            (_score_linear(out, "taker_buy_share_pct", 50.0, 68.0), 0.08),
+            (_numeric(out, "funding_flip_score"), 0.08),
+            (cool_or_negative_funding, 0.07),
+            (_score_linear(out, "breakout_pressure_score", 25.0, 80.0), 0.05),
+        ],
+    )
 
     out["trend_confluence_flag"] = (
         (out["trend_confluence_score"] >= 48.0)
@@ -490,6 +528,12 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
     out["ath_runway_confluence_flag"] = (
         (out["ath_runway_confluence_score"] >= 45.0)
         | (_numeric(out, "ath_multiple") >= 8.0)
+    )
+    out["forced_buying_setup_flag"] = (
+        (out["forced_buying_setup_score"] >= 55.0)
+        & (out["crowd_skew_confluence_score"] >= 42.0)
+        & (out["convexity_late_penalty"] < 58.0)
+        & (~major_excluded)
     )
     confluence_flags = [
         "trend_confluence_flag",
@@ -510,33 +554,64 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
         + out["convexity_confluence_count"] * 4.0
     ).clip(lower=0.0, upper=100.0)
     out["squeeze_machine_score"] = (
-        out["float_control_confluence_score"] * 0.26
-        + out["spot_control_score"] * 0.20
-        + out["short_liquidation_fuel_score"] * 0.22
-        + out["trend_confluence_score"] * 0.14
-        + out["valuation_trap_score"] * 0.10
-        + out["ath_runway_confluence_score"] * 0.08
+        out["float_control_confluence_score"] * 0.22
+        + out["spot_control_score"] * 0.18
+        + out["short_liquidation_fuel_score"] * 0.18
+        + out["forced_buying_setup_score"] * 0.14
+        + out["trend_confluence_score"] * 0.12
+        + out["valuation_trap_score"] * 0.09
+        + out["ath_runway_confluence_score"] * 0.07
         - out["convexity_late_penalty"] * 0.20
     ).clip(lower=0.0, upper=100.0)
     out["squeeze_machine_flag"] = (
         (out["squeeze_machine_score"] >= 55.0)
         & (out["float_control_confluence_score"] >= 42.0)
         & (out["spot_control_score"] >= 38.0)
-        & (out["short_liquidation_fuel_score"] >= 35.0)
+        & ((out["short_liquidation_fuel_score"] >= 35.0) | out["forced_buying_setup_flag"])
         & (out["convexity_late_penalty"] < 58.0)
+        & (~major_excluded)
+    )
+    constructive_return_score = pd.concat(
+        [
+            _score_band(out, "day_return_pct", -8.0, 4.0, 38.0, 85.0),
+            _score_band(out, "hour_return_pct", -3.0, 0.0, 9.0, 24.0),
+        ],
+        axis=1,
+    ).mean(axis=1)
+    not_late_score = (100.0 - pd.to_numeric(out["convexity_late_penalty"], errors="coerce")).clip(lower=0.0, upper=100.0)
+    out["clean_convex_setup_score"] = _weighted_average(
+        index,
+        [
+            (out["convexity_preignition_score"], 0.18),
+            (out["convexity_float_score"], 0.14),
+            (out["spot_control_score"], 0.14),
+            (out["forced_buying_setup_score"], 0.12),
+            (out["crowd_skew_confluence_score"], 0.10),
+            (out["convexity_runway_score"], 0.10),
+            (out["convexity_confluence_score"], 0.10),
+            (constructive_return_score, 0.08),
+            (not_late_score, 0.14),
+        ],
+    )
+    out["clean_convex_setup_flag"] = (
+        (out["clean_convex_setup_score"] >= 58.0)
+        & (out["convexity_late_penalty"] < 50.0)
+        & (_numeric(out, "day_return_pct") < 65.0)
         & (~major_excluded)
     )
 
     out["convexity_entry_score"] = (
-        out["convexity_float_score"] * 0.22
-        + out["convexity_sponsor_score"] * 0.23
-        + out["convexity_preignition_score"] * 0.18
-        + out["convexity_expansion_score"] * 0.08
-        + out["convexity_squeeze_score"] * 0.11
-        + out["convexity_runway_score"] * 0.12
-        + out["convexity_confluence_score"] * 0.12
+        out["convexity_float_score"] * 0.18
+        + out["convexity_sponsor_score"] * 0.17
+        + out["convexity_preignition_score"] * 0.16
+        + out["convexity_expansion_score"] * 0.06
+        + out["convexity_squeeze_score"] * 0.08
+        + out["convexity_runway_score"] * 0.09
+        + out["convexity_confluence_score"] * 0.10
         + out["squeeze_machine_score"] * 0.12
-        - out["convexity_late_penalty"] * 0.28
+        + out["forced_buying_setup_score"] * 0.08
+        + out["clean_convex_setup_score"] * 0.16
+        - out["convexity_late_penalty"] * 0.30
     ).where(~major_excluded, other=0.0).clip(lower=0.0, upper=100.0)
     out["convexity_score"] = out["convexity_entry_score"]
 
@@ -549,31 +624,48 @@ def apply_convexity_model(df: pd.DataFrame) -> pd.DataFrame:
 
     out["pre_pump_candidate_flag"] = (
         (~major_excluded)
-        & ((out["convexity_entry_score"] >= 48.0) | (out["squeeze_machine_score"] >= 55.0))
+        & (
+            (out["convexity_entry_score"] >= 48.0)
+            | (out["squeeze_machine_score"] >= 55.0)
+            | (out["clean_convex_setup_score"] >= 56.0)
+        )
         & (out["convexity_float_score"] >= 36.0)
         & ((out["convexity_sponsor_score"] >= 42.0) | (out["spot_control_score"] >= 42.0))
         & (out["convexity_preignition_score"] >= 32.0)
-        & ((out["convexity_confluence_count"] >= 3) | out["squeeze_machine_flag"])
+        & (
+            (out["convexity_confluence_count"] >= 3)
+            | out["squeeze_machine_flag"]
+            | out["clean_convex_setup_flag"]
+            | out["forced_buying_setup_flag"]
+        )
         & (out["convexity_late_penalty"] < 52.0)
         & (~out["convexity_chase_risk_flag"])
     )
     out["early_convexity_flag"] = (
         (~major_excluded)
-        & ((out["convexity_entry_score"] >= 52.0) | (out["squeeze_machine_score"] >= 60.0))
+        & ((out["convexity_entry_score"] >= 52.0) | (out["squeeze_machine_score"] >= 60.0) | out["clean_convex_setup_flag"])
         & (out["convexity_float_score"] >= 40.0)
         & ((out["convexity_sponsor_score"] >= 45.0) | (out["spot_control_score"] >= 46.0))
         & (out["convexity_preignition_score"] >= 35.0)
-        & ((out["convexity_confluence_count"] >= 3) | out["squeeze_machine_flag"])
+        & ((out["convexity_confluence_count"] >= 3) | out["squeeze_machine_flag"] | out["forced_buying_setup_flag"])
         & (out["convexity_late_penalty"] < 55.0)
         & (~out["convexity_chase_risk_flag"])
     )
     out["convexity_prime_flag"] = (
         (~major_excluded)
-        & ((out["convexity_entry_score"] >= 58.0) | (out["squeeze_machine_score"] >= 66.0))
+        & (
+            (out["convexity_entry_score"] >= 58.0)
+            | (out["squeeze_machine_score"] >= 66.0)
+            | (out["clean_convex_setup_score"] >= 66.0)
+        )
         & (out["convexity_float_score"] >= 48.0)
         & ((out["convexity_sponsor_score"] >= 52.0) | (out["spot_control_score"] >= 55.0))
         & (out["convexity_preignition_score"] >= 42.0)
-        & ((out["convexity_confluence_count"] >= 4) | (out["squeeze_machine_flag"] & (out["convexity_confluence_count"] >= 3)))
+        & (
+            (out["convexity_confluence_count"] >= 4)
+            | (out["squeeze_machine_flag"] & (out["convexity_confluence_count"] >= 3))
+            | (out["clean_convex_setup_flag"] & out["forced_buying_setup_flag"])
+        )
         & (out["convexity_runway_score"] >= 40.0)
         & (out["convexity_late_penalty"] < 45.0)
         & (_numeric(out, "day_return_pct") < 55.0)
