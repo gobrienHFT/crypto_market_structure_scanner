@@ -59,6 +59,7 @@ class ExternalCrimeMetrics:
     binance_volume_share_pct: float
     bitget_volume_share_pct: float
     gate_volume_share_pct: float
+    okx_volume_share_pct: float
     kraken_volume_share_pct: float
     upbit_volume_share_pct: float
     krw_volume_share_pct: float
@@ -415,6 +416,8 @@ def _venue_matches(identifier: str, name: str, *, canonical: str) -> bool:
             or "gate.io" in lower_name
             or lower_name.startswith("gate")
         )
+    if canonical == "okx":
+        return lower_identifier in {"okx", "okex"} or "okx" in lower_name or "okex" in lower_name
     if canonical == "kraken":
         return "kraken" in lower_identifier or "kraken" in lower_name
     if canonical == "upbit":
@@ -438,10 +441,12 @@ def _empty_ticker_metrics() -> dict[str, Any]:
         "binance_volume": float("nan"),
         "bitget_volume": float("nan"),
         "gate_volume": float("nan"),
+        "okx_volume": float("nan"),
         "coinbase_share_pct": float("nan"),
         "binance_share_pct": float("nan"),
         "bitget_share_pct": float("nan"),
         "gate_share_pct": float("nan"),
+        "okx_share_pct": float("nan"),
         "kraken_share_pct": float("nan"),
         "upbit_share_pct": float("nan"),
         "krw_share_pct": float("nan"),
@@ -471,6 +476,7 @@ def _summarize_tickers(tickers: list[dict[str, Any]]) -> dict[str, Any]:
     binance_volume = 0.0
     bitget_volume = 0.0
     gate_volume = 0.0
+    okx_volume = 0.0
     kraken_volume = 0.0
     upbit_volume = 0.0
     upbit_krw_volume = 0.0
@@ -501,6 +507,7 @@ def _summarize_tickers(tickers: list[dict[str, Any]]) -> dict[str, Any]:
         is_binance = _venue_matches(identifier, venue_name, canonical="binance")
         is_bitget = _venue_matches(identifier, venue_name, canonical="bitget")
         is_gate = _venue_matches(identifier, venue_name, canonical="gate")
+        is_okx = _venue_matches(identifier, venue_name, canonical="okx")
         is_kraken = _venue_matches(identifier, venue_name, canonical="kraken")
         is_upbit = _venue_matches(identifier, venue_name, canonical="upbit")
         is_dex = _is_dex_market(identifier, venue_name)
@@ -518,6 +525,8 @@ def _summarize_tickers(tickers: list[dict[str, Any]]) -> dict[str, Any]:
             bitget_volume += volume_usd
         if is_gate:
             gate_volume += volume_usd
+        if is_okx:
+            okx_volume += volume_usd
         if is_kraken:
             kraken_volume += volume_usd
         if is_upbit:
@@ -559,10 +568,12 @@ def _summarize_tickers(tickers: list[dict[str, Any]]) -> dict[str, Any]:
         "binance_volume": binance_volume if binance_volume > 0 else float("nan"),
         "bitget_volume": bitget_volume if bitget_volume > 0 else float("nan"),
         "gate_volume": gate_volume if gate_volume > 0 else float("nan"),
+        "okx_volume": okx_volume if okx_volume > 0 else float("nan"),
         "coinbase_share_pct": coinbase_volume / total_volume * 100.0,
         "binance_share_pct": binance_volume / total_volume * 100.0,
         "bitget_share_pct": bitget_volume / total_volume * 100.0,
         "gate_share_pct": gate_volume / total_volume * 100.0,
+        "okx_share_pct": okx_volume / total_volume * 100.0,
         "kraken_share_pct": kraken_volume / total_volume * 100.0,
         "upbit_share_pct": upbit_volume / total_volume * 100.0,
         "krw_share_pct": krw_volume / total_volume * 100.0,
@@ -715,6 +726,7 @@ def fetch_external_crime_metrics(base_assets: list[str]) -> list[ExternalCrimeMe
                 binance_volume_share_pct=ticker_metrics["binance_share_pct"],
                 bitget_volume_share_pct=ticker_metrics["bitget_share_pct"],
                 gate_volume_share_pct=ticker_metrics["gate_share_pct"],
+                okx_volume_share_pct=ticker_metrics["okx_share_pct"],
                 kraken_volume_share_pct=ticker_metrics["kraken_share_pct"],
                 upbit_volume_share_pct=ticker_metrics["upbit_share_pct"],
                 krw_volume_share_pct=ticker_metrics["krw_share_pct"],

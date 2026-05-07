@@ -54,6 +54,24 @@ INVENTORY_TRANSFER_COLUMNS = [
     "inventory_transfer_note",
 ]
 INVENTORY_TRANSFER_TEXT_COLUMNS = {"inventory_transfer_note"}
+RAVE_LAB_SETUP_COLUMNS = [
+    "insider_team_holder_pct",
+    "centralized_ownership_score",
+    "low_float_score",
+    "short_account_build_score",
+    "price_volume_ignition_score",
+    "target_cex_volume_share_pct",
+    "target_cex_flow_score",
+    "rave_lab_convex_fuel_score",
+    "rave_lab_late_penalty_score",
+    "rave_lab_setup_score",
+    "rave_lab_watch_flag",
+    "rave_lab_setup_flag",
+    "rave_lab_extreme_flag",
+    "rave_lab_setup_note",
+]
+RAVE_LAB_TEXT_COLUMNS = {"rave_lab_setup_note"}
+RAVE_LAB_BOOL_COLUMNS = {"rave_lab_watch_flag", "rave_lab_setup_flag", "rave_lab_extreme_flag"}
 CMC_MOVER_COLUMNS = [
     "cmc_name",
     "cmc_rank_1h",
@@ -1215,6 +1233,189 @@ def _apply_crime_pump_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     return all_df
 
 
+def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
+    """Rank controlled-float upside setups without making claims about intent."""
+    if all_df.empty:
+        for col in RAVE_LAB_SETUP_COLUMNS:
+            all_df[col] = pd.Series(dtype="object" if col in RAVE_LAB_TEXT_COLUMNS else "float64")
+        return all_df
+
+    all_df = all_df.copy()
+    index = all_df.index
+
+    def _num(col: str, default: float = 0.0) -> pd.Series:
+        if col in all_df.columns:
+            values = pd.to_numeric(all_df[col], errors="coerce")
+        else:
+            values = pd.Series(default, index=index)
+        return values.fillna(default)
+
+    def _raw_num(col: str, default: float = float("nan")) -> pd.Series:
+        if col in all_df.columns:
+            return pd.to_numeric(all_df[col], errors="coerce")
+        return pd.Series(default, index=index)
+
+    owner_holder = _num("owner_holder_pct")
+    creator_holder = _num("creator_holder_pct")
+    top10_holder = _num("top10_holder_pct")
+    holder_count = _raw_num("holder_count")
+    insider_team_holder = (owner_holder + creator_holder).clip(lower=0.0, upper=100.0)
+
+    insider_score = _linear_score(insider_team_holder, low=2.0, high=35.0)
+    top10_score = _linear_score(top10_holder, low=18.0, high=70.0)
+    holder_count_score = _linear_score(holder_count, low=500.0, high=25_000.0, invert=True)
+    holder_concentration_score = _num("holder_concentration_score").clip(lower=0.0, upper=100.0)
+    owner_circle_score = _num("crime_owner_circle_score").clip(lower=0.0, upper=100.0)
+    centralised_ownership = (
+        holder_concentration_score * 0.28
+        + top10_score * 0.24
+        + insider_score * 0.22
+        + owner_circle_score * 0.18
+        + holder_count_score * 0.08
+    ).clip(lower=0.0, upper=100.0)
+
+    circulating_pct = _raw_num("circulating_supply_pct")
+    locked_pct = _num("locked_supply_pct")
+    fdv_to_market_cap = _raw_num("fdv_to_market_cap")
+    low_circulating_score = _linear_score(circulating_pct, low=3.0, high=35.0, invert=True)
+    locked_supply_score = _linear_score(locked_pct, low=15.0, high=85.0)
+    fdv_gap_score = _log_ratio_score(fdv_to_market_cap, low=1.8, high=18.0)
+    low_float_score = (
+        low_circulating_score * 0.31
+        + locked_supply_score * 0.25
+        + fdv_gap_score * 0.20
+        + _num("float_trap_score").clip(lower=0.0, upper=100.0) * 0.14
+        + _num("valuation_trap_score").clip(lower=0.0, upper=100.0) * 0.10
+    ).clip(lower=0.0, upper=100.0)
+
+    short_account_pct = _raw_num("short_account_pct")
+    long_short_ratio = _raw_num("long_short_account_ratio")
+    short_change_pct = _num("short_account_change_max_pct")
+    short_change_pp = _num("short_account_change_max_pp")
+    short_account_build_score = (
+        _linear_score(short_account_pct, low=48.0, high=72.0) * 0.26
+        + _linear_score(long_short_ratio, low=0.35, high=1.0, invert=True) * 0.20
+        + _linear_score(short_change_pct, low=1.0, high=12.0) * 0.22
+        + _linear_score(short_change_pp, low=0.35, high=6.0) * 0.16
+        + _num("crowd_skew_confluence_score").clip(lower=0.0, upper=100.0) * 0.16
+    ).clip(lower=0.0, upper=100.0)
+
+    day_return = _raw_num("day_return_pct")
+    price_volume_ignition_score = (
+        _band_score(day_return, low=1.0, sweet_low=8.0, sweet_high=120.0, high=450.0) * 0.18
+        + _linear_score(_raw_num("hour_return_pct"), low=0.5, high=14.0) * 0.14
+        + _log_ratio_score(_raw_num("daily_quote_volume_multiple"), low=1.08, high=12.0) * 0.18
+        + _log_ratio_score(_raw_num("hour_volume_multiple"), low=1.10, high=9.0) * 0.16
+        + _log_ratio_score(_raw_num("hour_trade_count_multiple"), low=1.10, high=7.0) * 0.11
+        + _num("breakout_pressure_score").clip(lower=0.0, upper=100.0) * 0.13
+        + _num("cmc_mover_score").clip(lower=0.0, upper=100.0) * 0.10
+    ).clip(lower=0.0, upper=100.0)
+
+    target_cex_share = (
+        _num("binance_volume_share_pct")
+        + _num("bitget_volume_share_pct")
+        + _num("gate_volume_share_pct")
+        + _num("okx_volume_share_pct")
+        + _num("okex_volume_share_pct")
+    ).clip(lower=0.0, upper=100.0)
+    target_cex_flow_score = (
+        _linear_score(target_cex_share, low=18.0, high=85.0) * 0.31
+        + _num("cex_dex_volume_ratio_score").clip(lower=0.0, upper=100.0) * 0.22
+        + _num("inventory_transfer_risk_score").clip(lower=0.0, upper=100.0) * 0.27
+        + _num("venue_hhi_score").clip(lower=0.0, upper=100.0) * 0.12
+        + all_df.get("inventory_transfer_risk_flag", pd.Series(False, index=index)).fillna(False).astype(bool).astype(float) * 8.0
+    ).clip(lower=0.0, upper=100.0)
+
+    convex_fuel = pd.concat(
+        [
+            _num("clean_convex_setup_score"),
+            _num("forced_buying_setup_score"),
+            _num("squeeze_machine_score"),
+            _num("convexity_entry_score"),
+            _num("short_liquidation_fuel_score"),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0).clip(lower=0.0, upper=100.0)
+    late_penalty = (
+        _num("crime_exhaustion_score").clip(lower=0.0, upper=100.0) * 0.28
+        + _num("convexity_late_penalty").clip(lower=0.0, upper=100.0) * 0.30
+        + _num("exit_fragility_score").clip(lower=0.0, upper=100.0) * 0.18
+        + _linear_score(day_return, low=130.0, high=650.0) * 0.16
+        + _num("crime_largecap_penalty_score").clip(lower=0.0, upper=100.0) * 0.08
+    ).clip(lower=0.0, upper=100.0)
+
+    raw_score = (
+        centralised_ownership * 0.22
+        + low_float_score * 0.20
+        + short_account_build_score * 0.18
+        + price_volume_ignition_score * 0.18
+        + target_cex_flow_score * 0.12
+        + convex_fuel * 0.10
+        - late_penalty * 0.16
+        - _num("crime_largecap_penalty_score").clip(lower=0.0, upper=100.0) * 0.08
+    ).clip(lower=0.0, upper=100.0)
+    major_excluded = all_df.get("crime_excluded_major", pd.Series(False, index=index)).fillna(False).astype(bool)
+    setup_score = raw_score.where(~major_excluded, other=0.0).clip(lower=0.0, upper=100.0)
+
+    all_df["insider_team_holder_pct"] = insider_team_holder
+    all_df["centralized_ownership_score"] = centralised_ownership
+    all_df["low_float_score"] = low_float_score
+    all_df["short_account_build_score"] = short_account_build_score
+    all_df["price_volume_ignition_score"] = price_volume_ignition_score
+    all_df["target_cex_volume_share_pct"] = target_cex_share
+    all_df["target_cex_flow_score"] = target_cex_flow_score
+    all_df["rave_lab_convex_fuel_score"] = convex_fuel
+    all_df["rave_lab_late_penalty_score"] = late_penalty
+    all_df["rave_lab_setup_score"] = setup_score
+    all_df["rave_lab_watch_flag"] = (setup_score >= 50.0) & (~major_excluded)
+    all_df["rave_lab_setup_flag"] = (
+        (setup_score >= 62.0)
+        & (centralised_ownership >= 42.0)
+        & (low_float_score >= 35.0)
+        & ((short_account_build_score >= 38.0) | (price_volume_ignition_score >= 55.0))
+        & (~major_excluded)
+    )
+    all_df["rave_lab_extreme_flag"] = (
+        (setup_score >= 76.0)
+        & (centralised_ownership >= 55.0)
+        & (low_float_score >= 48.0)
+        & (price_volume_ignition_score >= 45.0)
+        & (late_penalty < 72.0)
+        & (~major_excluded)
+    )
+
+    def _setup_note(row: pd.Series) -> str:
+        if bool(row.get("crime_excluded_major")):
+            return "Major/liquid tape excluded from this controlled-float upside radar."
+        factors: list[str] = []
+        if _safe_float(row.get("centralized_ownership_score")) >= 55.0:
+            factors.append("centralized holder/insider proxy")
+        elif _safe_float(row.get("insider_team_holder_pct")) >= 8.0:
+            factors.append(f"insider/team proxy {_safe_float(row.get('insider_team_holder_pct')):.1f}%")
+        if _safe_float(row.get("low_float_score")) >= 55.0:
+            factors.append("very low float / FDV gap")
+        if _safe_float(row.get("short_account_build_score")) >= 55.0:
+            window = str(row.get("short_account_change_max_window", "")).strip()
+            suffix = f" over {window}" if window else ""
+            factors.append(f"short accounts building{suffix}")
+        elif _safe_float(row.get("short_account_pct")) >= 55.0:
+            factors.append(f"short accounts {_safe_float(row.get('short_account_pct')):.1f}%")
+        if _safe_float(row.get("price_volume_ignition_score")) >= 55.0:
+            factors.append("price/volume ignition")
+        if _safe_float(row.get("target_cex_flow_score")) >= 55.0:
+            factors.append("Binance/Bitget/Gate/OKX lane or CEX-flow proxy")
+        if _safe_float(row.get("rave_lab_convex_fuel_score")) >= 55.0:
+            factors.append("convex forced-buying fuel")
+        if _safe_float(row.get("rave_lab_late_penalty_score")) >= 70.0:
+            factors.append("late-stage heat offset")
+        if not factors:
+            return "No strong RAVE/LAB-style setup in this scan."
+        return " | ".join(factors[:6])
+
+    all_df["rave_lab_setup_note"] = all_df.apply(_setup_note, axis=1)
+    return all_df
+
+
 def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     if all_df.empty:
         all_df["trade_bucket"] = pd.Series(dtype="object")
@@ -1264,6 +1465,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "binance_volume_share_pct",
         "bitget_volume_share_pct",
         "gate_volume_share_pct",
+        "okx_volume_share_pct",
         "upbit_volume_share_pct",
         "krw_volume_share_pct",
         "try_volume_share_pct",
@@ -1342,6 +1544,16 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "distance_to_high_5d_pct",
         "distance_to_high_20d_pct",
         "distance_to_high_90d_pct",
+        "insider_team_holder_pct",
+        "centralized_ownership_score",
+        "low_float_score",
+        "short_account_build_score",
+        "price_volume_ignition_score",
+        "target_cex_volume_share_pct",
+        "target_cex_flow_score",
+        "rave_lab_convex_fuel_score",
+        "rave_lab_late_penalty_score",
+        "rave_lab_setup_score",
     ]
     for col in numeric_cols:
         all_df[col] = pd.to_numeric(all_df[col], errors="coerce")
@@ -2262,6 +2474,7 @@ EXTERNAL_CRIME_COLUMNS = [
     "binance_volume_share_pct",
     "bitget_volume_share_pct",
     "gate_volume_share_pct",
+    "okx_volume_share_pct",
     "cex_volume_share_pct",
     "kraken_volume_share_pct",
     "upbit_volume_share_pct",
@@ -3454,6 +3667,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 *LIFECYCLE_SCORE_COLUMNS,
                 *CONVEXITY_SCORE_COLUMNS,
                 *SHORT_SQUEEZE_SCORE_COLUMNS,
+                *RAVE_LAB_SETUP_COLUMNS,
                 "trade_bucket",
                 "trade_bucket_score",
                 "trade_bucket_note",
@@ -3489,6 +3703,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = apply_lifecycle_model(all_df)
     all_df = apply_short_squeeze_model(all_df)
     all_df = apply_convexity_model(all_df)
+    all_df = _apply_rave_lab_setup_scores(all_df)
     all_df = _score_trade_buckets(all_df)
     highs_df = all_df[(all_df["broke_high_90d"]) | (all_df["broke_high_180d"])].copy()
     highs_df = highs_df.sort_values(
@@ -3596,6 +3811,64 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Controlled-float quality score from holder/supply concentration, FDV gap, holder count, sponsor mismatch, and OTC inventory-risk proxies.",
             ),
+            "rave_lab_setup_score": st.column_config.NumberColumn(
+                "RAVE/LAB Setup",
+                format="%.1f",
+                help="Combined controlled-float upside score: centralized ownership, low float, short-account build, price/volume ignition, target CEX-flow proxies, and convexity fuel. This is structural risk/upside, not proof of manipulation.",
+            ),
+            "rave_lab_watch_flag": st.column_config.CheckboxColumn(
+                "RAVE/LAB Watch",
+                help="True when the combined structure is worth watching but not necessarily strong enough for the clean setup flag.",
+            ),
+            "rave_lab_setup_flag": st.column_config.CheckboxColumn(
+                "RAVE/LAB Setup",
+                help="True when centralized ownership/float structure and either short build or ignition line up.",
+            ),
+            "rave_lab_extreme_flag": st.column_config.CheckboxColumn(
+                "RAVE/LAB Extreme",
+                help="Highest-conviction structural setup: strong ownership centralization, low float, active ignition, and not too much late-stage heat.",
+            ),
+            "rave_lab_setup_note": st.column_config.TextColumn(
+                "RAVE/LAB Note",
+                help="Short explanation of the factors driving the combined score.",
+            ),
+            "insider_team_holder_pct": st.column_config.NumberColumn(
+                "Insider/Team %",
+                format="%.1f%%",
+                help="Owner plus creator holder percentage proxy when GoPlus-style holder data is available.",
+            ),
+            "centralized_ownership_score": st.column_config.NumberColumn(
+                "Centralized Own.",
+                format="%.1f",
+                help="Scores holder concentration, owner/creator holdings, low holder count, and owner-circle proxies.",
+            ),
+            "low_float_score": st.column_config.NumberColumn(
+                "Low Float",
+                format="%.1f",
+                help="Scores low circulating supply, locked supply, FDV/market-cap gap, float-trap, and valuation-trap structure.",
+            ),
+            "short_account_build_score": st.column_config.NumberColumn(
+                "Short Build",
+                format="%.1f",
+                help="Scores current short-account skew and the largest recent increase in short-account share.",
+            ),
+            "price_volume_ignition_score": st.column_config.NumberColumn(
+                "PV Ignition",
+                format="%.1f",
+                help="Scores price action, hourly/daily volume expansion, trade-count acceleration, breakout pressure, and optional CMC mover signal.",
+            ),
+            "target_cex_volume_share_pct": st.column_config.NumberColumn(
+                "Target CEX Share",
+                format="%.1f%%",
+                help="Share of visible venue volume on Binance, Bitget, Gate, and OKX/OKEx where available.",
+            ),
+            "target_cex_flow_score": st.column_config.NumberColumn(
+                "Target CEX Flow",
+                format="%.1f",
+                help="Scores target CEX venue concentration plus CEX/DEX skew and inventory-transfer/CEX-flow proxies.",
+            ),
+            "rave_lab_convex_fuel_score": st.column_config.NumberColumn("Convex Fuel", format="%.1f"),
+            "rave_lab_late_penalty_score": st.column_config.NumberColumn("Late Offset", format="%.1f"),
             "convexity_float_score": st.column_config.NumberColumn(
                 "Convex Float",
                 format="%.1f",
@@ -4048,6 +4321,7 @@ def render_breakout_dashboard() -> None:
             "binance_volume_share_pct": st.column_config.NumberColumn("Binance Share", format="%.1f%%"),
             "bitget_volume_share_pct": st.column_config.NumberColumn("Bitget Share", format="%.1f%%"),
             "gate_volume_share_pct": st.column_config.NumberColumn("Gate Share", format="%.1f%%"),
+            "okx_volume_share_pct": st.column_config.NumberColumn("OKX Share", format="%.1f%%"),
             "cex_volume_share_pct": st.column_config.NumberColumn(
                 "CEX Share",
                 format="%.1f%%",
@@ -4652,6 +4926,7 @@ def render_breakout_dashboard() -> None:
                 "20x ATH Runway",
                 "Crime Pump",
                 "Short Account Moves",
+                "RAVE/LAB Radar",
             ]
         )
 
@@ -5845,6 +6120,159 @@ def render_breakout_dashboard() -> None:
                 else:
                     st.dataframe(
                         _display_frame(short_build_df, short_change_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[9]:
+            st.caption(
+                "Ranks RAVE/LAB-style controlled-float upside structures by combining centralized holder/insider proxies, "
+                "low-float and FDV gap, rising short-account share, target CEX-flow proxies for Binance/Bitget/Gate/OKX, "
+                "price/volume ignition, and convexity fuel. This is a structural upside/risk screen, not proof of manipulation."
+            )
+            rave_lab_cols = [
+                "symbol",
+                "base_asset",
+                "trade_bucket",
+                "trade_bucket_score",
+                "rave_lab_setup_score",
+                "rave_lab_extreme_flag",
+                "rave_lab_setup_flag",
+                "rave_lab_watch_flag",
+                "rave_lab_setup_note",
+                "last_price",
+                "day_return_pct",
+                "hour_return_pct",
+                "daily_quote_volume_multiple",
+                "hour_volume_multiple",
+                "hour_trade_count_multiple",
+                "short_account_pct",
+                "long_account_pct",
+                "short_account_change_max_pct",
+                "short_account_change_max_pp",
+                "short_account_change_max_window",
+                "long_short_account_ratio",
+                "insider_team_holder_pct",
+                "owner_holder_pct",
+                "creator_holder_pct",
+                "top10_holder_pct",
+                "holder_count",
+                "locked_supply_pct",
+                "circulating_supply_pct",
+                "fdv_to_market_cap",
+                "target_cex_volume_share_pct",
+                "target_cex_flow_score",
+                "binance_volume_share_pct",
+                "bitget_volume_share_pct",
+                "gate_volume_share_pct",
+                "okx_volume_share_pct",
+                "cex_to_dex_volume_ratio",
+                "inventory_transfer_risk_score",
+                "inventory_transfer_note",
+                "centralized_ownership_score",
+                "low_float_score",
+                "short_account_build_score",
+                "price_volume_ignition_score",
+                "rave_lab_convex_fuel_score",
+                "rave_lab_late_penalty_score",
+                "clean_convex_setup_score",
+                "forced_buying_setup_score",
+                "squeeze_machine_score",
+                "convexity_entry_score",
+                "ath_multiple",
+                "ath_upside_pct",
+            ]
+            major_mask = (
+                all_df["crime_excluded_major"].fillna(False).astype(bool)
+                if "crime_excluded_major" in all_df.columns
+                else pd.Series(False, index=all_df.index)
+            )
+            radar_df = all_df[~major_mask].copy()
+            score_series = pd.to_numeric(radar_df["rave_lab_setup_score"], errors="coerce") if "rave_lab_setup_score" in radar_df.columns else pd.Series(dtype="float64")
+            radar_ranked_df = radar_df.sort_values(
+                [
+                    "rave_lab_extreme_flag",
+                    "rave_lab_setup_flag",
+                    "rave_lab_setup_score",
+                    "short_account_build_score",
+                    "price_volume_ignition_score",
+                    "target_cex_flow_score",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, False, False, True],
+            )
+            low_float_short_df = radar_ranked_df[
+                (pd.to_numeric(radar_ranked_df["low_float_score"], errors="coerce").fillna(0.0) >= 45.0)
+                & (pd.to_numeric(radar_ranked_df["short_account_build_score"], errors="coerce").fillna(0.0) >= 42.0)
+            ].copy()
+            cex_control_df = radar_ranked_df[
+                (pd.to_numeric(radar_ranked_df["target_cex_flow_score"], errors="coerce").fillna(0.0) >= 45.0)
+                & (pd.to_numeric(radar_ranked_df["centralized_ownership_score"], errors="coerce").fillna(0.0) >= 38.0)
+            ].copy()
+            ignition_df = radar_ranked_df[
+                (pd.to_numeric(radar_ranked_df["price_volume_ignition_score"], errors="coerce").fillna(0.0) >= 55.0)
+                & (pd.to_numeric(radar_ranked_df["rave_lab_late_penalty_score"], errors="coerce").fillna(0.0) < 72.0)
+            ].copy()
+
+            r1, r2, r3, r4 = st.columns(4)
+            best_score = float(score_series.max()) if not score_series.empty and pd.notna(score_series.max()) else float("nan")
+            r1.metric("Best setup score", f"{best_score:.1f}" if math.isfinite(best_score) else "n/a")
+            r2.metric("Extreme flags", int(radar_df.get("rave_lab_extreme_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+            r3.metric("Setup flags", int(radar_df.get("rave_lab_setup_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+            r4.metric("Watchlist", int(radar_df.get("rave_lab_watch_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+
+            st.subheader("Best Controlled-Float Upside Scores")
+            if radar_ranked_df.empty:
+                st.info("No RAVE/LAB-style radar rows are available in this scan.")
+            else:
+                st.dataframe(
+                    _display_frame(radar_ranked_df.head(40), rave_lab_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            focus_left, focus_right = st.columns(2)
+            focus_left.subheader("Low Float + Shorts Increasing")
+            if low_float_short_df.empty:
+                focus_left.info("No symbols currently combine low-float structure with rising short-account share.")
+            else:
+                focus_left.dataframe(
+                    _display_frame(low_float_short_df.head(25), rave_lab_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            focus_right.subheader("Centralized Ownership + Target CEX Flow")
+            if cex_control_df.empty:
+                focus_right.info("No symbols currently combine centralized holder proxies with target CEX-flow signals.")
+            else:
+                focus_right.dataframe(
+                    _display_frame(cex_control_df.head(25), rave_lab_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            st.subheader("Price / Volume Ignition Without Late-Stage Heat")
+            if ignition_df.empty:
+                st.info("No early ignition rows currently clear the heat filter.")
+            else:
+                st.dataframe(
+                    _display_frame(ignition_df.head(30), rave_lab_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show full RAVE/LAB radar table"):
+                if radar_ranked_df.empty:
+                    st.info("No radar rows to show.")
+                else:
+                    st.dataframe(
+                        _display_frame(radar_ranked_df, rave_lab_cols),
                         use_container_width=True,
                         hide_index=True,
                         column_config=breakout_column_config,
