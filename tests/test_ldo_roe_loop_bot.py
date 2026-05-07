@@ -12,6 +12,7 @@ from ldo_roe_loop_bot import (
     SymbolRules,
     TradeRecord,
     adverse_volatility_reason,
+    apply_margin_type_if_requested,
     apply_scan_profile,
     closed_hour_change_pct,
     directional_volatility_from_klines,
@@ -1059,3 +1060,19 @@ def test_insufficient_margin_is_resizable_not_untradable() -> None:
 
     assert is_insufficient_margin_error(error)
     assert not is_untradable_error(error)
+
+
+def test_margin_type_credit_status_rejection_continues_unchanged() -> None:
+    class CreditStatusMarginClient:
+        def change_margin_type(self, symbol: str, margin_type: str) -> None:
+            raise BinanceHTTPError(
+                400,
+                {"code": -4175, "msg": "Cannot change to ISOLATED mode due to credit status."},
+                "/fapi/v1/marginType",
+            )
+
+    apply_margin_type_if_requested(
+        CreditStatusMarginClient(),
+        symbol="BSBUSDT",
+        args=SimpleNamespace(margin_type="ISOLATED"),
+    )

@@ -2584,6 +2584,12 @@ def apply_margin_type_if_requested(
         if code == -4046 or "no need to change margin type" in msg.lower():
             print(f"Margin type already {margin_type} for {symbol}.")
             return
+        if code == -4175 or "credit status" in msg.lower():
+            print(
+                f"Margin type change skipped for {symbol}: Binance rejected {margin_type} "
+                "because of account credit status. Continuing with the current margin mode."
+            )
+            return
         raise
 
 
