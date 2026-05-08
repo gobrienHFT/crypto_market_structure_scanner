@@ -11,6 +11,9 @@ import pandas as pd
 
 APP_DIR = Path(__file__).resolve().parent
 
+if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 def _load_local_env() -> None:
     env_path = APP_DIR / ".env"
