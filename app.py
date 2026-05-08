@@ -59,19 +59,30 @@ RAVE_LAB_SETUP_COLUMNS = [
     "centralized_ownership_score",
     "low_float_score",
     "short_account_build_score",
+    "short_dominance_score",
+    "low_volatility_coil_score",
+    "pre_pump_short_fuse_score",
+    "dormant_short_fuse_score",
     "price_volume_ignition_score",
     "target_cex_volume_share_pct",
     "target_cex_flow_score",
     "rave_lab_convex_fuel_score",
     "rave_lab_late_penalty_score",
     "rave_lab_setup_score",
+    "dormant_short_fuse_flag",
     "rave_lab_watch_flag",
     "rave_lab_setup_flag",
     "rave_lab_extreme_flag",
+    "dormant_short_fuse_note",
     "rave_lab_setup_note",
 ]
-RAVE_LAB_TEXT_COLUMNS = {"rave_lab_setup_note"}
-RAVE_LAB_BOOL_COLUMNS = {"rave_lab_watch_flag", "rave_lab_setup_flag", "rave_lab_extreme_flag"}
+RAVE_LAB_TEXT_COLUMNS = {"dormant_short_fuse_note", "rave_lab_setup_note"}
+RAVE_LAB_BOOL_COLUMNS = {
+    "dormant_short_fuse_flag",
+    "rave_lab_watch_flag",
+    "rave_lab_setup_flag",
+    "rave_lab_extreme_flag",
+}
 CMC_MOVER_COLUMNS = [
     "cmc_name",
     "cmc_rank_1h",
@@ -1237,7 +1248,8 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     """Rank controlled-float upside setups without making claims about intent."""
     if all_df.empty:
         for col in RAVE_LAB_SETUP_COLUMNS:
-            all_df[col] = pd.Series(dtype="object" if col in RAVE_LAB_TEXT_COLUMNS else "float64")
+            dtype = "object" if col in RAVE_LAB_TEXT_COLUMNS else "bool" if col in RAVE_LAB_BOOL_COLUMNS else "float64"
+            all_df[col] = pd.Series(dtype=dtype)
         return all_df
 
     all_df = all_df.copy()
@@ -1292,6 +1304,13 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     long_short_ratio = _raw_num("long_short_account_ratio")
     short_change_pct = _num("short_account_change_max_pct")
     short_change_pp = _num("short_account_change_max_pp")
+    short_dominance_score = (
+        _linear_score(short_account_pct, low=50.0, high=76.0) * 0.42
+        + _linear_score(long_short_ratio, low=0.30, high=0.95, invert=True) * 0.28
+        + _num("short_crowding_score").clip(lower=0.0, upper=100.0) * 0.13
+        + _linear_score(short_change_pct, low=0.5, high=8.0) * 0.09
+        + _linear_score(short_change_pp, low=0.25, high=4.0) * 0.08
+    ).clip(lower=0.0, upper=100.0)
     short_account_build_score = (
         _linear_score(short_account_pct, low=48.0, high=72.0) * 0.26
         + _linear_score(long_short_ratio, low=0.35, high=1.0, invert=True) * 0.20
@@ -1301,6 +1320,31 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     ).clip(lower=0.0, upper=100.0)
 
     day_return = _raw_num("day_return_pct")
+    abs_day_return = day_return.abs()
+    abs_hour_return = _raw_num("hour_return_pct").abs()
+    range_24h = _raw_num("range_24h_pct")
+    quiet_range_score = _linear_score(range_24h, low=2.0, high=18.0, invert=True)
+    quiet_return_score = (
+        _linear_score(abs_day_return, low=1.0, high=18.0, invert=True) * 0.62
+        + _linear_score(abs_hour_return, low=0.2, high=5.5, invert=True) * 0.38
+    ).clip(lower=0.0, upper=100.0)
+    gentle_wake_score = (
+        _band_score(_raw_num("daily_quote_volume_multiple"), low=0.75, sweet_low=1.05, sweet_high=2.60, high=8.0) * 0.46
+        + _band_score(_raw_num("hour_volume_multiple"), low=0.70, sweet_low=1.05, sweet_high=2.80, high=8.0) * 0.34
+        + _band_score(_raw_num("hour_trade_count_multiple"), low=0.70, sweet_low=1.05, sweet_high=2.50, high=7.0) * 0.20
+    ).clip(lower=0.0, upper=100.0)
+    low_volatility_coil_score = (
+        quiet_range_score * 0.42
+        + quiet_return_score * 0.38
+        + gentle_wake_score * 0.20
+    ).clip(lower=0.0, upper=100.0)
+    pre_pump_short_fuse_score = (
+        low_volatility_coil_score * 0.30
+        + short_dominance_score * 0.28
+        + low_float_score * 0.18
+        + centralised_ownership * 0.16
+        + gentle_wake_score * 0.08
+    ).clip(lower=0.0, upper=100.0)
     price_volume_ignition_score = (
         _band_score(day_return, low=1.0, sweet_low=8.0, sweet_high=120.0, high=450.0) * 0.18
         + _linear_score(_raw_num("hour_return_pct"), low=0.5, high=14.0) * 0.14
@@ -1343,14 +1387,26 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         + _linear_score(day_return, low=130.0, high=650.0) * 0.16
         + _num("crime_largecap_penalty_score").clip(lower=0.0, upper=100.0) * 0.08
     ).clip(lower=0.0, upper=100.0)
+    dormant_short_fuse_score = (
+        pre_pump_short_fuse_score * 0.76
+        + target_cex_flow_score * 0.08
+        + convex_fuel * 0.08
+        + _linear_score(_raw_num("oi_delta_pct"), low=0.0, high=4.0) * 0.08
+        - late_penalty * 0.18
+    ).clip(lower=0.0, upper=100.0)
+    timing_score = pd.concat(
+        [price_volume_ignition_score, dormant_short_fuse_score],
+        axis=1,
+    ).max(axis=1).fillna(0.0).clip(lower=0.0, upper=100.0)
 
     raw_score = (
         centralised_ownership * 0.22
         + low_float_score * 0.20
-        + short_account_build_score * 0.18
-        + price_volume_ignition_score * 0.18
-        + target_cex_flow_score * 0.12
-        + convex_fuel * 0.10
+        + short_account_build_score * 0.11
+        + short_dominance_score * 0.07
+        + timing_score * 0.20
+        + target_cex_flow_score * 0.11
+        + convex_fuel * 0.09
         - late_penalty * 0.16
         - _num("crime_largecap_penalty_score").clip(lower=0.0, upper=100.0) * 0.08
     ).clip(lower=0.0, upper=100.0)
@@ -1361,18 +1417,34 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     all_df["centralized_ownership_score"] = centralised_ownership
     all_df["low_float_score"] = low_float_score
     all_df["short_account_build_score"] = short_account_build_score
+    all_df["short_dominance_score"] = short_dominance_score
+    all_df["low_volatility_coil_score"] = low_volatility_coil_score
+    all_df["pre_pump_short_fuse_score"] = pre_pump_short_fuse_score
+    all_df["dormant_short_fuse_score"] = dormant_short_fuse_score
     all_df["price_volume_ignition_score"] = price_volume_ignition_score
     all_df["target_cex_volume_share_pct"] = target_cex_share
     all_df["target_cex_flow_score"] = target_cex_flow_score
     all_df["rave_lab_convex_fuel_score"] = convex_fuel
     all_df["rave_lab_late_penalty_score"] = late_penalty
     all_df["rave_lab_setup_score"] = setup_score
+    all_df["dormant_short_fuse_flag"] = (
+        (dormant_short_fuse_score >= 58.0)
+        & (low_volatility_coil_score >= 52.0)
+        & (short_dominance_score >= 50.0)
+        & ((low_float_score >= 38.0) | (centralised_ownership >= 45.0))
+        & (late_penalty < 68.0)
+        & (~major_excluded)
+    )
     all_df["rave_lab_watch_flag"] = (setup_score >= 50.0) & (~major_excluded)
     all_df["rave_lab_setup_flag"] = (
         (setup_score >= 62.0)
         & (centralised_ownership >= 42.0)
         & (low_float_score >= 35.0)
-        & ((short_account_build_score >= 38.0) | (price_volume_ignition_score >= 55.0))
+        & (
+            (short_account_build_score >= 38.0)
+            | (price_volume_ignition_score >= 55.0)
+            | (dormant_short_fuse_score >= 58.0)
+        )
         & (~major_excluded)
     )
     all_df["rave_lab_extreme_flag"] = (
@@ -1384,10 +1456,36 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         & (~major_excluded)
     )
 
+    def _short_fuse_note(row: pd.Series) -> str:
+        if bool(row.get("crime_excluded_major")):
+            return "Major/liquid tape excluded from the low-vol short-fuse radar."
+        factors: list[str] = []
+        if _safe_float(row.get("low_volatility_coil_score")) >= 55.0:
+            factors.append(f"quiet 24h range {_safe_float(row.get('range_24h_pct')):.1f}%")
+        if _safe_float(row.get("short_dominance_score")) >= 55.0:
+            factors.append(f"short accounts {_safe_float(row.get('short_account_pct')):.1f}%")
+        if _safe_float(row.get("short_account_change_max_pp")) >= 1.0:
+            window = str(row.get("short_account_change_max_window", "")).strip()
+            suffix = f" over {window}" if window else ""
+            factors.append(f"short share +{_safe_float(row.get('short_account_change_max_pp')):.1f}pp{suffix}")
+        if _safe_float(row.get("low_float_score")) >= 45.0:
+            factors.append("low float / FDV gap")
+        if _safe_float(row.get("centralized_ownership_score")) >= 45.0:
+            factors.append("centralized holder proxy")
+        if _safe_float(row.get("target_cex_flow_score")) >= 50.0:
+            factors.append("target CEX-flow lane")
+        if _safe_float(row.get("rave_lab_late_penalty_score")) >= 68.0:
+            factors.append("late heat offset")
+        if not factors:
+            return "No quiet short-fuse pattern in this scan."
+        return " | ".join(factors[:6])
+
     def _setup_note(row: pd.Series) -> str:
         if bool(row.get("crime_excluded_major")):
             return "Major/liquid tape excluded from this controlled-float upside radar."
         factors: list[str] = []
+        if _safe_float(row.get("dormant_short_fuse_score")) >= 58.0:
+            factors.append("low-vol short fuse")
         if _safe_float(row.get("centralized_ownership_score")) >= 55.0:
             factors.append("centralized holder/insider proxy")
         elif _safe_float(row.get("insider_team_holder_pct")) >= 8.0:
@@ -1412,6 +1510,7 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
             return "No strong RAVE/LAB-style setup in this scan."
         return " | ".join(factors[:6])
 
+    all_df["dormant_short_fuse_note"] = all_df.apply(_short_fuse_note, axis=1)
     all_df["rave_lab_setup_note"] = all_df.apply(_setup_note, axis=1)
     return all_df
 
@@ -1548,6 +1647,10 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "centralized_ownership_score",
         "low_float_score",
         "short_account_build_score",
+        "short_dominance_score",
+        "low_volatility_coil_score",
+        "pre_pump_short_fuse_score",
+        "dormant_short_fuse_score",
         "price_volume_ignition_score",
         "target_cex_volume_share_pct",
         "target_cex_flow_score",
@@ -3852,6 +3955,34 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Scores current short-account skew and the largest recent increase in short-account share.",
             ),
+            "short_dominance_score": st.column_config.NumberColumn(
+                "Short Dom.",
+                format="%.1f",
+                help="Scores whether short accounts are already dominant, even if the coin has not started moving yet.",
+            ),
+            "low_volatility_coil_score": st.column_config.NumberColumn(
+                "Low-Vol Coil",
+                format="%.1f",
+                help="Scores quiet 24h range and muted returns with a gentle volume/trade wake-up. Built for pre-breakout compression.",
+            ),
+            "pre_pump_short_fuse_score": st.column_config.NumberColumn(
+                "Pre-Pump Fuse",
+                format="%.1f",
+                help="Pre-breakout score combining low volatility, dominant shorts, low float, and centralized ownership.",
+            ),
+            "dormant_short_fuse_score": st.column_config.NumberColumn(
+                "Dormant Short Fuse",
+                format="%.1f",
+                help="CHIP-style setup score: quiet tape, dominant shorts, owner/float concentration, small CEX-flow confirmation, and low late-stage heat.",
+            ),
+            "dormant_short_fuse_flag": st.column_config.CheckboxColumn(
+                "Short Fuse",
+                help="True when a low-volatility coin has dominant shorts plus float/ownership concentration before the breakout.",
+            ),
+            "dormant_short_fuse_note": st.column_config.TextColumn(
+                "Short Fuse Note",
+                help="Short explanation of the quiet short-fuse setup.",
+            ),
             "price_volume_ignition_score": st.column_config.NumberColumn(
                 "PV Ignition",
                 format="%.1f",
@@ -6137,9 +6268,12 @@ def render_breakout_dashboard() -> None:
                 "trade_bucket",
                 "trade_bucket_score",
                 "rave_lab_setup_score",
+                "dormant_short_fuse_score",
+                "dormant_short_fuse_flag",
                 "rave_lab_extreme_flag",
                 "rave_lab_setup_flag",
                 "rave_lab_watch_flag",
+                "dormant_short_fuse_note",
                 "rave_lab_setup_note",
                 "last_price",
                 "day_return_pct",
@@ -6173,6 +6307,9 @@ def render_breakout_dashboard() -> None:
                 "centralized_ownership_score",
                 "low_float_score",
                 "short_account_build_score",
+                "short_dominance_score",
+                "low_volatility_coil_score",
+                "pre_pump_short_fuse_score",
                 "price_volume_ignition_score",
                 "rave_lab_convex_fuel_score",
                 "rave_lab_late_penalty_score",
@@ -6192,12 +6329,32 @@ def render_breakout_dashboard() -> None:
             score_series = pd.to_numeric(radar_df["rave_lab_setup_score"], errors="coerce") if "rave_lab_setup_score" in radar_df.columns else pd.Series(dtype="float64")
             radar_ranked_df = radar_df.sort_values(
                 [
+                    "dormant_short_fuse_flag",
                     "rave_lab_extreme_flag",
                     "rave_lab_setup_flag",
+                    "dormant_short_fuse_score",
                     "rave_lab_setup_score",
+                    "low_volatility_coil_score",
+                    "short_dominance_score",
                     "short_account_build_score",
                     "price_volume_ignition_score",
                     "target_cex_flow_score",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, False, False, False, False, False, False, True],
+            )
+            dormant_short_fuse_df = radar_ranked_df[
+                (pd.to_numeric(radar_ranked_df["dormant_short_fuse_score"], errors="coerce").fillna(0.0) >= 45.0)
+                & (pd.to_numeric(radar_ranked_df["low_volatility_coil_score"], errors="coerce").fillna(0.0) >= 42.0)
+                & (pd.to_numeric(radar_ranked_df["short_dominance_score"], errors="coerce").fillna(0.0) >= 38.0)
+            ].sort_values(
+                [
+                    "dormant_short_fuse_flag",
+                    "dormant_short_fuse_score",
+                    "low_volatility_coil_score",
+                    "short_dominance_score",
+                    "low_float_score",
+                    "centralized_ownership_score",
                     "symbol",
                 ],
                 ascending=[False, False, False, False, False, False, True],
@@ -6218,9 +6375,24 @@ def render_breakout_dashboard() -> None:
             r1, r2, r3, r4 = st.columns(4)
             best_score = float(score_series.max()) if not score_series.empty and pd.notna(score_series.max()) else float("nan")
             r1.metric("Best setup score", f"{best_score:.1f}" if math.isfinite(best_score) else "n/a")
-            r2.metric("Extreme flags", int(radar_df.get("rave_lab_extreme_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+            r2.metric("Short-fuse flags", int(radar_df.get("dormant_short_fuse_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
             r3.metric("Setup flags", int(radar_df.get("rave_lab_setup_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
             r4.metric("Watchlist", int(radar_df.get("rave_lab_watch_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+
+            st.subheader("Low-Vol Short Fuse")
+            st.caption(
+                "CHIP-style pre-pump radar: quiet 24h range, muted returns, shorts already dominant or building, "
+                "and enough owner/float concentration to make the float structurally fragile."
+            )
+            if dormant_short_fuse_df.empty:
+                st.info("No quiet short-fuse rows currently clear the filter.")
+            else:
+                st.dataframe(
+                    _display_frame(dormant_short_fuse_df.head(35), rave_lab_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
 
             st.subheader("Best Controlled-Float Upside Scores")
             if radar_ranked_df.empty:
