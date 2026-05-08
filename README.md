@@ -36,3 +36,21 @@ API keys are read from environment variables only:
 - `BSCSCAN_API_KEY`
 
 The scanner uses structural-risk language only. It does not generate legal conclusions from on-chain data alone.
+
+## Discord Convex Long Alerts
+
+The breakout dashboard can post every scanned `Convex Long` setup to a Discord channel through a channel webhook.
+
+1. In Discord, open your channel settings, choose `Integrations`, create a webhook, and copy the webhook URL.
+2. Add this to your local `.env` file:
+
+```text
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+DISCORD_CONVEX_ALERTS_ENABLED=1
+DISCORD_CONVEX_ALERT_TOP_N=10
+DISCORD_CONVEX_ALERT_MIN_SCORE=0
+DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES=240
+```
+
+The dashboard sends alerts after `Scan now` completes. Per-symbol cooldown state is stored in
+`data/discord_convex_alert_state.csv`, which is ignored by git.

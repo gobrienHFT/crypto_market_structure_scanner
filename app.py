@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic
@@ -155,6 +156,26 @@ def _parse_positive_ints(raw_value: str, *, default: tuple[int, ...]) -> tuple[i
         if item > 0:
             parsed.append(item)
     return tuple(dict.fromkeys(parsed)) or default
+
+
+def _parse_env_int(raw_value: str, *, default: int, minimum: int | None = None) -> int:
+    try:
+        parsed = int(str(raw_value).strip())
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    return parsed
+
+
+def _parse_env_float(raw_value: str, *, default: float, minimum: float | None = None) -> float:
+    try:
+        parsed = float(str(raw_value).strip())
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    return parsed
 
 
 def _safe_float(value: Any) -> float:
@@ -2860,6 +2881,34 @@ COINMARKETCAP_API_KEY = _env_value("COINMARKETCAP_API_KEY", "CMC_API_KEY", defau
 CMC_MOVERS_LIMIT = int(_env_value("CMC_MOVERS_LIMIT", default="200"))
 CMC_MOVER_SYMBOLS_TO_SCAN = int(_env_value("CMC_MOVER_SYMBOLS_TO_SCAN", default="8"))
 DWF_PORTFOLIO_SYMBOLS_TO_SCAN = int(_env_value("DWF_PORTFOLIO_SYMBOLS_TO_SCAN", default="8"))
+DISCORD_WEBHOOK_URL = _env_value("DISCORD_WEBHOOK_URL", "CONVEX_LONG_DISCORD_WEBHOOK_URL", default="").strip()
+DISCORD_CONVEX_ALERTS_ENABLED = _env_value("DISCORD_CONVEX_ALERTS_ENABLED", default="1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DISCORD_CONVEX_ALERT_TOP_N = _parse_env_int(
+    _env_value("DISCORD_CONVEX_ALERT_TOP_N", default="10"),
+    default=10,
+    minimum=1,
+)
+DISCORD_CONVEX_ALERT_MIN_SCORE = _parse_env_float(
+    _env_value("DISCORD_CONVEX_ALERT_MIN_SCORE", default="0"),
+    default=0.0,
+    minimum=0.0,
+)
+DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES = _parse_env_int(
+    _env_value("DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES", default="240"),
+    default=240,
+    minimum=0,
+)
+DISCORD_CONVEX_ALERT_STATE_PATH = Path(
+    _env_value(
+        "DISCORD_CONVEX_ALERT_STATE_PATH",
+        default=str(APP_DIR / "data" / "discord_convex_alert_state.csv"),
+    )
+)
 
 st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
 st.markdown(
@@ -2872,6 +2921,197 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+DISCORD_CONVEX_ALERT_STATE_COLUMNS = ["symbol", "last_notified_at", "last_score", "last_note"]
+
+
+def _metric_value(row: pd.Series, columns: tuple[str, ...]) -> float | None:
+    for column in columns:
+        if column not in row.index:
+            continue
+        try:
+            value = float(row.get(column))
+        except Exception:
+            continue
+        if math.isfinite(value):
+            return value
+    return None
+
+
+def _metric_fragment(
+    row: pd.Series,
+    label: str,
+    columns: tuple[str, ...],
+    *,
+    suffix: str = "",
+    decimals: int = 1,
+) -> str:
+    value = _metric_value(row, columns)
+    if value is None:
+        return ""
+    return f"{label} {value:.{decimals}f}{suffix}"
+
+
+def _read_discord_convex_alert_state() -> pd.DataFrame:
+    if not DISCORD_CONVEX_ALERT_STATE_PATH.exists():
+        return pd.DataFrame(columns=DISCORD_CONVEX_ALERT_STATE_COLUMNS)
+    try:
+        state = pd.read_csv(DISCORD_CONVEX_ALERT_STATE_PATH)
+    except Exception:
+        return pd.DataFrame(columns=DISCORD_CONVEX_ALERT_STATE_COLUMNS)
+    for column in DISCORD_CONVEX_ALERT_STATE_COLUMNS:
+        if column not in state.columns:
+            state[column] = pd.NA
+    state = state.loc[:, DISCORD_CONVEX_ALERT_STATE_COLUMNS].copy()
+    state["symbol"] = state["symbol"].astype(str).str.upper().str.strip()
+    state["last_notified_at"] = pd.to_datetime(state["last_notified_at"], errors="coerce", utc=True)
+    state["last_score"] = pd.to_numeric(state["last_score"], errors="coerce")
+    return state[state["symbol"].ne("")].drop_duplicates(subset=["symbol"], keep="last")
+
+
+def _write_discord_convex_alert_state(state: pd.DataFrame) -> None:
+    DISCORD_CONVEX_ALERT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    output = state.loc[:, DISCORD_CONVEX_ALERT_STATE_COLUMNS].copy()
+    output["last_notified_at"] = pd.to_datetime(output["last_notified_at"], errors="coerce", utc=True).dt.strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    output.to_csv(DISCORD_CONVEX_ALERT_STATE_PATH, index=False)
+
+
+def _discord_convex_candidates(all_df: pd.DataFrame) -> pd.DataFrame:
+    if all_df.empty or "trade_bucket" not in all_df.columns:
+        return pd.DataFrame()
+    source = all_df.loc[:, ~all_df.columns.duplicated()].copy()
+    source["_discord_bucket_score"] = pd.to_numeric(source.get("trade_bucket_score"), errors="coerce").fillna(0.0)
+    candidates = source[
+        source["trade_bucket"].astype(str).eq("Convex Long")
+        & (source["_discord_bucket_score"] >= DISCORD_CONVEX_ALERT_MIN_SCORE)
+    ].copy()
+    if candidates.empty:
+        return candidates
+    return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
+
+
+def _eligible_discord_convex_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
+    if candidates.empty:
+        return candidates
+    if DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES <= 0:
+        return candidates
+    state = _read_discord_convex_alert_state()
+    last_by_symbol = dict(zip(state["symbol"], state["last_notified_at"]))
+    now = pd.Timestamp.now(tz="UTC")
+    cooldown = pd.Timedelta(minutes=DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES)
+    eligible_indices: list[Any] = []
+    for index, row in candidates.iterrows():
+        symbol = str(row.get("symbol", "")).upper().strip()
+        last_sent = last_by_symbol.get(symbol)
+        if last_sent is None or pd.isna(last_sent) or now - last_sent >= cooldown:
+            eligible_indices.append(index)
+    return candidates.loc[eligible_indices].copy()
+
+
+def _discord_candidate_line(row: pd.Series) -> str:
+    symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+    base_asset = str(row.get("base_asset", "")).upper().strip()
+    label = f"**{symbol}**" if not base_asset or base_asset == symbol.replace("USDT", "") else f"**{symbol}** ({base_asset})"
+    metrics = [
+        _metric_fragment(row, "bucket", ("_discord_bucket_score", "trade_bucket_score")),
+        _metric_fragment(row, "convex", ("convexity_entry_score", "convexity_score")),
+        _metric_fragment(row, "setup", ("rave_lab_setup_score", "pre_pump_precision_score")),
+        _metric_fragment(row, "short acct", ("short_account_pct",), suffix="%"),
+        _metric_fragment(row, "24h", ("price_change_24h_pct", "change_24h_pct", "day_change_pct"), suffix="%"),
+        _metric_fragment(row, "OI", ("oi_delta_pct", "oi_value_change_since_scan_pct"), suffix="%"),
+    ]
+    compact_metrics = " | ".join(metric for metric in metrics if metric)
+    note = str(row.get("trade_bucket_note", "")).strip()
+    if len(note) > 220:
+        note = f"{note[:217]}..."
+    if compact_metrics and note:
+        return f"{label} | {compact_metrics}\n{note}"
+    if compact_metrics:
+        return f"{label} | {compact_metrics}"
+    if note:
+        return f"{label}\n{note}"
+    return label
+
+
+def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> None:
+    lines = [_discord_candidate_line(row) for _, row in candidates.iterrows()]
+    description = "\n\n".join(lines)
+    if len(description) > 3900:
+        description = f"{description[:3890]}\n..."
+    payload = {
+        "username": "Convex Scanner",
+        "embeds": [
+            {
+                "title": f"{len(candidates)} Convex Long candidate{'s' if len(candidates) != 1 else ''}",
+                "description": description,
+                "color": 0x22C55E,
+                "fields": [
+                    {"name": "Scan mode", "value": str(scan_mode), "inline": True},
+                    {"name": "Alert threshold", "value": f"{DISCORD_CONVEX_ALERT_MIN_SCORE:.1f}+", "inline": True},
+                    {
+                        "name": "Cooldown",
+                        "value": f"{DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES}m per symbol",
+                        "inline": True,
+                    },
+                ],
+                "footer": {
+                    "text": "Structural-risk scan only. Not a legal conclusion or trade instruction.",
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+    }
+    response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+    if response.status_code >= 300:
+        raise RuntimeError(f"Discord webhook HTTP {response.status_code}: {response.text[:180]}")
+
+
+def _record_discord_convex_alerts(candidates: pd.DataFrame) -> None:
+    state = _read_discord_convex_alert_state()
+    symbols = [str(symbol).upper().strip() for symbol in candidates["symbol"].tolist()]
+    state = state[~state["symbol"].isin(symbols)].copy()
+    now = pd.Timestamp.now(tz="UTC")
+    new_rows = pd.DataFrame(
+        [
+            {
+                "symbol": str(row.get("symbol", "")).upper().strip(),
+                "last_notified_at": now,
+                "last_score": _metric_value(row, ("_discord_bucket_score", "trade_bucket_score")),
+                "last_note": str(row.get("trade_bucket_note", "")).strip()[:300],
+            }
+            for _, row in candidates.iterrows()
+        ],
+        columns=DISCORD_CONVEX_ALERT_STATE_COLUMNS,
+    )
+    _write_discord_convex_alert_state(pd.concat([state, new_rows], ignore_index=True))
+
+
+def _maybe_notify_discord_convex_longs(all_df: pd.DataFrame, *, scan_key: str, scan_mode: str) -> str:
+    if not DISCORD_CONVEX_ALERTS_ENABLED or not DISCORD_WEBHOOK_URL:
+        return ""
+    session_key = f"discord_convex_alert_sent::{scan_key}"
+    if st.session_state.get(session_key):
+        return ""
+    st.session_state[session_key] = True
+
+    candidates = _discord_convex_candidates(all_df)
+    if candidates.empty:
+        return "Discord alerts enabled: no Convex Long candidates met the current alert threshold."
+
+    eligible = _eligible_discord_convex_candidates(candidates)
+    if eligible.empty:
+        return "Discord alerts enabled: Convex Long candidates are inside the per-symbol cooldown window."
+
+    to_send = eligible.head(DISCORD_CONVEX_ALERT_TOP_N).copy()
+    try:
+        _post_discord_convex_alert(to_send, scan_mode=scan_mode)
+        _record_discord_convex_alerts(to_send)
+    except Exception as exc:
+        return f"Discord alert failed: {exc}"
+    return f"Discord alert sent for {len(to_send)} Convex Long candidate{'s' if len(to_send) != 1 else ''}."
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -5273,6 +5513,16 @@ def render_breakout_dashboard() -> None:
             f"L/S ratio period: {LONG_SHORT_RATIO_PERIOD} (global Binance account ratio) | "
             f"Crime-pump period: {CRIME_PUMP_PERIOD}"
         )
+        discord_alert_status = _maybe_notify_discord_convex_longs(
+            all_df,
+            scan_key=f"{scan_mode_label}:{st.session_state.get('breakout_refresh_nonce', 0)}",
+            scan_mode=scan_mode_label,
+        )
+        if discord_alert_status:
+            if discord_alert_status.startswith("Discord alert failed"):
+                st.warning(discord_alert_status)
+            else:
+                st.info(discord_alert_status)
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Pairs scanned", int(len(all_df)))
