@@ -68,3 +68,16 @@ DISCORD_LOGIN_RETRY_SECONDS=90
 Run `run_discord_convex_bot.bat`, then use `/convex` in Discord to pull the latest cached scan.
 Use `/convex_status` to check whether the dashboard has written a cache yet. `DISCORD_GUILD_ID`
 is recommended because guild slash commands sync almost immediately; global slash commands can take longer.
+
+For automatic no-click alerts, run `run_discord_convex_watcher.bat`. It scans on a timer and posts only newly appearing
+`Convex Long` names through `DISCORD_WEBHOOK_URL`.
+
+```text
+DISCORD_WATCHER_SCAN_MODE=Deep
+DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
+DISCORD_WATCHER_TOP_N=25
+DISCORD_WATCHER_REALERT_HOURS=12
+```
+
+The watcher stores state in `data/discord_convex_watcher_state.csv` so a coin already active as Convex is not reposted
+every scan.

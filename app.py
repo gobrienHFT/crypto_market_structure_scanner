@@ -2916,17 +2916,18 @@ DISCORD_CONVEX_CACHE_PATH = Path(
     )
 )
 
-st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
-st.markdown(
-    """
-    <style>
-    .stApp { background: linear-gradient(180deg, #0b1020 0%, #111827 100%); color: #f3f4f6; }
-    h1, h2, h3, p, label, .stMarkdown, .stCaption { color: #f9fafb !important; }
-    .card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 14px; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+if os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") != "1":
+    st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
+    st.markdown(
+        """
+        <style>
+        .stApp { background: linear-gradient(180deg, #0b1020 0%, #111827 100%); color: #f3f4f6; }
+        h1, h2, h3, p, label, .stMarkdown, .stCaption { color: #f9fafb !important; }
+        .card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 14px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 DISCORD_CONVEX_ALERT_STATE_COLUMNS = ["symbol", "last_notified_at", "last_score", "last_note"]
@@ -8313,14 +8314,19 @@ def render_concentration_dashboard() -> None:
         st.dataframe(pd.DataFrame(cache.queue_rows()), use_container_width=True, hide_index=True)
 
 
-st.caption("Switch between the breakout scanner, the cross-asset screener, Binance PnL, and on-chain concentration tooling.")
-dashboard_mode = st.radio("Dashboard", ("Breakouts", "Screener", "PnL", "On-Chain Concentration"), horizontal=True)
+def main_dashboard() -> None:
+    st.caption("Switch between the breakout scanner, the cross-asset screener, Binance PnL, and on-chain concentration tooling.")
+    dashboard_mode = st.radio("Dashboard", ("Breakouts", "Screener", "PnL", "On-Chain Concentration"), horizontal=True)
 
-if dashboard_mode == "Breakouts":
-    render_breakout_dashboard()
-elif dashboard_mode == "Screener":
-    render_screener_dashboard()
-elif dashboard_mode == "PnL":
-    render_pnl_dashboard()
-else:
-    render_concentration_dashboard()
+    if dashboard_mode == "Breakouts":
+        render_breakout_dashboard()
+    elif dashboard_mode == "Screener":
+        render_screener_dashboard()
+    elif dashboard_mode == "PnL":
+        render_pnl_dashboard()
+    else:
+        render_concentration_dashboard()
+
+
+if os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") != "1":
+    main_dashboard()
