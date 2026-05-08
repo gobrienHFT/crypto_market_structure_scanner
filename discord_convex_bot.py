@@ -139,6 +139,7 @@ def main() -> None:
     guild_id_raw = _env_value("DISCORD_GUILD_ID")
     allowed_channel_raw = _env_value("DISCORD_ALLOWED_CHANNEL_ID")
     default_top_n = max(1, int(_env_value("DISCORD_CONVEX_COMMAND_TOP_N", "10")))
+    announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "1").strip().lower() in {"1", "true", "yes", "on"}
     guild = discord.Object(id=int(guild_id_raw)) if guild_id_raw.strip().isdigit() else None
     allowed_channel_id = int(allowed_channel_raw) if allowed_channel_raw.strip().isdigit() else None
 
@@ -179,13 +180,41 @@ def main() -> None:
 
     @client.event
     async def on_ready() -> None:
+        guilds = ", ".join(f"{connected_guild.name} ({connected_guild.id})" for connected_guild in client.guilds)
+        print(f"Connected guilds: {guilds or 'none'}")
+        print(f"Configured DISCORD_GUILD_ID: {guild_id_raw or 'not set'}")
+        print(f"Configured DISCORD_ALLOWED_CHANNEL_ID: {allowed_channel_raw or 'not set'}")
+
         if guild is not None:
-            await tree.sync(guild=guild)
+            commands = await tree.sync(guild=guild)
             scope = f"guild {guild.id}"
         else:
-            await tree.sync()
+            commands = await tree.sync()
             scope = "global"
-        print(f"Discord Convex bot logged in as {client.user}. Slash commands synced to {scope}.")
+        command_names = ", ".join(f"/{command.name}" for command in commands) or "none"
+        print(f"Discord Convex bot logged in as {client.user}. Slash commands synced to {scope}: {command_names}.")
+
+        if allowed_channel_id is None:
+            print("DISCORD_ALLOWED_CHANNEL_ID is not set; commands are allowed in any channel.")
+            return
+
+        channel = client.get_channel(allowed_channel_id)
+        if channel is None:
+            try:
+                channel = await client.fetch_channel(allowed_channel_id)
+            except Exception as exc:
+                print(f"Could not access DISCORD_ALLOWED_CHANNEL_ID {allowed_channel_id}: {exc}")
+                print("Check that the bot is invited to the server and can view that channel.")
+                return
+
+        print(f"Allowed channel resolved: #{getattr(channel, 'name', 'unknown')} ({allowed_channel_id})")
+        if announce_online:
+            try:
+                await channel.send(
+                    "Convex bot online. Use `/convex_status` to check the latest scan cache, then `/convex` for candidates."
+                )
+            except Exception as exc:
+                print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")
 
     client.run(token)
 
