@@ -62,23 +62,42 @@ RAVE_LAB_SETUP_COLUMNS = [
     "short_dominance_score",
     "low_volatility_coil_score",
     "pre_pump_short_fuse_score",
+    "pre_pump_compression_score",
+    "short_trap_score",
+    "silent_oi_accumulation_score",
     "dormant_short_fuse_score",
     "price_volume_ignition_score",
     "target_cex_volume_share_pct",
     "target_cex_flow_score",
+    "target_cex_share_change_pp",
+    "cex_lane_wakeup_score",
+    "oi_value_change_since_scan_pct",
+    "ask_depth_1pct_change_pct",
+    "ask_depth_withdrawal_score",
+    "thin_ask_trap_score",
     "rave_lab_convex_fuel_score",
     "rave_lab_late_penalty_score",
+    "no_chase_penalty_score",
+    "pre_pump_precision_score",
     "rave_lab_setup_score",
+    "snapshot_seen_before",
+    "prior_scan_age_minutes",
     "dormant_short_fuse_flag",
+    "pre_pump_precision_flag",
+    "no_chase_ok_flag",
     "rave_lab_watch_flag",
     "rave_lab_setup_flag",
     "rave_lab_extreme_flag",
+    "pre_pump_precision_note",
     "dormant_short_fuse_note",
     "rave_lab_setup_note",
 ]
-RAVE_LAB_TEXT_COLUMNS = {"dormant_short_fuse_note", "rave_lab_setup_note"}
+RAVE_LAB_TEXT_COLUMNS = {"pre_pump_precision_note", "dormant_short_fuse_note", "rave_lab_setup_note"}
 RAVE_LAB_BOOL_COLUMNS = {
+    "snapshot_seen_before",
     "dormant_short_fuse_flag",
+    "pre_pump_precision_flag",
+    "no_chase_ok_flag",
     "rave_lab_watch_flag",
     "rave_lab_setup_flag",
     "rave_lab_extreme_flag",
@@ -1304,6 +1323,8 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     long_short_ratio = _raw_num("long_short_account_ratio")
     short_change_pct = _num("short_account_change_max_pct")
     short_change_pp = _num("short_account_change_max_pp")
+    oi_delta = _raw_num("oi_delta_pct")
+    taker_buy_share = _raw_num("taker_buy_share_pct")
     short_dominance_score = (
         _linear_score(short_account_pct, low=50.0, high=76.0) * 0.42
         + _linear_score(long_short_ratio, low=0.30, high=0.95, invert=True) * 0.28
@@ -1338,12 +1359,35 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         + quiet_return_score * 0.38
         + gentle_wake_score * 0.20
     ).clip(lower=0.0, upper=100.0)
+    oi_growth_score = _linear_score(oi_delta, low=0.15, high=5.0)
+    price_not_falling_score = _band_score(day_return, low=-4.0, sweet_low=-0.5, sweet_high=8.0, high=35.0)
+    pre_pump_compression_score = (
+        low_volatility_coil_score * 0.44
+        + gentle_wake_score * 0.20
+        + oi_growth_score * 0.18
+        + price_not_falling_score * 0.12
+        + _linear_score(_raw_num("distance_to_high_20d_pct"), low=-18.0, high=6.0, invert=True) * 0.06
+    ).clip(lower=0.0, upper=100.0)
+    short_trap_score = (
+        short_dominance_score * 0.36
+        + oi_growth_score * 0.24
+        + price_not_falling_score * 0.18
+        + _linear_score(taker_buy_share, low=48.0, high=62.0) * 0.10
+        + _linear_score(short_change_pp, low=0.4, high=4.5) * 0.12
+    ).clip(lower=0.0, upper=100.0)
+    silent_oi_accumulation_score = (
+        low_volatility_coil_score * 0.34
+        + oi_growth_score * 0.34
+        + short_dominance_score * 0.16
+        + gentle_wake_score * 0.10
+        + _linear_score(_raw_num("oi_to_24h_volume_pct"), low=2.0, high=16.0) * 0.06
+    ).clip(lower=0.0, upper=100.0)
     pre_pump_short_fuse_score = (
-        low_volatility_coil_score * 0.30
-        + short_dominance_score * 0.28
+        pre_pump_compression_score * 0.28
+        + short_trap_score * 0.24
+        + silent_oi_accumulation_score * 0.16
         + low_float_score * 0.18
         + centralised_ownership * 0.16
-        + gentle_wake_score * 0.08
     ).clip(lower=0.0, upper=100.0)
     price_volume_ignition_score = (
         _band_score(day_return, low=1.0, sweet_low=8.0, sweet_high=120.0, high=450.0) * 0.18
@@ -1387,12 +1431,21 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         + _linear_score(day_return, low=130.0, high=650.0) * 0.16
         + _num("crime_largecap_penalty_score").clip(lower=0.0, upper=100.0) * 0.08
     ).clip(lower=0.0, upper=100.0)
+    no_chase_penalty_score = (
+        _linear_score(day_return, low=55.0, high=260.0) * 0.22
+        + _linear_score(_raw_num("hour_return_pct"), low=12.0, high=42.0) * 0.14
+        + _linear_score(range_24h, low=18.0, high=80.0) * 0.12
+        + _num("crime_exhaustion_score").clip(lower=0.0, upper=100.0) * 0.18
+        + _num("convexity_late_penalty").clip(lower=0.0, upper=100.0) * 0.16
+        + _num("exit_fragility_score").clip(lower=0.0, upper=100.0) * 0.10
+        + _linear_score(_raw_num("carry_funding_pct"), low=0.015, high=0.12) * 0.08
+    ).clip(lower=0.0, upper=100.0)
     dormant_short_fuse_score = (
         pre_pump_short_fuse_score * 0.76
         + target_cex_flow_score * 0.08
         + convex_fuel * 0.08
-        + _linear_score(_raw_num("oi_delta_pct"), low=0.0, high=4.0) * 0.08
-        - late_penalty * 0.18
+        + oi_growth_score * 0.08
+        - no_chase_penalty_score * 0.16
     ).clip(lower=0.0, upper=100.0)
     timing_score = pd.concat(
         [price_volume_ignition_score, dormant_short_fuse_score],
@@ -1419,6 +1472,9 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     all_df["short_account_build_score"] = short_account_build_score
     all_df["short_dominance_score"] = short_dominance_score
     all_df["low_volatility_coil_score"] = low_volatility_coil_score
+    all_df["pre_pump_compression_score"] = pre_pump_compression_score
+    all_df["short_trap_score"] = short_trap_score
+    all_df["silent_oi_accumulation_score"] = silent_oi_accumulation_score
     all_df["pre_pump_short_fuse_score"] = pre_pump_short_fuse_score
     all_df["dormant_short_fuse_score"] = dormant_short_fuse_score
     all_df["price_volume_ignition_score"] = price_volume_ignition_score
@@ -1426,13 +1482,32 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
     all_df["target_cex_flow_score"] = target_cex_flow_score
     all_df["rave_lab_convex_fuel_score"] = convex_fuel
     all_df["rave_lab_late_penalty_score"] = late_penalty
+    all_df["no_chase_penalty_score"] = no_chase_penalty_score
+    all_df["no_chase_ok_flag"] = (no_chase_penalty_score < 60.0) & (~major_excluded)
+    all_df["pre_pump_precision_score"] = (
+        pre_pump_compression_score * 0.24
+        + short_trap_score * 0.24
+        + silent_oi_accumulation_score * 0.18
+        + low_float_score * 0.14
+        + centralised_ownership * 0.12
+        + target_cex_flow_score * 0.08
+        - no_chase_penalty_score * 0.16
+    ).where(~major_excluded, other=0.0).clip(lower=0.0, upper=100.0)
     all_df["rave_lab_setup_score"] = setup_score
     all_df["dormant_short_fuse_flag"] = (
         (dormant_short_fuse_score >= 58.0)
         & (low_volatility_coil_score >= 52.0)
         & (short_dominance_score >= 50.0)
         & ((low_float_score >= 38.0) | (centralised_ownership >= 45.0))
-        & (late_penalty < 68.0)
+        & (no_chase_penalty_score < 62.0)
+        & (~major_excluded)
+    )
+    all_df["pre_pump_precision_flag"] = (
+        (all_df["pre_pump_precision_score"] >= 62.0)
+        & (pre_pump_compression_score >= 45.0)
+        & (short_trap_score >= 45.0)
+        & ((low_float_score >= 38.0) | (centralised_ownership >= 44.0))
+        & (no_chase_penalty_score < 60.0)
         & (~major_excluded)
     )
     all_df["rave_lab_watch_flag"] = (setup_score >= 50.0) & (~major_excluded)
@@ -1452,7 +1527,7 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         & (centralised_ownership >= 55.0)
         & (low_float_score >= 48.0)
         & (price_volume_ignition_score >= 45.0)
-        & (late_penalty < 72.0)
+        & (no_chase_penalty_score < 66.0)
         & (~major_excluded)
     )
 
@@ -1480,10 +1555,34 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
             return "No quiet short-fuse pattern in this scan."
         return " | ".join(factors[:6])
 
+    def _precision_note(row: pd.Series) -> str:
+        if bool(row.get("crime_excluded_major")):
+            return "Major/liquid tape excluded from the pre-pump precision radar."
+        factors: list[str] = []
+        if _safe_float(row.get("pre_pump_compression_score")) >= 55.0:
+            factors.append("compression")
+        if _safe_float(row.get("short_trap_score")) >= 55.0:
+            factors.append("short trap")
+        if _safe_float(row.get("silent_oi_accumulation_score")) >= 55.0:
+            factors.append("silent OI build")
+        if _safe_float(row.get("low_float_score")) >= 45.0:
+            factors.append("low float")
+        if _safe_float(row.get("centralized_ownership_score")) >= 45.0:
+            factors.append("centralized ownership")
+        if _safe_float(row.get("target_cex_flow_score")) >= 50.0:
+            factors.append("target CEX lane")
+        if _safe_float(row.get("no_chase_penalty_score")) >= 60.0:
+            factors.append("no-chase blocked")
+        if not factors:
+            return "No high-precision pre-pump pattern in this scan."
+        return " | ".join(factors[:6])
+
     def _setup_note(row: pd.Series) -> str:
         if bool(row.get("crime_excluded_major")):
             return "Major/liquid tape excluded from this controlled-float upside radar."
         factors: list[str] = []
+        if _safe_float(row.get("pre_pump_precision_score")) >= 62.0:
+            factors.append("pre-pump precision")
         if _safe_float(row.get("dormant_short_fuse_score")) >= 58.0:
             factors.append("low-vol short fuse")
         if _safe_float(row.get("centralized_ownership_score")) >= 55.0:
@@ -1511,8 +1610,289 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         return " | ".join(factors[:6])
 
     all_df["dormant_short_fuse_note"] = all_df.apply(_short_fuse_note, axis=1)
+    all_df["pre_pump_precision_note"] = all_df.apply(_precision_note, axis=1)
     all_df["rave_lab_setup_note"] = all_df.apply(_setup_note, axis=1)
     return all_df
+
+
+PRE_PUMP_SNAPSHOT_COLUMNS = [
+    "snapshot_ts",
+    "symbol",
+    "base_asset",
+    "last_price",
+    "quote_volume_24h",
+    "range_24h_pct",
+    "day_return_pct",
+    "hour_return_pct",
+    "daily_quote_volume_multiple",
+    "hour_volume_multiple",
+    "hour_trade_count_multiple",
+    "oi_value_usdt",
+    "oi_delta_pct",
+    "ask_depth_1pct_usdt",
+    "ask_depth_to_24h_volume_pct",
+    "short_account_pct",
+    "long_account_pct",
+    "short_account_change_max_pp",
+    "short_account_change_max_pct",
+    "short_account_change_max_window",
+    "target_cex_volume_share_pct",
+    "centralized_ownership_score",
+    "low_float_score",
+    "pre_pump_compression_score",
+    "short_trap_score",
+    "silent_oi_accumulation_score",
+    "cex_lane_wakeup_score",
+    "thin_ask_trap_score",
+    "no_chase_penalty_score",
+    "pre_pump_precision_score",
+    "dormant_short_fuse_score",
+    "rave_lab_setup_score",
+    "pre_pump_precision_flag",
+    "dormant_short_fuse_flag",
+    "rave_lab_setup_flag",
+]
+
+
+def _read_pre_pump_snapshot_history() -> pd.DataFrame:
+    path = PRE_PUMP_SNAPSHOT_PATH
+    if not path.exists():
+        return pd.DataFrame(columns=PRE_PUMP_SNAPSHOT_COLUMNS)
+    try:
+        history = pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame(columns=PRE_PUMP_SNAPSHOT_COLUMNS)
+    if history.empty or "snapshot_ts" not in history.columns or "symbol" not in history.columns:
+        return pd.DataFrame(columns=PRE_PUMP_SNAPSHOT_COLUMNS)
+    history["snapshot_ts"] = pd.to_datetime(history["snapshot_ts"], errors="coerce", utc=True)
+    history = history[history["snapshot_ts"].notna()].copy()
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=max(PRE_PUMP_SNAPSHOT_RETENTION_DAYS, 1))
+    history = history[history["snapshot_ts"] >= cutoff].copy()
+    history["symbol"] = history["symbol"].astype(str).str.upper()
+    return history
+
+
+def _append_pre_pump_snapshots(all_df: pd.DataFrame) -> None:
+    if all_df.empty:
+        return
+    path = PRE_PUMP_SNAPSHOT_PATH
+    snapshot = _display_frame(all_df, [col for col in PRE_PUMP_SNAPSHOT_COLUMNS if col != "snapshot_ts"])
+    if snapshot.empty or "symbol" not in snapshot.columns:
+        return
+    snapshot = snapshot.copy()
+    snapshot.insert(0, "snapshot_ts", pd.Timestamp.now(tz="UTC").isoformat())
+    for col in PRE_PUMP_SNAPSHOT_COLUMNS:
+        if col not in snapshot.columns:
+            snapshot[col] = "" if col in {"base_asset", "short_account_change_max_window"} else float("nan")
+    snapshot = snapshot[PRE_PUMP_SNAPSHOT_COLUMNS]
+    try:
+        history = _read_pre_pump_snapshot_history()
+        combined = pd.concat([history, snapshot], ignore_index=True)
+        combined["snapshot_ts"] = pd.to_datetime(combined["snapshot_ts"], errors="coerce", utc=True)
+        combined = combined[combined["snapshot_ts"].notna()].copy()
+        combined["symbol"] = combined["symbol"].astype(str).str.upper()
+        combined = combined.drop_duplicates(subset=["snapshot_ts", "symbol"], keep="last")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_csv(path, index=False)
+    except Exception:
+        return
+
+
+def _apply_pre_pump_scan_memory(all_df: pd.DataFrame) -> pd.DataFrame:
+    if all_df.empty:
+        return all_df
+
+    all_df = all_df.copy()
+    index = all_df.index
+
+    def _num(col: str, default: float = 0.0) -> pd.Series:
+        if col in all_df.columns:
+            values = pd.to_numeric(all_df[col], errors="coerce")
+        else:
+            values = pd.Series(default, index=index)
+        return values.fillna(default)
+
+    def _raw_num(col: str, default: float = float("nan")) -> pd.Series:
+        if col in all_df.columns:
+            return pd.to_numeric(all_df[col], errors="coerce")
+        return pd.Series(default, index=index)
+
+    defaults = {
+        "snapshot_seen_before": False,
+        "prior_scan_age_minutes": float("nan"),
+        "target_cex_share_change_pp": float("nan"),
+        "cex_lane_wakeup_score": 0.0,
+        "oi_value_change_since_scan_pct": float("nan"),
+        "ask_depth_1pct_change_pct": float("nan"),
+        "ask_depth_withdrawal_score": 0.0,
+        "thin_ask_trap_score": 0.0,
+    }
+    for col, default in defaults.items():
+        all_df[col] = default
+
+    history = _read_pre_pump_snapshot_history()
+    if not history.empty:
+        latest = history.sort_values("snapshot_ts").drop_duplicates(subset=["symbol"], keep="last").set_index("symbol")
+        symbols = all_df["symbol"].astype(str).str.upper()
+        prior_ts = symbols.map(latest["snapshot_ts"]) if "snapshot_ts" in latest.columns else pd.Series(pd.NaT, index=index)
+        all_df["snapshot_seen_before"] = prior_ts.notna().to_numpy()
+        now = pd.Timestamp.now(tz="UTC")
+        prior_age = (now - prior_ts).dt.total_seconds() / 60.0
+        all_df["prior_scan_age_minutes"] = prior_age
+
+        def _mapped_numeric(column: str) -> pd.Series:
+            if column not in latest.columns:
+                return pd.Series(float("nan"), index=index)
+            return pd.to_numeric(symbols.map(latest[column]), errors="coerce")
+
+        prior_cex_share = _mapped_numeric("target_cex_volume_share_pct")
+        prior_oi_value = _mapped_numeric("oi_value_usdt")
+        prior_ask_depth = _mapped_numeric("ask_depth_1pct_usdt")
+        current_cex_share = _raw_num("target_cex_volume_share_pct")
+        current_oi_value = _raw_num("oi_value_usdt")
+        current_ask_depth = _raw_num("ask_depth_1pct_usdt")
+
+        all_df["target_cex_share_change_pp"] = current_cex_share - prior_cex_share
+        valid_prior_oi = prior_oi_value > 0
+        all_df["oi_value_change_since_scan_pct"] = ((current_oi_value / prior_oi_value - 1.0) * 100.0).where(
+            valid_prior_oi,
+            other=float("nan"),
+        )
+        valid_prior_depth = prior_ask_depth > 0
+        all_df["ask_depth_1pct_change_pct"] = ((current_ask_depth / prior_ask_depth - 1.0) * 100.0).where(
+            valid_prior_depth,
+            other=float("nan"),
+        )
+
+    cex_share_change = _raw_num("target_cex_share_change_pp")
+    depth_change = _raw_num("ask_depth_1pct_change_pct")
+    ask_depth_to_volume = _raw_num("ask_depth_to_24h_volume_pct")
+    cex_lane_wakeup_score = (
+        _linear_score(cex_share_change, low=2.0, high=22.0) * 0.58
+        + _num("target_cex_flow_score").clip(lower=0.0, upper=100.0) * 0.28
+        + _linear_score(_raw_num("target_cex_volume_share_pct"), low=30.0, high=85.0) * 0.14
+    ).clip(lower=0.0, upper=100.0)
+    ask_depth_withdrawal_score = (
+        _linear_score(-depth_change, low=12.0, high=70.0) * 0.58
+        + _linear_score(ask_depth_to_volume, low=0.02, high=0.85, invert=True) * 0.28
+        + _num("short_trap_score").clip(lower=0.0, upper=100.0) * 0.14
+    ).clip(lower=0.0, upper=100.0)
+    thin_ask_trap_score = (
+        ask_depth_withdrawal_score * 0.38
+        + _num("short_trap_score").clip(lower=0.0, upper=100.0) * 0.22
+        + _num("low_float_score").clip(lower=0.0, upper=100.0) * 0.16
+        + cex_lane_wakeup_score * 0.14
+        + _num("silent_oi_accumulation_score").clip(lower=0.0, upper=100.0) * 0.10
+    ).clip(lower=0.0, upper=100.0)
+    all_df["cex_lane_wakeup_score"] = cex_lane_wakeup_score
+    all_df["ask_depth_withdrawal_score"] = ask_depth_withdrawal_score
+    all_df["thin_ask_trap_score"] = thin_ask_trap_score
+
+    precision_score = (
+        _num("pre_pump_precision_score").clip(lower=0.0, upper=100.0) * 0.68
+        + cex_lane_wakeup_score * 0.09
+        + thin_ask_trap_score * 0.11
+        + ask_depth_withdrawal_score * 0.05
+        + _linear_score(_raw_num("oi_value_change_since_scan_pct"), low=1.0, high=16.0) * 0.07
+        - _num("no_chase_penalty_score").clip(lower=0.0, upper=100.0) * 0.06
+    ).clip(lower=0.0, upper=100.0)
+    major_excluded = all_df.get("crime_excluded_major", pd.Series(False, index=index)).fillna(False).astype(bool)
+    all_df["pre_pump_precision_score"] = precision_score.where(~major_excluded, other=0.0)
+    all_df["pre_pump_precision_flag"] = (
+        (all_df["pre_pump_precision_score"] >= 64.0)
+        & (_num("pre_pump_compression_score") >= 45.0)
+        & (_num("short_trap_score") >= 45.0)
+        & ((_num("low_float_score") >= 38.0) | (_num("centralized_ownership_score") >= 44.0))
+        & (_num("no_chase_penalty_score") < 60.0)
+        & (~major_excluded)
+    )
+
+    def _memory_note(row: pd.Series) -> str:
+        factors: list[str] = []
+        if _safe_float(row.get("pre_pump_compression_score")) >= 55.0:
+            factors.append("compression")
+        if _safe_float(row.get("short_trap_score")) >= 55.0:
+            factors.append("short trap")
+        if _safe_float(row.get("silent_oi_accumulation_score")) >= 55.0:
+            factors.append("silent OI")
+        if _safe_float(row.get("cex_lane_wakeup_score")) >= 45.0:
+            factors.append("CEX lane wake-up")
+        if _safe_float(row.get("thin_ask_trap_score")) >= 45.0:
+            factors.append("thin ask/depth withdrawal")
+        if _safe_float(row.get("no_chase_penalty_score")) >= 60.0:
+            factors.append("no-chase blocked")
+        if not factors:
+            return "No high-precision pre-pump pattern in this scan."
+        return " | ".join(factors[:6])
+
+    all_df["pre_pump_precision_note"] = all_df.apply(_memory_note, axis=1)
+    _append_pre_pump_snapshots(all_df)
+    return all_df
+
+
+def _pre_pump_label_events(history: pd.DataFrame, *, horizon_hours: int = 24, top_per_scan: int = 10) -> pd.DataFrame:
+    if history.empty or "snapshot_ts" not in history.columns or "symbol" not in history.columns:
+        return pd.DataFrame()
+    data = history.copy()
+    data["snapshot_ts"] = pd.to_datetime(data["snapshot_ts"], errors="coerce", utc=True)
+    data = data[data["snapshot_ts"].notna()].copy()
+    if data.empty:
+        return pd.DataFrame()
+    data["last_price"] = pd.to_numeric(
+        data["last_price"] if "last_price" in data.columns else pd.Series(float("nan"), index=data.index),
+        errors="coerce",
+    )
+    data["pre_pump_precision_score"] = pd.to_numeric(
+        data["pre_pump_precision_score"]
+        if "pre_pump_precision_score" in data.columns
+        else pd.Series(0.0, index=data.index),
+        errors="coerce",
+    ).fillna(0.0)
+    flag_values = (
+        data["pre_pump_precision_flag"]
+        if "pre_pump_precision_flag" in data.columns
+        else pd.Series(False, index=data.index)
+    )
+    data["pre_pump_precision_flag"] = flag_values.fillna(False).astype(str).str.lower().isin(
+        {"true", "1", "yes"}
+    )
+    events: list[dict[str, Any]] = []
+    for snapshot_ts, group in data.groupby("snapshot_ts", sort=True):
+        candidates = group[
+            (group["pre_pump_precision_flag"])
+            | (group["pre_pump_precision_score"] >= 60.0)
+        ].sort_values("pre_pump_precision_score", ascending=False).head(top_per_scan)
+        for _, event in candidates.iterrows():
+            entry_price = _safe_float(event.get("last_price"))
+            if not math.isfinite(entry_price) or entry_price <= 0:
+                continue
+            deadline = snapshot_ts + pd.Timedelta(hours=horizon_hours)
+            future = data[
+                (data["symbol"] == event["symbol"])
+                & (data["snapshot_ts"] > snapshot_ts)
+                & (data["snapshot_ts"] <= deadline)
+            ]
+            if future.empty:
+                continue
+            max_price = pd.to_numeric(future["last_price"], errors="coerce").max()
+            if pd.isna(max_price):
+                continue
+            max_return = (float(max_price) / entry_price - 1.0) * 100.0
+            events.append(
+                {
+                    "snapshot_ts": snapshot_ts,
+                    "symbol": event["symbol"],
+                    "entry_price": entry_price,
+                    f"max_return_{horizon_hours}h_pct": max_return,
+                    "hit_20pct": max_return >= 20.0,
+                    "hit_50pct": max_return >= 50.0,
+                    "hit_100pct": max_return >= 100.0,
+                    "pre_pump_precision_score": event.get("pre_pump_precision_score"),
+                    "dormant_short_fuse_score": event.get("dormant_short_fuse_score"),
+                    "pre_pump_precision_note": event.get("pre_pump_precision_note", ""),
+                }
+            )
+    return pd.DataFrame(events)
 
 
 def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
@@ -1650,12 +2030,23 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "short_dominance_score",
         "low_volatility_coil_score",
         "pre_pump_short_fuse_score",
+        "pre_pump_compression_score",
+        "short_trap_score",
+        "silent_oi_accumulation_score",
         "dormant_short_fuse_score",
         "price_volume_ignition_score",
         "target_cex_volume_share_pct",
         "target_cex_flow_score",
+        "target_cex_share_change_pp",
+        "cex_lane_wakeup_score",
+        "oi_value_change_since_scan_pct",
+        "ask_depth_1pct_change_pct",
+        "ask_depth_withdrawal_score",
+        "thin_ask_trap_score",
         "rave_lab_convex_fuel_score",
         "rave_lab_late_penalty_score",
+        "no_chase_penalty_score",
+        "pre_pump_precision_score",
         "rave_lab_setup_score",
     ]
     for col in numeric_cols:
@@ -2422,6 +2813,10 @@ BINANCE_RECV_WINDOW = int(_env_value("BINANCE_RECV_WINDOW", "BINANCE_RECV_WINDOW
 PNL_RECENT_DAYS = int(_env_value("PNL_RECENT_DAYS", default="90"))
 PNL_MAX_EXPORT_FETCHES = int(_env_value("PNL_EXPORT_MAX_FETCHES", "PNL_EXPORT_MAX_YEARS", default="5"))
 PNL_CACHE_DIR = _env_value("PNL_CACHE_DIR", default=str(APP_DIR / ".cache" / "binance_income"))
+PRE_PUMP_SNAPSHOT_PATH = Path(
+    _env_value("PRE_PUMP_SNAPSHOT_PATH", default=str(APP_DIR / "data" / "pre_pump_scan_snapshots.csv"))
+)
+PRE_PUMP_SNAPSHOT_RETENTION_DAYS = int(_env_value("PRE_PUMP_SNAPSHOT_RETENTION_DAYS", default="21"))
 PNL_BENCHMARKS = [s.strip().upper() for s in _env_value("PNL_BENCHMARKS", default="BTCUSDT,BNBUSDT").split(",") if s.strip()]
 FUNDING_BACKTEST_WINDOWS = int(_env_value("FUNDING_BACKTEST_WINDOWS", default="4"))
 FUNDING_STREAM_SAMPLE_SECONDS = float(_env_value("FUNDING_STREAM_SAMPLE_SECONDS", default="1.0"))
@@ -3807,6 +4202,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = apply_short_squeeze_model(all_df)
     all_df = apply_convexity_model(all_df)
     all_df = _apply_rave_lab_setup_scores(all_df)
+    all_df = _apply_pre_pump_scan_memory(all_df)
     all_df = _score_trade_buckets(all_df)
     highs_df = all_df[(all_df["broke_high_90d"]) | (all_df["broke_high_180d"])].copy()
     highs_df = highs_df.sort_values(
@@ -3970,11 +4366,63 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Pre-breakout score combining low volatility, dominant shorts, low float, and centralized ownership.",
             ),
+            "pre_pump_compression_score": st.column_config.NumberColumn(
+                "Compression",
+                format="%.1f",
+                help="Low-volatility compression with muted returns, gentle volume wake-up, and early OI pressure.",
+            ),
+            "short_trap_score": st.column_config.NumberColumn(
+                "Short Trap",
+                format="%.1f",
+                help="Shorts are dominant or building while price is not breaking down and OI is expanding.",
+            ),
+            "silent_oi_accumulation_score": st.column_config.NumberColumn(
+                "Silent OI",
+                format="%.1f",
+                help="OI builds while realized range stays quiet. This is the preferred pre-candle pressure pattern.",
+            ),
             "dormant_short_fuse_score": st.column_config.NumberColumn(
                 "Dormant Short Fuse",
                 format="%.1f",
                 help="CHIP-style setup score: quiet tape, dominant shorts, owner/float concentration, small CEX-flow confirmation, and low late-stage heat.",
             ),
+            "pre_pump_precision_score": st.column_config.NumberColumn(
+                "Pre-Pump Precision",
+                format="%.1f",
+                help="Highest-precision pre-pump score combining compression, short trap, silent OI, float/owner concentration, CEX lane wake-up, depth withdrawal, and no-chase filters.",
+            ),
+            "pre_pump_precision_flag": st.column_config.CheckboxColumn(
+                "Precision Flag",
+                help="True when the pre-pump pattern clears compression, short-trap, float/ownership, and no-chase gates.",
+            ),
+            "pre_pump_precision_note": st.column_config.TextColumn(
+                "Precision Note",
+                help="Short explanation of the precision pre-pump pattern.",
+            ),
+            "cex_lane_wakeup_score": st.column_config.NumberColumn(
+                "CEX Wake",
+                format="%.1f",
+                help="Scan-to-scan increase in Binance/Bitget/Gate/OKX venue share plus current CEX-flow strength.",
+            ),
+            "target_cex_share_change_pp": st.column_config.NumberColumn("CEX Share Chg", format="%.2fpp"),
+            "oi_value_change_since_scan_pct": st.column_config.NumberColumn("OI Chg Scan", format="%.2f%%"),
+            "ask_depth_1pct_change_pct": st.column_config.NumberColumn("Ask Depth Chg", format="%.2f%%"),
+            "ask_depth_withdrawal_score": st.column_config.NumberColumn(
+                "Depth Pull",
+                format="%.1f",
+                help="Flags ask-depth withdrawal or very thin visible ask depth while short pressure is present.",
+            ),
+            "thin_ask_trap_score": st.column_config.NumberColumn(
+                "Thin Ask Trap",
+                format="%.1f",
+                help="Combines ask-depth withdrawal, short trap, low float, CEX wake-up, and silent OI accumulation.",
+            ),
+            "no_chase_penalty_score": st.column_config.NumberColumn(
+                "No-Chase Penalty",
+                format="%.1f",
+                help="Penalty for already-late candles: big 1h/24h move, wide 24h range, hot funding, upper-wick/exhaustion, or exit fragility.",
+            ),
+            "no_chase_ok_flag": st.column_config.CheckboxColumn("No-Chase OK"),
             "dormant_short_fuse_flag": st.column_config.CheckboxColumn(
                 "Short Fuse",
                 help="True when a low-volatility coin has dominant shorts plus float/ownership concentration before the breakout.",
@@ -6267,15 +6715,19 @@ def render_breakout_dashboard() -> None:
                 "base_asset",
                 "trade_bucket",
                 "trade_bucket_score",
+                "pre_pump_precision_score",
+                "pre_pump_precision_flag",
                 "rave_lab_setup_score",
                 "dormant_short_fuse_score",
                 "dormant_short_fuse_flag",
                 "rave_lab_extreme_flag",
                 "rave_lab_setup_flag",
                 "rave_lab_watch_flag",
+                "pre_pump_precision_note",
                 "dormant_short_fuse_note",
                 "rave_lab_setup_note",
                 "last_price",
+                "range_24h_pct",
                 "day_return_pct",
                 "hour_return_pct",
                 "daily_quote_volume_multiple",
@@ -6306,13 +6758,26 @@ def render_breakout_dashboard() -> None:
                 "inventory_transfer_note",
                 "centralized_ownership_score",
                 "low_float_score",
+                "pre_pump_compression_score",
+                "short_trap_score",
+                "silent_oi_accumulation_score",
                 "short_account_build_score",
                 "short_dominance_score",
                 "low_volatility_coil_score",
                 "pre_pump_short_fuse_score",
                 "price_volume_ignition_score",
+                "cex_lane_wakeup_score",
+                "target_cex_share_change_pp",
+                "oi_value_change_since_scan_pct",
+                "ask_depth_1pct_change_pct",
+                "ask_depth_1pct_usdt",
+                "ask_depth_to_24h_volume_pct",
+                "ask_depth_withdrawal_score",
+                "thin_ask_trap_score",
                 "rave_lab_convex_fuel_score",
                 "rave_lab_late_penalty_score",
+                "no_chase_penalty_score",
+                "no_chase_ok_flag",
                 "clean_convex_setup_score",
                 "forced_buying_setup_score",
                 "squeeze_machine_score",
@@ -6329,9 +6794,11 @@ def render_breakout_dashboard() -> None:
             score_series = pd.to_numeric(radar_df["rave_lab_setup_score"], errors="coerce") if "rave_lab_setup_score" in radar_df.columns else pd.Series(dtype="float64")
             radar_ranked_df = radar_df.sort_values(
                 [
+                    "pre_pump_precision_flag",
                     "dormant_short_fuse_flag",
                     "rave_lab_extreme_flag",
                     "rave_lab_setup_flag",
+                    "pre_pump_precision_score",
                     "dormant_short_fuse_score",
                     "rave_lab_setup_score",
                     "low_volatility_coil_score",
@@ -6341,7 +6808,21 @@ def render_breakout_dashboard() -> None:
                     "target_cex_flow_score",
                     "symbol",
                 ],
-                ascending=[False, False, False, False, False, False, False, False, False, False, True],
+                ascending=[False, False, False, False, False, False, False, False, False, False, False, False, True],
+            )
+            precision_df = radar_ranked_df[
+                (pd.to_numeric(radar_ranked_df["pre_pump_precision_score"], errors="coerce").fillna(0.0) >= 45.0)
+                & (pd.to_numeric(radar_ranked_df["no_chase_penalty_score"], errors="coerce").fillna(100.0) < 68.0)
+            ].sort_values(
+                [
+                    "pre_pump_precision_flag",
+                    "pre_pump_precision_score",
+                    "short_trap_score",
+                    "silent_oi_accumulation_score",
+                    "thin_ask_trap_score",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, False, True],
             )
             dormant_short_fuse_df = radar_ranked_df[
                 (pd.to_numeric(radar_ranked_df["dormant_short_fuse_score"], errors="coerce").fillna(0.0) >= 45.0)
@@ -6376,8 +6857,23 @@ def render_breakout_dashboard() -> None:
             best_score = float(score_series.max()) if not score_series.empty and pd.notna(score_series.max()) else float("nan")
             r1.metric("Best setup score", f"{best_score:.1f}" if math.isfinite(best_score) else "n/a")
             r2.metric("Short-fuse flags", int(radar_df.get("dormant_short_fuse_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
-            r3.metric("Setup flags", int(radar_df.get("rave_lab_setup_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+            r3.metric("Precision flags", int(radar_df.get("pre_pump_precision_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
             r4.metric("Watchlist", int(radar_df.get("rave_lab_watch_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
+
+            st.subheader("High-Precision Pre-Pump Radar")
+            st.caption(
+                "This is the strictest view: compression + short trap + silent OI + low-float/owner pressure, "
+                "with CEX/depth scan memory and a no-chase gate."
+            )
+            if precision_df.empty:
+                st.info("No high-precision pre-pump rows currently clear the filter.")
+            else:
+                st.dataframe(
+                    _display_frame(precision_df.head(35), rave_lab_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
 
             st.subheader("Low-Vol Short Fuse")
             st.caption(
@@ -6437,6 +6933,38 @@ def render_breakout_dashboard() -> None:
                     use_container_width=True,
                     hide_index=True,
                     column_config=breakout_column_config,
+                )
+
+            st.subheader("Forward Label Tracker")
+            st.caption(
+                "Every scan appends a lightweight snapshot. This panel labels prior top-10 pre-pump candidates by "
+                "the best later price observed inside each horizon, so we can tune for precision instead of guessing."
+            )
+            history = _read_pre_pump_snapshot_history()
+            label_cols = st.columns(4)
+            label_cols[0].metric("Stored snapshots", int(len(history)))
+            label_events_6h = _pre_pump_label_events(history, horizon_hours=6, top_per_scan=10)
+            label_events_24h = _pre_pump_label_events(history, horizon_hours=24, top_per_scan=10)
+            label_events_72h = _pre_pump_label_events(history, horizon_hours=72, top_per_scan=10)
+
+            def _hit_rate(events: pd.DataFrame, column: str = "hit_20pct") -> str:
+                if events.empty or column not in events.columns:
+                    return "n/a"
+                return f"{float(events[column].mean() * 100.0):.1f}%"
+
+            label_cols[1].metric("6h hit +20%", _hit_rate(label_events_6h))
+            label_cols[2].metric("24h hit +20%", _hit_rate(label_events_24h))
+            label_cols[3].metric("72h hit +20%", _hit_rate(label_events_72h))
+            if label_events_24h.empty:
+                st.info("Forward labels will populate after enough scans have run across at least one horizon.")
+            else:
+                st.dataframe(
+                    label_events_24h.sort_values(
+                        ["hit_100pct", "hit_50pct", "hit_20pct", "max_return_24h_pct", "pre_pump_precision_score"],
+                        ascending=[False, False, False, False, False],
+                    ).head(40),
+                    use_container_width=True,
+                    hide_index=True,
                 )
 
             with st.expander("Show full RAVE/LAB radar table"):
