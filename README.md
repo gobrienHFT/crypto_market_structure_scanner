@@ -77,7 +77,30 @@ DISCORD_WATCHER_SCAN_MODE=Deep
 DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
 DISCORD_WATCHER_TOP_N=25
 DISCORD_WATCHER_REALERT_HOURS=12
+DISCORD_HOLDER_COMPOSITION_ENABLED=1
 ```
 
 The watcher stores state in `data/discord_convex_watcher_state.csv` so a coin already active as Convex is not reposted
 every scan.
+
+Discord alerts also try to attach a compact holder composition summary for every new Convex name:
+
+- contract resolution uses scan columns when present, then `data/discord_holder_contracts.csv`, then `DISCORD_HOLDER_CONTRACTS`
+- holder rows are pulled from Etherscan-family `generic-tokenholders2` pages and GoPlus token-security data, without API keys
+- summaries include top 1/5/10/observed concentration, holder count, total supply, whale/shark/dolphin/shrimp-style buckets, and a few top holders
+- failures are non-blocking, so a Convex alert still posts even if holder data is temporarily unavailable
+
+To add manual contract hints, copy `discord_holder_contracts.example.csv` to `data/discord_holder_contracts.csv` and add rows:
+
+```text
+symbol,chain,contract_address
+CHIPUSDT,arbitrum,0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e
+```
+
+You can also use `.env` for quick one-line hints:
+
+```text
+DISCORD_HOLDER_CONTRACTS=CHIPUSDT:arbitrum:0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e
+DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS=100
+DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS=3
+```

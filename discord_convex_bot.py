@@ -9,6 +9,8 @@ from typing import Any
 
 import pandas as pd
 
+from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
+
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -33,6 +35,21 @@ def _env_value(name: str, default: str = "") -> str:
     return value if value not in (None, "") else default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    fallback = "1" if default else "0"
+    return _env_value(name, fallback).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
+    try:
+        parsed = int(str(_env_value(name, str(default))).strip())
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    return parsed
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         parsed = float(value)
@@ -53,6 +70,31 @@ def _metric(row: pd.Series, label: str, columns: tuple[str, ...], suffix: str = 
     return ""
 
 
+def _holder_contract_hints_path() -> Path:
+    return Path(_env_value("DISCORD_HOLDER_CONTRACTS_FILE", str(APP_DIR / "data" / "discord_holder_contracts.csv")))
+
+
+def _holder_composition_text(row: pd.Series) -> str:
+    if not _env_bool("DISCORD_HOLDER_COMPOSITION_ENABLED", True):
+        return ""
+    try:
+        composition = fetch_holder_composition(
+            row.to_dict(),
+            hints_path=_holder_contract_hints_path(),
+            timeout=_env_int("DISCORD_HOLDER_COMPOSITION_TIMEOUT_SECONDS", 12, minimum=3),
+            max_holders=_env_int("DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS", 100, minimum=10),
+        )
+    except Exception as exc:
+        return f"Holder composition unavailable: {exc}"
+    if composition.error == "no contract hint" and not _env_bool("DISCORD_HOLDER_COMPOSITION_SHOW_MISSING", False):
+        return ""
+    return format_holder_composition_for_discord(
+        composition,
+        include_top_holders=_env_int("DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS", 3, minimum=0),
+        max_chars=_env_int("DISCORD_HOLDER_COMPOSITION_MAX_CHARS", 900, minimum=200),
+    )
+
+
 def _candidate_line(row: pd.Series) -> str:
     symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     metrics = [
@@ -67,13 +109,18 @@ def _candidate_line(row: pd.Series) -> str:
     note = str(row.get("trade_bucket_note", "")).strip()
     if len(note) > 180:
         note = f"{note[:177]}..."
+    holder_text = _holder_composition_text(row)
     if metric_text and note:
-        return f"**{symbol}** | {metric_text}\n{note}"
-    if metric_text:
-        return f"**{symbol}** | {metric_text}"
-    if note:
-        return f"**{symbol}**\n{note}"
-    return f"**{symbol}**"
+        base = f"**{symbol}** | {metric_text}\n{note}"
+    elif metric_text:
+        base = f"**{symbol}** | {metric_text}"
+    elif note:
+        base = f"**{symbol}**\n{note}"
+    else:
+        base = f"**{symbol}**"
+    if holder_text:
+        return f"{base}\n{holder_text}"
+    return base
 
 
 def _cache_path() -> Path:
