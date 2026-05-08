@@ -140,6 +140,7 @@ def _candidate_line(row: pd.Series) -> str:
 
 def _scan_convex_longs(scan_mode: str) -> pd.DataFrame:
     os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
+    print(f"{_iso_now()} starting {scan_mode} scan...")
     import app as scanner_app
 
     scan_fn = getattr(scanner_app.run_scan, "__wrapped__", scanner_app.run_scan)
@@ -205,7 +206,9 @@ def _update_state(state: pd.DataFrame, candidates: pd.DataFrame, alerted: pd.Dat
                 }
             )
 
-    if new_rows:
+    if new_rows and state.empty:
+        state = pd.DataFrame(new_rows, columns=STATE_COLUMNS)
+    elif new_rows:
         state = pd.concat([state, pd.DataFrame(new_rows, columns=STATE_COLUMNS)], ignore_index=True)
 
     for symbol in alerted_symbols:
@@ -254,6 +257,8 @@ def run_once(*, scan_mode: str, top_n: int, realert_hours: float, dry_run: bool)
     new_candidates = _eligible_new_candidates(candidates, state, realert_hours=realert_hours)
     if not new_candidates.empty:
         _post_webhook(new_candidates, scan_mode=scan_mode, dry_run=dry_run)
+    if dry_run:
+        return len(candidates), len(new_candidates)
     updated_state = _update_state(state, candidates, new_candidates if not dry_run else pd.DataFrame())
     _save_state(updated_state)
     return len(candidates), len(new_candidates)

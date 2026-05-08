@@ -31,6 +31,7 @@ from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squee
 from screener import ScreenerData, build_screener_data
 
 APP_DIR = Path(__file__).resolve().parent
+IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
 USD_LIKE_ASSETS = {"USDT", "USDC", "BUSD", "FDUSD", "TUSD", "USDP"}
 RANGE_PRESETS = ("7D", "30D", "90D", "YTD", "1Y", "3Y", "ITD", "Custom")
 TRADFI_ALWAYS_INCLUDE_TYPES = {"COMMODITY", "EQUITY"}
@@ -2916,7 +2917,7 @@ DISCORD_CONVEX_CACHE_PATH = Path(
     )
 )
 
-if os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") != "1":
+if not IMPORT_ONLY:
     st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
     st.markdown(
         """
@@ -2928,6 +2929,18 @@ if os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") != "1":
         """,
         unsafe_allow_html=True,
     )
+
+
+def _cache_data(*cache_args: Any, **cache_kwargs: Any) -> Any:
+    if IMPORT_ONLY:
+        if cache_args and callable(cache_args[0]) and len(cache_args) == 1 and not cache_kwargs:
+            return cache_args[0]
+
+        def decorator(func: Any) -> Any:
+            return func
+
+        return decorator
+    return st.cache_data(*cache_args, **cache_kwargs)
 
 
 DISCORD_CONVEX_ALERT_STATE_COLUMNS = ["symbol", "last_notified_at", "last_score", "last_note"]
@@ -3158,7 +3171,7 @@ def _maybe_notify_discord_convex_longs(all_df: pd.DataFrame, *, scan_key: str, s
     return f"Discord alert sent for {len(to_send)} Convex Long candidate{'s' if len(to_send) != 1 else ''}."
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@_cache_data(ttl=1800, show_spinner=False)
 def load_benchmark_history(symbols: tuple[str, ...], start_ms: int, end_ms: int) -> pd.DataFrame:
     client = _client()
     day_ms = 24 * 60 * 60 * 1000
@@ -3336,7 +3349,7 @@ EXTERNAL_CRIME_TEXT_COLUMNS = {
 }
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@_cache_data(ttl=900, show_spinner=False)
 def load_external_crime_metrics_cached(base_assets: tuple[str, ...]) -> pd.DataFrame:
     rows = fetch_external_crime_metrics(list(base_assets))
     if not rows:
@@ -3344,7 +3357,7 @@ def load_external_crime_metrics_cached(base_assets: tuple[str, ...]) -> pd.DataF
     return pd.DataFrame([row.__dict__ for row in rows])
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@_cache_data(ttl=1800, show_spinner=False)
 def load_dwf_labs_portfolio_cached() -> pd.DataFrame:
     rows = fetch_dwf_labs_portfolio_members()
     if not rows:
@@ -3374,12 +3387,12 @@ def load_dwf_labs_portfolio_cached() -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@_cache_data(ttl=900, show_spinner=False)
 def load_coinbase_spot_bases_cached() -> set[str]:
     return fetch_coinbase_spot_bases()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@_cache_data(ttl=300, show_spinner=False)
 def load_cmc_movers_cached(api_key_fingerprint: str, _api_key: str, limit: int) -> pd.DataFrame:
     # The fingerprint gives Streamlit a safe cache key without storing the raw CMC key in the hash.
     _ = api_key_fingerprint
@@ -3484,7 +3497,7 @@ def _parse_mm_proximity_env(raw_signals: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@_cache_data(ttl=300, show_spinner=False)
 def load_mm_proximity_signals_cached(path: str, raw_signals: str) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     csv_path = Path(path)
@@ -3766,7 +3779,7 @@ def _apply_ath_runway(all_df: pd.DataFrame) -> pd.DataFrame:
     return all_df
 
 
-@st.cache_data(ttl=60)
+@_cache_data(ttl=60)
 def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame, pd.DataFrame]:
     _ = (refresh_nonce, scan_mode)
     normalized_scan_mode = str(scan_mode).strip().lower()
@@ -4496,7 +4509,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     return highs_df, all_df
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@_cache_data(ttl=120, show_spinner=False)
 def load_pnl_dashboard_cached(api_key_fingerprint: str, refresh_nonce: int) -> PnLDashboardResult:
     _ = (api_key_fingerprint, refresh_nonce)
     client = _client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
@@ -4509,7 +4522,7 @@ def load_pnl_dashboard_cached(api_key_fingerprint: str, refresh_nonce: int) -> P
     )
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@_cache_data(ttl=60, show_spinner=False)
 def load_screener_cached(refresh_nonce: int) -> ScreenerData:
     _ = refresh_nonce
     return build_screener_data(_client())
@@ -8328,5 +8341,5 @@ def main_dashboard() -> None:
         render_concentration_dashboard()
 
 
-if os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") != "1":
+if not IMPORT_ONLY:
     main_dashboard()
