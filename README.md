@@ -54,3 +54,16 @@ DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES=240
 
 The dashboard sends alerts after `Scan now` completes. Per-symbol cooldown state is stored in
 `data/discord_convex_alert_state.csv`, which is ignored by git.
+
+To call the latest scan from Discord chat, create a Discord application bot and add these to `.env`:
+
+```text
+DISCORD_BOT_TOKEN=your_bot_token
+DISCORD_GUILD_ID=your_server_id
+DISCORD_ALLOWED_CHANNEL_ID=your_pre_pump_channel_id
+DISCORD_CONVEX_COMMAND_TOP_N=10
+```
+
+Run `run_discord_convex_bot.bat`, then use `/convex` in Discord to pull the latest cached scan.
+Use `/convex_status` to check whether the dashboard has written a cache yet. `DISCORD_GUILD_ID`
+is recommended because guild slash commands sync almost immediately; global slash commands can take longer.

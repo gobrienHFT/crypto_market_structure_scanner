@@ -2909,6 +2909,12 @@ DISCORD_CONVEX_ALERT_STATE_PATH = Path(
         default=str(APP_DIR / "data" / "discord_convex_alert_state.csv"),
     )
 )
+DISCORD_CONVEX_CACHE_PATH = Path(
+    _env_value(
+        "DISCORD_CONVEX_CACHE_PATH",
+        default=str(APP_DIR / "data" / "latest_convex_longs.csv"),
+    )
+)
 
 st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
 st.markdown(
@@ -2991,6 +2997,43 @@ def _discord_convex_candidates(all_df: pd.DataFrame) -> pd.DataFrame:
     if candidates.empty:
         return candidates
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
+
+
+def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) -> None:
+    columns = [
+        "symbol",
+        "base_asset",
+        "trade_bucket",
+        "trade_bucket_score",
+        "trade_bucket_note",
+        "last_price",
+        "price_change_24h_pct",
+        "change_24h_pct",
+        "day_change_pct",
+        "short_account_pct",
+        "long_account_pct",
+        "long_short_account_ratio",
+        "oi_delta_pct",
+        "oi_value_change_since_scan_pct",
+        "convexity_entry_score",
+        "convexity_score",
+        "rave_lab_setup_score",
+        "pre_pump_precision_score",
+        "dormant_short_fuse_score",
+        "convexity_summary",
+        "rave_lab_setup_note",
+        "dormant_short_fuse_note",
+        "pre_pump_precision_note",
+    ]
+    cache_frame = _discord_convex_candidates(all_df).head(max(50, DISCORD_CONVEX_ALERT_TOP_N)).copy()
+    if cache_frame.empty:
+        cache_frame = pd.DataFrame(columns=columns)
+    else:
+        cache_frame = cache_frame[[column for column in columns if column in cache_frame.columns]].copy()
+    cache_frame.insert(0, "scan_mode", str(scan_mode))
+    cache_frame.insert(0, "scanned_at_utc", _now_utc())
+    DISCORD_CONVEX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    cache_frame.to_csv(DISCORD_CONVEX_CACHE_PATH, index=False)
 
 
 def _eligible_discord_convex_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
@@ -5513,6 +5556,10 @@ def render_breakout_dashboard() -> None:
             f"L/S ratio period: {LONG_SHORT_RATIO_PERIOD} (global Binance account ratio) | "
             f"Crime-pump period: {CRIME_PUMP_PERIOD}"
         )
+        try:
+            _write_latest_convex_longs_cache(all_df, scan_mode=scan_mode_label)
+        except Exception as exc:
+            st.warning(f"Could not write latest Convex Long cache for Discord commands: {exc}")
         discord_alert_status = _maybe_notify_discord_convex_longs(
             all_df,
             scan_key=f"{scan_mode_label}:{st.session_state.get('breakout_refresh_nonce', 0)}",
