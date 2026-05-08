@@ -62,6 +62,7 @@ DISCORD_BOT_TOKEN=your_bot_token
 DISCORD_GUILD_ID=your_server_id
 DISCORD_ALLOWED_CHANNEL_ID=your_pre_pump_channel_id
 DISCORD_CONVEX_COMMAND_TOP_N=10
+DISCORD_LOGIN_RETRY_SECONDS=90
 ```
 
 Run `run_discord_convex_bot.bat`, then use `/convex` in Discord to pull the latest cached scan.

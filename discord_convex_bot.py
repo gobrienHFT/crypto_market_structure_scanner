@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -139,7 +140,7 @@ def main() -> None:
     guild_id_raw = _env_value("DISCORD_GUILD_ID")
     allowed_channel_raw = _env_value("DISCORD_ALLOWED_CHANNEL_ID")
     default_top_n = max(1, int(_env_value("DISCORD_CONVEX_COMMAND_TOP_N", "10")))
-    announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "1").strip().lower() in {"1", "true", "yes", "on"}
+    announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "0").strip().lower() in {"1", "true", "yes", "on"}
     guild = discord.Object(id=int(guild_id_raw)) if guild_id_raw.strip().isdigit() else None
     allowed_channel_id = int(allowed_channel_raw) if allowed_channel_raw.strip().isdigit() else None
 
@@ -219,5 +220,29 @@ def main() -> None:
     client.run(token)
 
 
+def run_with_backoff() -> None:
+    _load_local_env()
+    retry_seconds = max(15, int(_env_value("DISCORD_LOGIN_RETRY_SECONDS", "90")))
+    max_retry_seconds = max(retry_seconds, int(_env_value("DISCORD_LOGIN_MAX_RETRY_SECONDS", "600")))
+
+    while True:
+        try:
+            main()
+            return
+        except KeyboardInterrupt:
+            raise
+        except SystemExit:
+            raise
+        except Exception as exc:
+            status = getattr(exc, "status", None)
+            code = getattr(exc, "code", None)
+            is_rate_limited = status == 429 or code == 40062 or "429 Too Many Requests" in str(exc)
+            if not is_rate_limited:
+                raise
+            print(f"Discord login is rate-limited. Waiting {retry_seconds}s before retrying instead of exiting.")
+            time.sleep(retry_seconds)
+            retry_seconds = min(max_retry_seconds, retry_seconds * 2)
+
+
 if __name__ == "__main__":
-    main()
+    run_with_backoff()
