@@ -18,18 +18,18 @@ Important: Binance USD-M futures currently enforce a 5 USDT minimum notional on 
 
 The Streamlit dashboard now includes an `On-Chain Concentration` mode for structural-risk analysis of ERC-20/BEP-20 holder distribution:
 
-- resolves token metadata and chain contracts from CoinGecko
+- resolves token metadata and chain contracts from local hints, no-key public token lists, and explorer-compatible contract rows
 - fetches top holder data through Etherscan-family explorer adapters for Ethereum and BNB Chain
 - classifies exchange, liquidity pool, bridge, staking, vesting, treasury, multisig, owner/admin, unexplained whale, burn, and unknown holders
 - computes raw and adjusted concentration, adjusted float, Gini, HHI, RaveDAO-type thin-float metrics, controlled-float flags, wrapped-representation guardrails, and structural-risk scores
 - adds a manipulable-whale filter that separates CEX/custody/storage/vesting/bridge/wrapper/LP/burn/reserve holders from unresolved wallets and linked wallet clusters that may control tradable float
 - exposes a `Manipulable Whales` leaderboard sorted by largest manipulable holder, manipulable-whale score, cluster supply, and filtered top-holder control
-- adds a Binance perpetual universe scanner that automatically matches futures symbols to CoinGecko IDs/contracts and ranks controlled-float squeeze candidates by insider/whale concentration, linked clusters, futures-vs-spot volume, OI pressure, adjusted-float churn, low-float/FDV gaps, and RaveDAO-type structure
+- adds a Binance perpetual universe scanner that automatically ranks controlled-float squeeze candidates by insider/whale concentration, linked clusters, futures-vs-spot volume, OI pressure, adjusted-float churn, low-float/FDV gaps, and RaveDAO-type structure
 - stores scan results in `data/concentration_scanner.sqlite`
 - supports manual holder category overrides with immediate recomputation
 - includes cached fixture scans for RaveDAO-like, LAB-like, BIO-like, and wrapped KAVA-like acceptance cases
 
-API keys are read from environment variables only:
+Optional explorer/API keys are read from environment variables only:
 
 - `COINGECKO_API_KEY`
 - `ETHERSCAN_API_KEY`
@@ -89,6 +89,20 @@ Discord alerts also try to attach a compact holder composition summary for every
 - holder rows are pulled from Etherscan-family `generic-tokenholders2` pages and GoPlus token-security data, without API keys
 - summaries include top 1/5/10/observed concentration, holder count, total supply, whale/shark/dolphin/shrimp-style buckets, and a few top holders
 - failures are non-blocking, so a Convex alert still posts even if holder data is temporarily unavailable
+
+To bulk-fill the local contract hint spreadsheet without API keys, run:
+
+```powershell
+python .\scripts\build_discord_holder_contracts.py --limit 6000
+```
+
+This writes:
+
+- `data/discord_holder_contracts.csv` for the bot and watcher
+- `data/discord_holder_contracts_spreadsheet_safe.csv` for Google Sheets / Excel imports
+- `data/discord_holder_contracts_full.csv` as the expanded source/audit list
+
+When opening a contract CSV in Sheets or Excel, import `contract_address` as text or use the spreadsheet-safe CSV. If a cell has already become scientific notation, for example `6.91348E+46`, the real address has been destroyed and must be reloaded from the generated CSV.
 
 To add manual contract hints, copy `discord_holder_contracts.example.csv` to `data/discord_holder_contracts.csv` and add rows:
 

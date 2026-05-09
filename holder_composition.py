@@ -188,6 +188,19 @@ def _first_text(row: Mapping[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
+def clean_contract_address(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.strip().strip('"').strip()
+    if text.startswith("="):
+        text = text[1:].strip().strip('"').strip("'").strip()
+    if text.startswith("'"):
+        text = text[1:].strip()
+    match = ADDRESS_RE.search(text)
+    return match.group(0) if match else ""
+
+
 def _parse_contract_hints_env(raw: str) -> dict[str, ContractHint]:
     hints: dict[str, ContractHint] = {}
     for chunk in re.split(r"[;\n]+", raw or ""):
@@ -201,7 +214,7 @@ def _parse_contract_hints_env(raw: str) -> dict[str, ContractHint]:
             parts = [part.strip() for part in item.split(":")]
         if len(parts) < 3:
             continue
-        symbol, chain, contract = parts[0].upper(), normalize_chain(parts[1]), parts[2]
+        symbol, chain, contract = parts[0].upper(), normalize_chain(parts[1]), clean_contract_address(parts[2])
         if ADDRESS_RE.fullmatch(contract):
             hints[symbol] = ContractHint(symbol=symbol, chain=chain, contract_address=contract, source="env")
     return hints
@@ -221,14 +234,14 @@ def _parse_contract_hints_file(path: Path | None) -> dict[str, ContractHint]:
                 for row in reader:
                     symbol = str(row.get("symbol") or row.get("base_asset") or "").upper().strip()
                     chain = normalize_chain(str(row.get("chain") or row.get("platform") or ""))
-                    contract = str(row.get("contract_address") or row.get("contract") or "").strip()
+                    contract = clean_contract_address(row.get("contract_address") or row.get("contract") or "")
                     if symbol and chain and ADDRESS_RE.fullmatch(contract):
                         hints[symbol] = ContractHint(symbol, chain, contract, source=str(path))
             else:
                 for row in reader:
                     if len(row) < 3:
                         continue
-                    symbol, chain, contract = row[0].upper().strip(), normalize_chain(row[1]), row[2].strip()
+                    symbol, chain, contract = row[0].upper().strip(), normalize_chain(row[1]), clean_contract_address(row[2])
                     if symbol and chain and ADDRESS_RE.fullmatch(contract):
                         hints[symbol] = ContractHint(symbol, chain, contract, source=str(path))
     except Exception:
@@ -247,7 +260,7 @@ def load_contract_hints(path: Path | None = None) -> dict[str, ContractHint]:
 
 
 def resolve_contract_hint(row: Mapping[str, Any], *, hints_path: Path | None = None) -> ContractHint | None:
-    contract = _first_text(row, ("token_contract", "contract_address", "contract"))
+    contract = clean_contract_address(_first_text(row, ("token_contract", "contract_address", "contract")))
     chain = normalize_chain(_first_text(row, ("token_platform", "chain", "token_chain")))
     symbol = _candidate_symbols(row)[0] if _candidate_symbols(row) else ""
     if ADDRESS_RE.fullmatch(contract) and chain:

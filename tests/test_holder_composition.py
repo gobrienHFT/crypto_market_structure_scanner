@@ -7,7 +7,9 @@ from holder_composition import (
     HolderRow,
     _parse_holder_rows_from_html,
     _read_tables_from_html,
+    clean_contract_address,
     format_holder_composition_for_discord,
+    load_contract_hints,
     resolve_contract_hint,
 )
 
@@ -18,6 +20,19 @@ def test_resolve_contract_hint_uses_builtin_chip_contract() -> None:
     assert hint is not None
     assert hint.chain == "arbitrum"
     assert hint.contract_address == "0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e"
+
+
+def test_contract_hint_loader_accepts_spreadsheet_safe_addresses(tmp_path) -> None:
+    address = "0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e"
+    path = tmp_path / "hints.csv"
+    path.write_text(f'symbol,chain,contract_address\nCHIPUSDT,arbitrum,"=""{address}"""\n', encoding="utf-8")
+
+    hints = load_contract_hints(path)
+
+    assert hints["CHIPUSDT"].contract_address == address
+    assert clean_contract_address(f'="{address}"') == address
+    assert clean_contract_address(f"'{address}") == address
+    assert clean_contract_address("6.91348E+46") == ""
 
 
 def test_parse_explorer_holder_rows_computes_percent_from_supply_when_page_percent_is_zero() -> None:

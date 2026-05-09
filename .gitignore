@@ -8,4 +8,5 @@ __pycache__/
 logs/
 runtime_logs/
 data/
+outputs/
 *.sqlite
