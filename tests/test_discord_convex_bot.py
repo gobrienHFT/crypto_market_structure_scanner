@@ -31,6 +31,13 @@ def test_configured_symbol_slash_aliases_are_normalized(monkeypatch) -> None:
     assert bot._symbol_slash_command_name("PLAYUSDT") == "playusdt"
 
 
+def test_message_content_intent_requires_explicit_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_SYMBOL_SHORTCUTS_ENABLED", "1")
+    monkeypatch.delenv("DISCORD_MESSAGE_CONTENT_INTENT_ENABLED", raising=False)
+    assert bot._env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", False)
+    assert not bot._env_bool("DISCORD_MESSAGE_CONTENT_INTENT_ENABLED", False)
+
+
 def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_HOLDER_COMPOSITION_ENABLED", "0")
     row = pd.Series(

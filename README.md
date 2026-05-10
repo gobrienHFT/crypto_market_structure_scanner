@@ -65,6 +65,7 @@ DISCORD_CONVEX_COMMAND_TOP_N=10
 DISCORD_LOGIN_RETRY_SECONDS=90
 DISCORD_SYMBOL_SLASH_ALIASES=PLAYUSDT
 DISCORD_SYMBOL_SHORTCUTS_ENABLED=0
+DISCORD_MESSAGE_CONTENT_INTENT_ENABLED=0
 ```
 
 Run `run_discord_convex_bot.bat`, then use `/convex` in Discord to pull the latest cached scan.
@@ -74,7 +75,8 @@ Use `/coin PLAYUSDT` to pull one symbol's latest scan/live stats plus holder com
 The optional `DISCORD_SYMBOL_SLASH_ALIASES` list creates lowercase one-tap slash commands such as `/playusdt`
 without requiring privileged Discord intents.
 If you enable Discord Developer Portal -> Bot -> Privileged Gateway Intents -> Message Content Intent, the bot also
-accepts fast channel shortcuts like `/PLAYUSDT` or `!PLAYUSDT` in `DISCORD_ALLOWED_CHANNEL_ID`.
+accepts fast channel shortcuts like `/PLAYUSDT` or `!PLAYUSDT` in `DISCORD_ALLOWED_CHANNEL_ID` after you set both
+`DISCORD_SYMBOL_SHORTCUTS_ENABLED=1` and `DISCORD_MESSAGE_CONTENT_INTENT_ENABLED=1`.
 
 For automatic no-click alerts, run `run_discord_convex_watcher.bat`. It scans on a timer and posts only newly appearing
 `Convex Long` names through `DISCORD_WEBHOOK_URL`.

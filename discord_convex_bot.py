@@ -420,7 +420,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     allowed_channel_raw = _env_value("DISCORD_ALLOWED_CHANNEL_ID")
     default_top_n = max(1, int(_env_value("DISCORD_CONVEX_COMMAND_TOP_N", "10")))
     announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "0").strip().lower() in {"1", "true", "yes", "on"}
-    symbol_shortcuts_enabled = _env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", False)
+    message_content_intent_enabled = _env_bool("DISCORD_MESSAGE_CONTENT_INTENT_ENABLED", False)
+    symbol_shortcuts_enabled = _env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", False) and message_content_intent_enabled
     if force_disable_symbol_shortcuts:
         symbol_shortcuts_enabled = False
     symbol_slash_aliases = _configured_symbol_slash_aliases()
@@ -524,9 +525,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         print(f"Configured DISCORD_GUILD_ID: {guild_id_raw or 'not set'}")
         print(f"Configured DISCORD_ALLOWED_CHANNEL_ID: {allowed_channel_raw or 'not set'}")
         print(
-            "Symbol shortcuts: "
+            "Raw text symbol shortcuts: "
             f"{'enabled' if symbol_shortcuts_enabled else 'disabled'} "
-            "(requires Discord Developer Portal > Bot > Message Content Intent)."
+            "(requires DISCORD_MESSAGE_CONTENT_INTENT_ENABLED=1 and Discord Developer Portal > Bot > Message Content Intent)."
         )
         if force_disable_symbol_shortcuts:
             print("Symbol shortcuts were forced off because Discord rejected privileged intents.")
