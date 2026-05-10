@@ -241,7 +241,7 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) ->
         "username": "Convex Scanner",
         "embeds": [
             {
-                "title": f"New Convex Long detected ({len(candidates)})",
+                "title": f"New market-structure candidate ({len(candidates)})",
                 "description": description,
                 "color": 0x22C55E,
                 "fields": [
@@ -276,7 +276,7 @@ def run_once(*, scan_mode: str, top_n: int, realert_hours: float, dry_run: bool)
 
 def main() -> None:
     _load_local_env()
-    parser = argparse.ArgumentParser(description="Automatically scan Convex Longs and post new names to Discord.")
+    parser = argparse.ArgumentParser(description="Automatically scan market-structure candidates and post new names to Discord.")
     parser.add_argument("--once", action="store_true", help="Run one scan then exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print webhook payload without posting.")
     args = parser.parse_args()
@@ -295,7 +295,7 @@ def main() -> None:
     while True:
         try:
             total, alerted = run_once(scan_mode=scan_mode, top_n=top_n, realert_hours=realert_hours, dry_run=dry_run)
-            print(f"{_iso_now()} scan complete: {total} Convex Long candidates, {alerted} new alerts.")
+            print(f"{_iso_now()} scan complete: {total} market-structure candidates, {alerted} new alerts.")
         except Exception as exc:
             print(f"{_iso_now()} watcher error: {exc}. Retrying in {retry_seconds}s.")
             time.sleep(retry_seconds)

@@ -37,9 +37,9 @@ Optional explorer/API keys are read from environment variables only:
 
 The scanner uses structural-risk language only. It does not generate legal conclusions from on-chain data alone.
 
-## Discord Convex Long Alerts
+## Discord Market-Structure Alerts
 
-The breakout dashboard can post every scanned `Convex Long` setup to a Discord channel through a channel webhook.
+The breakout dashboard can post every scanned market-structure candidate to a Discord channel through a channel webhook.
 
 1. In Discord, open your channel settings, choose `Integrations`, create a webhook, and copy the webhook URL.
 2. Add this to your local `.env` file:
@@ -79,7 +79,7 @@ accepts fast channel shortcuts like `/PLAYUSDT` or `!PLAYUSDT` in `DISCORD_ALLOW
 `DISCORD_SYMBOL_SHORTCUTS_ENABLED=1` and `DISCORD_MESSAGE_CONTENT_INTENT_ENABLED=1`.
 
 For automatic no-click alerts, run `run_discord_convex_watcher.bat`. It scans on a timer and posts only newly appearing
-`Convex Long` names through `DISCORD_WEBHOOK_URL`.
+market-structure candidates through `DISCORD_WEBHOOK_URL`.
 
 ```text
 DISCORD_WATCHER_SCAN_MODE=Deep
@@ -89,10 +89,10 @@ DISCORD_WATCHER_REALERT_HOURS=12
 DISCORD_HOLDER_COMPOSITION_ENABLED=1
 ```
 
-The watcher stores state in `data/discord_convex_watcher_state.csv` so a coin already active as Convex is not reposted
+The watcher stores state in `data/discord_convex_watcher_state.csv` so a coin already active in the scan is not reposted
 every scan.
 
-Discord alerts also try to attach a compact holder composition summary for every new Convex name:
+Discord alerts also try to attach a compact holder composition summary for every new scanner candidate:
 
 - contract resolution uses scan columns when present, then `data/discord_holder_contracts.csv`, then `DISCORD_HOLDER_CONTRACTS`
 - holder rows are pulled from Etherscan-family `generic-tokenholders2` pages and GoPlus token-security data, without API keys

@@ -62,6 +62,6 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
     assert "Scan source: test cache" in description
     assert "Convex Score: 88/100" in description
     assert "Structure:" in description
-    assert "Convex trigger:" in description
+    assert "Observed trigger:" in description
     assert "Risk level: High" in description
-    assert "Rule: small size, hard stop, no averaging down" in description
+    assert "Research constraint: entries, sizing, stops, and execution are your own responsibility" in description

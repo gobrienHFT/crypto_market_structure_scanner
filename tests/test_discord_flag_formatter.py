@@ -12,13 +12,13 @@ REQUIRED_LABELS = [
     "Convex Score:",
     "Structure:",
     "Why flagged:",
-    "Convex trigger:",
+    "Observed trigger:",
     "Invalidation:",
-    "Liquidity/slippage warning:",
+    "Liquidity warning:",
     "Risk level:",
-    "What would make the setup dead:",
-    "What would make it worth holding longer:",
-    "Rule:",
+    "Failure condition:",
+    "Structure remains relevant while:",
+    "Research constraint:",
     "Principle:",
 ]
 

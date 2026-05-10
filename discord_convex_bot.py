@@ -253,15 +253,15 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     path = _cache_path()
     if not path.exists():
         return (
-            "No Convex Long scan cache yet",
-            "Run the Streamlit dashboard and click **Scan now** once. The bot reads the latest scanned Convex Long cache.",
+            "No market-structure scan cache yet",
+            "Run the Streamlit dashboard and click **Scan now** once. The bot reads the latest scanner sample cache.",
         )
     try:
         frame = pd.read_csv(path)
     except Exception as exc:
-        return ("Could not read Convex Long scan cache", f"`{exc}`")
+        return ("Could not read scanner sample cache", f"`{exc}`")
     if frame.empty:
-        return ("No Convex Long candidates in the latest scan", f"Cache: `{path}`")
+        return ("No market-structure candidates in the latest scan", f"Cache: `{path}`")
 
     score_col = "trade_bucket_score" if "trade_bucket_score" in frame.columns else None
     if score_col:
@@ -275,7 +275,7 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
-    title = f"Latest Convex Long candidates ({scan_mode}, {scanned_at})"
+    title = f"Latest scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     return title, description
 
 
@@ -326,7 +326,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     def _channel_allowed(interaction: discord.Interaction) -> bool:
         return allowed_channel_id is None or interaction.channel_id == allowed_channel_id
 
-    command_kwargs = {"name": "convex", "description": "Show the latest scanned Convex Long candidates."}
+    command_kwargs = {"name": "convex", "description": "Show the latest market-structure scanner sample."}
     if guild is not None:
         command_kwargs["guild"] = guild
 

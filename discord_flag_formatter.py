@@ -7,10 +7,14 @@ import pandas as pd
 
 
 DISCORD_PRODUCT_IDENTITY = (
-    "The scanner finds convex market-structure setups. "
-    "The framework keeps you alive long enough to benefit from them."
+    "Latest scanner sample - market-structure candidates\n\n"
+    "The scanner identifies abnormal structure: concentrated float, unusual positioning, "
+    "OI stress, thin liquidity, and reflexive upside conditions.\n\n"
+    "This is research tooling, not trade instruction. Entries, sizing, stops, and execution "
+    "are your own responsibility.\n\n"
+    "Most flags will fail. Losses must stay small. The rare outliers pay in lumps."
 )
-DISCORD_FOOTER = "Not financial advice. Structural-risk screen only."
+DISCORD_FOOTER = "Research tooling only. Structural-risk screen, not trade instruction."
 DISCORD_EMBED_DESCRIPTION_LIMIT = 3900
 DISCORD_FLAG_CARD_TARGET_CHARS = 1450
 
@@ -188,23 +192,23 @@ def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
     volume_multiple = _first_float(row, ("hour_volume_multiple", "daily_quote_volume_multiple"))
 
     if short_pct is not None and short_pct >= 60.0 and (oi_delta is None or oi_delta >= 0.0):
-        return "short crowd remains crowded while OI holds or expands; reclaim pressure can force reflexive buying."
+        return "short crowd remains crowded while OI holds or expands; reclaim pressure can create reflexive conditions."
     if _has_note(row, "taker buyers", "strong hourly close"):
-        return "taker buyers and close quality confirm momentum while the setup remains early."
+        return "taker buyers and close quality suggest momentum while the structure remains early."
     if price_24h is not None and price_24h > 0.0 and volume_multiple is not None and volume_multiple >= 1.5:
-        return "price is expanding with volume confirmation before the structure has fully blown off."
+        return "price is expanding with volume confirmation before the structure appears fully extended."
     if oi_delta is not None and oi_delta > 0.0:
-        return "OI is expanding into a convex market-structure setup."
-    return "needs reclaim plus volume/OI confirmation before the setup graduates from watch to action."
+        return "OI is expanding into an abnormal market-structure window."
+    return "reclaim plus volume/OI confirmation would improve the structural read."
 
 
 def infer_invalidation(row: Mapping[str, Any] | pd.Series) -> str:
     if _has_note(row, "failed", "decay", "unwind"):
-        return "failed reclaim, OI unwind, and volume decay."
+        return "OI contracts, volume fades, reclaim fails, and short pressure unwinds."
     short_pct = _first_float(row, ("short_account_pct",))
     if short_pct is not None and short_pct >= 60.0:
-        return "OI flush + short crowd normalizes + price fails to reclaim the trigger area."
-    return "OI flush + failed reclaim + volume decay."
+        return "OI contracts, short crowd normalizes, price fails to reclaim, and volume fades."
+    return "OI contracts, volume fades, reclaim fails, and short pressure unwinds."
 
 
 def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
@@ -216,26 +220,26 @@ def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str
     if top100 is not None and top100 >= 95.0:
         return f"top 100 holders control {top100:.1f}% observed supply; exits can gap if flow flips."
     if top5 is not None and top5 >= 60.0:
-        return f"top 5 holders control {top5:.1f}% observed supply; expect reflexive slippage."
+        return f"top 5 holders control {top5:.1f}% observed supply; reflexive slippage risk is elevated."
     if top1 is not None and top1 >= 20.0:
         return f"dominant holder controls {top1:.1f}% observed supply; liquidity can vanish around stress."
     if range_pct is not None and range_pct >= 15.0:
-        return f"24h range is {range_pct:.1f}%; use volatility as the slippage assumption."
+        return f"24h range is {range_pct:.1f}%; volatility should be treated as a core risk input."
     if volume is not None and volume < 5_000_000:
-        return "thin quoted volume; assume limit fills may disappear when the setup moves."
-    return "liquidity is not the edge; assume slippage rises when momentum crowds in."
+        return "thin quoted volume; fills may deteriorate when the structure moves."
+    return "liquidity is not the edge; slippage risk can rise when momentum crowds in."
 
 
 def infer_dead_setup(row: Mapping[str, Any] | pd.Series) -> str:
     if _has_note(row, "late", "chase"):
-        return "late extension without fresh OI/volume confirmation; do not chase a spent move."
+        return "late extension without fresh OI/volume confirmation."
     return "OI contracts, short pressure unwinds, reclaim fails, and volume fades across the next scan window."
 
 
 def infer_hold_longer_condition(row: Mapping[str, Any] | pd.Series) -> str:
     short_pct = _first_float(row, ("short_account_pct",))
     if short_pct is not None and short_pct >= 60.0:
-        return "higher lows continue while shorts stay trapped and OI/volume expand without a liquidation flush."
+        return "higher lows continue while short pressure stays elevated and OI/volume expand without a liquidation flush."
     if _has_note(row, "controlled float", "float trap"):
         return "structure remains controlled-float, liquidity stays thin, and reclaim levels keep holding."
     return "trend keeps reclaiming levels with expanding volume and no OI flush."
@@ -255,14 +259,14 @@ def build_discord_flag_card(
         f"Convex Score: {score:.0f}/100",
         f"Structure: {infer_structure(row, holder_text)}",
         f"Why flagged: {infer_why_flagged(row, holder_text)}",
-        f"Convex trigger: {infer_convex_trigger(row)}",
+        f"Observed trigger: {infer_convex_trigger(row)}",
         f"Invalidation: {infer_invalidation(row)}",
-        f"Liquidity/slippage warning: {infer_liquidity_warning(row, holder_text)}",
+        f"Liquidity warning: {infer_liquidity_warning(row, holder_text)}",
         f"Risk level: {infer_risk_level(row, holder_text)}",
-        f"What would make the setup dead: {infer_dead_setup(row)}",
-        f"What would make it worth holding longer: {infer_hold_longer_condition(row)}",
-        "Rule: small size, hard stop, no averaging down",
-        "Principle: cut loss fast; trail winner only if structure remains intact",
+        f"Failure condition: {infer_dead_setup(row)}",
+        f"Structure remains relevant while: {infer_hold_longer_condition(row)}",
+        "Research constraint: entries, sizing, stops, and execution are your own responsibility",
+        "Principle: losses must stay small; only stay exposed while structure remains intact",
     ]
     base = "\n".join(lines)
     if holder_text:
