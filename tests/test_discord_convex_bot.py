@@ -25,6 +25,12 @@ def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
     assert not bot._looks_like_symbol_shortcut("/convex")
 
 
+def test_configured_symbol_slash_aliases_are_normalized(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_SYMBOL_SLASH_ALIASES", "playusdt, chip, /raveusdt")
+    assert bot._configured_symbol_slash_aliases() == ["PLAYUSDT", "CHIPUSDT", "RAVEUSDT"]
+    assert bot._symbol_slash_command_name("PLAYUSDT") == "playusdt"
+
+
 def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_HOLDER_COMPOSITION_ENABLED", "0")
     row = pd.Series(

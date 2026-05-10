@@ -63,13 +63,16 @@ DISCORD_GUILD_ID=your_server_id
 DISCORD_ALLOWED_CHANNEL_ID=your_pre_pump_channel_id
 DISCORD_CONVEX_COMMAND_TOP_N=10
 DISCORD_LOGIN_RETRY_SECONDS=90
-DISCORD_SYMBOL_SHORTCUTS_ENABLED=1
+DISCORD_SYMBOL_SLASH_ALIASES=PLAYUSDT
+DISCORD_SYMBOL_SHORTCUTS_ENABLED=0
 ```
 
 Run `run_discord_convex_bot.bat`, then use `/convex` in Discord to pull the latest cached scan.
 Use `/convex_status` to check whether the dashboard has written a cache yet. `DISCORD_GUILD_ID`
 is recommended because guild slash commands sync almost immediately; global slash commands can take longer.
 Use `/coin PLAYUSDT` to pull one symbol's latest scan/live stats plus holder composition when a contract hint exists.
+The optional `DISCORD_SYMBOL_SLASH_ALIASES` list creates lowercase one-tap slash commands such as `/playusdt`
+without requiring privileged Discord intents.
 If you enable Discord Developer Portal -> Bot -> Privileged Gateway Intents -> Message Content Intent, the bot also
 accepts fast channel shortcuts like `/PLAYUSDT` or `!PLAYUSDT` in `DISCORD_ALLOWED_CHANNEL_ID`.
 

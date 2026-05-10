@@ -190,6 +190,24 @@ def _looks_like_symbol_shortcut(raw_content: str) -> bool:
     return bool(symbol) and raw_symbol.endswith("USDT")
 
 
+def _configured_symbol_slash_aliases() -> list[str]:
+    raw = _env_value("DISCORD_SYMBOL_SLASH_ALIASES", "PLAYUSDT")
+    symbols: list[str] = []
+    for chunk in re.split(r"[,;\s]+", raw):
+        symbol = _normalize_symbol_query(chunk)
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols[:75]
+
+
+def _symbol_slash_command_name(symbol: str) -> str:
+    normalized = _normalize_symbol_query(symbol)
+    if not normalized:
+        return ""
+    name = normalized.lower()
+    return name if re.fullmatch(r"[a-z0-9_-]{1,32}", name) else ""
+
+
 def _read_csv_if_exists(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
@@ -384,7 +402,7 @@ def _cache_status() -> str:
     return f"Cache: `{path}`\nRows: `{len(frame)}`\nModified: `{modified}`"
 
 
-def main() -> None:
+def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     _load_local_env()
     try:
         import discord
@@ -402,7 +420,10 @@ def main() -> None:
     allowed_channel_raw = _env_value("DISCORD_ALLOWED_CHANNEL_ID")
     default_top_n = max(1, int(_env_value("DISCORD_CONVEX_COMMAND_TOP_N", "10")))
     announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "0").strip().lower() in {"1", "true", "yes", "on"}
-    symbol_shortcuts_enabled = _env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", True)
+    symbol_shortcuts_enabled = _env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", False)
+    if force_disable_symbol_shortcuts:
+        symbol_shortcuts_enabled = False
+    symbol_slash_aliases = _configured_symbol_slash_aliases()
     guild = discord.Object(id=int(guild_id_raw)) if guild_id_raw.strip().isdigit() else None
     allowed_channel_id = int(allowed_channel_raw) if allowed_channel_raw.strip().isdigit() else None
 
@@ -447,6 +468,28 @@ def main() -> None:
         embed.set_footer(text="Latest scan row when available; live Binance fallback otherwise. Structural-risk screen only.")
         await interaction.followup.send(embed=embed)
 
+    def _make_symbol_alias_command(alias_symbol: str):
+        async def symbol_alias(interaction: discord.Interaction) -> None:
+            if not _channel_allowed(interaction):
+                await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True)
+            title, description = await asyncio.to_thread(_load_coin_stats, alias_symbol)
+            embed = discord.Embed(title=title, description=description, color=0x38BDF8)
+            embed.set_footer(text=f"/{alias_symbol.lower()} alias. Latest scan/live stats. Structural-risk screen only.")
+            await interaction.followup.send(embed=embed)
+
+        return symbol_alias
+
+    for alias_symbol in symbol_slash_aliases:
+        alias_name = _symbol_slash_command_name(alias_symbol)
+        if not alias_name:
+            continue
+        alias_kwargs = {"name": alias_name, "description": f"Show {alias_symbol} scan/live stats."}
+        if guild is not None:
+            alias_kwargs["guild"] = guild
+        tree.command(**alias_kwargs)(_make_symbol_alias_command(alias_symbol))
+
     status_kwargs = {"name": "convex_status", "description": "Show Discord Convex cache status."}
     if guild is not None:
         status_kwargs["guild"] = guild
@@ -485,6 +528,12 @@ def main() -> None:
             f"{'enabled' if symbol_shortcuts_enabled else 'disabled'} "
             "(requires Discord Developer Portal > Bot > Message Content Intent)."
         )
+        if force_disable_symbol_shortcuts:
+            print("Symbol shortcuts were forced off because Discord rejected privileged intents.")
+        print(
+            "Symbol slash aliases: "
+            + (", ".join(f"/{_symbol_slash_command_name(symbol)}" for symbol in symbol_slash_aliases) or "none")
+        )
 
         if guild is not None:
             commands = await tree.sync(guild=guild)
@@ -512,7 +561,7 @@ def main() -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/convex`, `/coin PLAYUSDT`, or type `/PLAYUSDT` in this channel."
+                    "Convex bot online. Use `/convex_status`, `/convex`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")
@@ -524,10 +573,11 @@ def run_with_backoff() -> None:
     _load_local_env()
     retry_seconds = max(15, int(_env_value("DISCORD_LOGIN_RETRY_SECONDS", "90")))
     max_retry_seconds = max(retry_seconds, int(_env_value("DISCORD_LOGIN_MAX_RETRY_SECONDS", "600")))
+    force_disable_symbol_shortcuts = False
 
     while True:
         try:
-            main()
+            main(force_disable_symbol_shortcuts=force_disable_symbol_shortcuts)
             return
         except KeyboardInterrupt:
             raise
@@ -536,6 +586,14 @@ def run_with_backoff() -> None:
         except Exception as exc:
             status = getattr(exc, "status", None)
             code = getattr(exc, "code", None)
+            is_privileged_intent_error = exc.__class__.__name__ == "PrivilegedIntentsRequired"
+            if is_privileged_intent_error and not force_disable_symbol_shortcuts:
+                print(
+                    "Discord rejected the Message Content Intent. Restarting without raw /SYMBOL shortcuts; "
+                    "`/coin PLAYUSDT` and configured lowercase aliases such as `/playusdt` will still work."
+                )
+                force_disable_symbol_shortcuts = True
+                continue
             is_rate_limited = status == 429 or code == 40062 or "429 Too Many Requests" in str(exc)
             if not is_rate_limited:
                 raise
