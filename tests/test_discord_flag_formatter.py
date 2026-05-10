@@ -6,6 +6,7 @@ from discord_flag_formatter import (
     infer_liquidity_warning,
     infer_perp_positioning,
     infer_risk_level,
+    join_discord_flag_cards,
 )
 
 
@@ -100,3 +101,18 @@ def test_card_stays_under_discord_safe_length() -> None:
     assert len(card) <= 1200
     for label in REQUIRED_LABELS:
         assert card.count(label) == 1
+
+
+def test_joined_cards_begin_with_all_candidate_names_when_details_truncate() -> None:
+    cards = [
+        f"/{symbol}\n\nConvex Score: 90/100\n" + ("detail " * 80)
+        for symbol in ("RAVEUSDT", "EGLDUSDT", "CHIPUSDT", "LABUSDT")
+    ]
+
+    joined = join_discord_flag_cards(cards, max_chars=900)
+
+    first_line = joined.splitlines()[0]
+    assert first_line == "Candidates: /RAVEUSDT /EGLDUSDT /CHIPUSDT /LABUSDT"
+    assert "detailed commentary" in joined
+    assert "see Candidates line above" in joined
+    assert len(joined) <= 900

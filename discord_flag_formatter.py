@@ -307,16 +307,37 @@ def build_discord_flag_card(
     return f"{base[: max_chars - 3].rstrip()}..."
 
 
+def _symbol_from_card(card: str) -> str:
+    match = re.search(r"^\s*/([A-Z0-9_:-]+)", card or "", flags=re.MULTILINE)
+    return match.group(1).upper() if match else ""
+
+
+def _candidate_summary_line(cards: list[str]) -> str:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for card in cards:
+        symbol = _symbol_from_card(card)
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        symbols.append(f"/{symbol}")
+    return f"Candidates: {' '.join(symbols)}" if symbols else ""
+
+
 def join_discord_flag_cards(cards: list[str], *, max_chars: int = DISCORD_EMBED_DESCRIPTION_LIMIT) -> str:
-    output: list[str] = []
-    used = 0
+    summary = _candidate_summary_line(cards)
+    output: list[str] = [summary] if summary else []
+    used = len(summary)
     for index, card in enumerate(cards):
         block = card.strip()
         separator = "\n\n" if output else ""
         next_len = used + len(separator) + len(block)
         if next_len > max_chars:
             remaining = len(cards) - index
-            suffix = f"\n\n... {remaining} more setup(s) omitted for Discord length."
+            suffix = (
+                f"\n\n... detailed commentary for {remaining} more candidate(s) omitted for Discord length; "
+                "see Candidates line above."
+            )
             if used + len(suffix) <= max_chars:
                 output.append(suffix.strip())
             break
