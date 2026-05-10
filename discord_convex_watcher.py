@@ -10,6 +10,13 @@ from typing import Any
 import pandas as pd
 import requests
 
+from discord_flag_formatter import (
+    DISCORD_EMBED_DESCRIPTION_LIMIT,
+    DISCORD_FOOTER,
+    DISCORD_PRODUCT_IDENTITY,
+    build_discord_flag_card,
+    join_discord_flag_cards,
+)
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 
 
@@ -112,16 +119,6 @@ def _safe_float(value: Any) -> float | None:
     return parsed
 
 
-def _metric(row: pd.Series, label: str, columns: tuple[str, ...], suffix: str = "", decimals: int = 1) -> str:
-    for column in columns:
-        if column not in row.index:
-            continue
-        value = _safe_float(row.get(column))
-        if value is not None:
-            return f"{label} {value:.{decimals}f}{suffix}"
-    return ""
-
-
 def _holder_contract_hints_path() -> Path:
     return Path(_env_value("DISCORD_HOLDER_CONTRACTS_FILE", str(APP_DIR / "data" / "discord_holder_contracts.csv")))
 
@@ -148,31 +145,8 @@ def _holder_composition_text(row: pd.Series) -> str:
 
 
 def _candidate_line(row: pd.Series) -> str:
-    symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
-    metrics = [
-        _metric(row, "bucket", ("trade_bucket_score", "_discord_bucket_score")),
-        _metric(row, "convex", ("convexity_entry_score", "convexity_score")),
-        _metric(row, "setup", ("rave_lab_setup_score", "pre_pump_precision_score")),
-        _metric(row, "short acct", ("short_account_pct",), "%"),
-        _metric(row, "24h", ("price_change_24h_pct", "change_24h_pct", "day_change_pct"), "%"),
-        _metric(row, "OI", ("oi_delta_pct", "oi_value_change_since_scan_pct"), "%"),
-    ]
-    metric_text = " | ".join(item for item in metrics if item)
-    note = str(row.get("trade_bucket_note", "")).strip()
-    if len(note) > 220:
-        note = f"{note[:217]}..."
     holder_text = _holder_composition_text(row)
-    if metric_text and note:
-        base = f"**{symbol}** | {metric_text}\n{note}"
-    elif metric_text:
-        base = f"**{symbol}** | {metric_text}"
-    elif note:
-        base = f"**{symbol}**\n{note}"
-    else:
-        base = f"**{symbol}**"
-    if holder_text:
-        return f"{base}\n{holder_text}"
-    return base
+    return build_discord_flag_card(row, holder_text=holder_text)
 
 
 def _scan_convex_longs(scan_mode: str) -> pd.DataFrame:
@@ -261,9 +235,8 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) ->
         raise RuntimeError("DISCORD_WEBHOOK_URL is not set.")
 
     lines = [_candidate_line(row) for _, row in candidates.iterrows()]
-    description = "\n\n".join(lines)
-    if len(description) > 3900:
-        description = f"{description[:3890]}\n..."
+    card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
+    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     payload = {
         "username": "Convex Scanner",
         "embeds": [
@@ -275,7 +248,7 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) ->
                     {"name": "Scan mode", "value": scan_mode, "inline": True},
                     {"name": "Detected", "value": _iso_now(), "inline": True},
                 ],
-                "footer": {"text": "Automatic Convex watcher. Structural-risk screen only."},
+                "footer": {"text": DISCORD_FOOTER},
             }
         ],
     }

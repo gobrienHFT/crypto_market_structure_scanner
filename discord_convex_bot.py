@@ -11,6 +11,13 @@ from typing import Any
 import pandas as pd
 
 from binance_futures import BinanceFuturesPublic
+from discord_flag_formatter import (
+    DISCORD_EMBED_DESCRIPTION_LIMIT,
+    DISCORD_FOOTER,
+    DISCORD_PRODUCT_IDENTITY,
+    build_discord_flag_card,
+    join_discord_flag_cards,
+)
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 
 
@@ -63,49 +70,6 @@ def _safe_float(value: Any) -> float | None:
     return parsed
 
 
-def _format_number(value: Any, *, decimals: int = 2) -> str:
-    parsed = _safe_float(value)
-    if parsed is None:
-        return "n/a"
-    sign = "-" if parsed < 0 else ""
-    value_abs = abs(parsed)
-    if value_abs >= 1_000_000_000:
-        return f"{sign}{value_abs / 1_000_000_000:.{decimals}f}B"
-    if value_abs >= 1_000_000:
-        return f"{sign}{value_abs / 1_000_000:.{decimals}f}M"
-    if value_abs >= 1_000:
-        return f"{sign}{value_abs / 1_000:.{decimals}f}K"
-    if value_abs >= 1:
-        return f"{parsed:.{decimals}f}"
-    return f"{parsed:.6g}"
-
-
-def _format_pct(value: Any, *, decimals: int = 1) -> str:
-    parsed = _safe_float(value)
-    return "n/a" if parsed is None else f"{parsed:.{decimals}f}%"
-
-
-def _first_present(row: pd.Series | dict[str, Any], columns: tuple[str, ...]) -> Any:
-    for column in columns:
-        try:
-            value = row.get(column)  # type: ignore[attr-defined]
-        except Exception:
-            continue
-        if value not in (None, "") and not pd.isna(value):
-            return value
-    return None
-
-
-def _metric(row: pd.Series, label: str, columns: tuple[str, ...], suffix: str = "", decimals: int = 1) -> str:
-    for column in columns:
-        if column not in row.index:
-            continue
-        value = _safe_float(row.get(column))
-        if value is not None:
-            return f"{label} {value:.{decimals}f}{suffix}"
-    return ""
-
-
 def _holder_contract_hints_path() -> Path:
     return Path(_env_value("DISCORD_HOLDER_CONTRACTS_FILE", str(APP_DIR / "data" / "discord_holder_contracts.csv")))
 
@@ -132,31 +96,8 @@ def _holder_composition_text(row: pd.Series) -> str:
 
 
 def _candidate_line(row: pd.Series) -> str:
-    symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
-    metrics = [
-        _metric(row, "bucket", ("trade_bucket_score", "_discord_bucket_score")),
-        _metric(row, "convex", ("convexity_entry_score", "convexity_score")),
-        _metric(row, "setup", ("rave_lab_setup_score", "pre_pump_precision_score")),
-        _metric(row, "short acct", ("short_account_pct",), "%"),
-        _metric(row, "24h", ("price_change_24h_pct", "change_24h_pct", "day_change_pct"), "%"),
-        _metric(row, "OI", ("oi_delta_pct", "oi_value_change_since_scan_pct"), "%"),
-    ]
-    metric_text = " | ".join(item for item in metrics if item)
-    note = str(row.get("trade_bucket_note", "")).strip()
-    if len(note) > 180:
-        note = f"{note[:177]}..."
     holder_text = _holder_composition_text(row)
-    if metric_text and note:
-        base = f"**{symbol}** | {metric_text}\n{note}"
-    elif metric_text:
-        base = f"**{symbol}** | {metric_text}"
-    elif note:
-        base = f"**{symbol}**\n{note}"
-    else:
-        base = f"**{symbol}**"
-    if holder_text:
-        return f"{base}\n{holder_text}"
-    return base
+    return build_discord_flag_card(row, holder_text=holder_text)
 
 
 def _cache_path() -> Path:
@@ -290,61 +231,10 @@ def _live_binance_row(symbol: str) -> tuple[pd.Series | None, str]:
 
 
 def _coin_stats_description(row: pd.Series, *, source: str) -> str:
-    symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
-    lines = [
-        f"**{symbol}**",
-        f"Source: {source}",
-        (
-            f"Price {_format_number(_first_present(row, ('last_price', 'price')), decimals=6)} | "
-            f"24h {_format_pct(_first_present(row, ('price_change_24h_pct', 'change_24h_pct', 'day_change_pct')))} | "
-            f"24h vol {_format_number(_first_present(row, ('quote_volume_24h', 'volume_24h')))}"
-        ),
-    ]
-
-    score_bits = [
-        _metric(row, "bucket", ("trade_bucket_score", "_discord_bucket_score")),
-        _metric(row, "convex", ("convexity_entry_score", "convexity_score")),
-        _metric(row, "setup", ("rave_lab_setup_score", "pre_pump_precision_score")),
-        _metric(row, "pre-pump", ("pre_pump_precision_score",)),
-        _metric(row, "short fuse", ("dormant_short_fuse_score",)),
-    ]
-    if any(score_bits):
-        lines.append("Scores: " + " | ".join(bit for bit in score_bits if bit))
-
-    account_bits = [
-        f"short {_format_pct(row.get('short_account_pct'))}",
-        f"long {_format_pct(row.get('long_account_pct'))}",
-        f"LS ratio {_format_number(row.get('long_short_account_ratio'), decimals=2)}",
-    ]
-    short_change = _first_present(row, ("short_account_change_max_pp", "target_cex_share_change_pp"))
-    if short_change is not None:
-        account_bits.append(f"short chg {_format_pct(short_change)}")
-    lines.append("Accounts: " + " | ".join(account_bits))
-
-    market_bits = [
-        f"OI {_format_number(row.get('oi_value_usdt'))}",
-        f"OI delta {_format_pct(_first_present(row, ('oi_delta_pct', 'oi_value_change_since_scan_pct')))}",
-        f"range {_format_pct(row.get('range_24h_pct'))}",
-        f"hr vol x{_format_number(row.get('hour_volume_multiple'), decimals=2)}",
-    ]
-    lines.append("Market: " + " | ".join(market_bits))
-
-    structure_bits = [
-        f"central ownership {_format_number(row.get('centralized_ownership_score'), decimals=1)}",
-        f"low float {_format_number(row.get('low_float_score'), decimals=1)}",
-        f"top10 holders {_format_pct(row.get('top10_holder_pct'))}",
-        f"holders {_format_number(row.get('holder_count'), decimals=0)}",
-    ]
-    lines.append("Structure: " + " | ".join(structure_bits))
-
-    note = str(_first_present(row, ("trade_bucket_note", "rave_lab_setup_note", "pre_pump_precision_note")) or "").strip()
-    if note:
-        lines.append(f"Read: {note[:320]}")
     holder_text = _holder_composition_text(row)
-    if holder_text:
-        lines.append(holder_text)
-    text = "\n".join(lines)
-    return text if len(text) <= 3900 else f"{text[:3890]}\n..."
+    prefix = f"{DISCORD_PRODUCT_IDENTITY}\n\nScan source: {source}\n\n"
+    card = build_discord_flag_card(row, holder_text=holder_text, max_chars=DISCORD_EMBED_DESCRIPTION_LIMIT - len(prefix))
+    return f"{prefix}{card}"
 
 
 def _load_coin_stats(symbol_query: str) -> tuple[str, str]:
@@ -383,9 +273,8 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
     scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
-    description = "\n\n".join(lines)
-    if len(description) > 3900:
-        description = f"{description[:3890]}\n..."
+    card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
+    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     title = f"Latest Convex Long candidates ({scan_mode}, {scanned_at})"
     return title, description
 
@@ -450,7 +339,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         capped_limit = min(max(int(limit), 1), 25)
         title, description = await asyncio.to_thread(_load_candidates, capped_limit)
         embed = discord.Embed(title=title, description=description, color=0x22C55E)
-        embed.set_footer(text="Latest dashboard scan cache. Structural-risk screen only.")
+        embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
 
     coin_kwargs = {"name": "coin", "description": "Show latest scan/live stats for one futures symbol."}
@@ -466,7 +355,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         await interaction.response.defer(thinking=True)
         title, description = await asyncio.to_thread(_load_coin_stats, symbol)
         embed = discord.Embed(title=title, description=description, color=0x38BDF8)
-        embed.set_footer(text="Latest scan row when available; live Binance fallback otherwise. Structural-risk screen only.")
+        embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
 
     def _make_symbol_alias_command(alias_symbol: str):
@@ -477,7 +366,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             await interaction.response.defer(thinking=True)
             title, description = await asyncio.to_thread(_load_coin_stats, alias_symbol)
             embed = discord.Embed(title=title, description=description, color=0x38BDF8)
-            embed.set_footer(text=f"/{alias_symbol.lower()} alias. Latest scan/live stats. Structural-risk screen only.")
+            embed.set_footer(text=DISCORD_FOOTER)
             await interaction.followup.send(embed=embed)
 
         return symbol_alias
@@ -515,7 +404,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         async with message.channel.typing():
             title, description = await asyncio.to_thread(_load_coin_stats, symbol)
         embed = discord.Embed(title=title, description=description, color=0x38BDF8)
-        embed.set_footer(text="Shortcut lookup. Use /coin if Discord blocks raw /SYMBOL messages.")
+        embed.set_footer(text=DISCORD_FOOTER)
         await message.reply(embed=embed, mention_author=False)
 
     @client.event

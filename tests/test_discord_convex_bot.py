@@ -58,8 +58,10 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
 
     description = bot._coin_stats_description(row, source="test cache")
 
-    assert "**PLAYUSDT**" in description
-    assert "Source: test cache" in description
-    assert "Scores:" in description
-    assert "short 61.2%" in description
-    assert "low-volatility short crowd" in description
+    assert "/PLAYUSDT" in description
+    assert "Scan source: test cache" in description
+    assert "Convex Score: 88/100" in description
+    assert "Structure:" in description
+    assert "Convex trigger:" in description
+    assert "Risk level: High" in description
+    assert "Rule: small size, hard stop, no averaging down" in description
