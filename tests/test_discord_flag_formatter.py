@@ -4,6 +4,7 @@ from discord_flag_formatter import (
     build_discord_flag_card,
     infer_convex_trigger,
     infer_liquidity_warning,
+    infer_perp_positioning,
     infer_risk_level,
 )
 
@@ -11,6 +12,7 @@ from discord_flag_formatter import (
 REQUIRED_LABELS = [
     "Convex Score:",
     "Structure:",
+    "Perp positioning:",
     "Why flagged:",
     "Observed trigger:",
     "Invalidation:",
@@ -45,6 +47,26 @@ def test_low_holder_data_still_builds_valid_card() -> None:
     for label in REQUIRED_LABELS:
         assert card.count(label) == 1
     assert "Risk level: Elevated" in card
+    assert "Perp positioning: short accounts n/a" in card
+
+
+def test_perp_positioning_always_shows_short_account_percentage() -> None:
+    row = pd.Series(
+        {
+            "symbol": "RAVEUSDT",
+            "short_account_pct": 24.1,
+            "long_account_pct": 75.9,
+            "long_short_account_ratio": 3.15,
+            "oi_delta_pct": -0.8,
+        }
+    )
+
+    positioning = infer_perp_positioning(row)
+
+    assert "short accounts 24.1%" in positioning
+    assert "long accounts 75.9%" in positioning
+    assert "L/S acct 3.15" in positioning
+    assert "OI change -0.8%" in positioning
 
 
 def test_extreme_concentration_adds_liquidity_warning_and_upgrades_risk() -> None:

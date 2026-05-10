@@ -55,6 +55,14 @@ def _first_text(row: Mapping[str, Any] | pd.Series, keys: tuple[str, ...]) -> st
     return ""
 
 
+def _pct_value(value: float | None) -> float | None:
+    if value is None:
+        return None
+    if value != 0.0 and abs(value) <= 1.0:
+        return value * 100.0
+    return value
+
+
 def _score(row: Mapping[str, Any] | pd.Series) -> float:
     return _first_float(row, ("trade_bucket_score", "_discord_bucket_score", "convexity_entry_score", "convexity_score")) or 0.0
 
@@ -129,7 +137,7 @@ def infer_risk_level(row: Mapping[str, Any] | pd.Series, holder_text: str = "") 
 
 
 def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
-    short_pct = _first_float(row, ("short_account_pct",))
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     oi_delta = _first_float(row, ("oi_delta_pct", "oi_value_change_since_scan_pct"))
     volume_multiple = _first_float(row, ("hour_volume_multiple", "daily_quote_volume_multiple"))
     top5 = _holder_pct(holder_text, "Top5")
@@ -166,7 +174,7 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
 def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
     note = _metric_note(row)
     score = _score(row)
-    short_pct = _first_float(row, ("short_account_pct",))
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     bits: list[str] = []
     if score:
         bits.append(f"scanner score {score:.0f}/100")
@@ -186,7 +194,7 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
 
 
 def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
-    short_pct = _first_float(row, ("short_account_pct",))
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     oi_delta = _first_float(row, ("oi_delta_pct", "oi_value_change_since_scan_pct"))
     price_24h = _first_float(row, ("price_change_24h_pct", "change_24h_pct", "day_change_pct"))
     volume_multiple = _first_float(row, ("hour_volume_multiple", "daily_quote_volume_multiple"))
@@ -205,7 +213,7 @@ def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
 def infer_invalidation(row: Mapping[str, Any] | pd.Series) -> str:
     if _has_note(row, "failed", "decay", "unwind"):
         return "OI contracts, volume fades, reclaim fails, and short pressure unwinds."
-    short_pct = _first_float(row, ("short_account_pct",))
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     if short_pct is not None and short_pct >= 60.0:
         return "OI contracts, short crowd normalizes, price fails to reclaim, and volume fades."
     return "OI contracts, volume fades, reclaim fails, and short pressure unwinds."
@@ -237,12 +245,31 @@ def infer_dead_setup(row: Mapping[str, Any] | pd.Series) -> str:
 
 
 def infer_hold_longer_condition(row: Mapping[str, Any] | pd.Series) -> str:
-    short_pct = _first_float(row, ("short_account_pct",))
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     if short_pct is not None and short_pct >= 60.0:
         return "higher lows continue while short pressure stays elevated and OI/volume expand without a liquidation flush."
     if _has_note(row, "controlled float", "float trap"):
         return "structure remains controlled-float, liquidity stays thin, and reclaim levels keep holding."
     return "trend keeps reclaiming levels with expanding volume and no OI flush."
+
+
+def infer_perp_positioning(row: Mapping[str, Any] | pd.Series) -> str:
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
+    long_pct = _pct_value(_first_float(row, ("long_account_pct",)))
+    ratio = _first_float(row, ("long_short_account_ratio",))
+    oi_delta = _first_float(row, ("oi_delta_pct", "oi_value_change_since_scan_pct"))
+    oi_to_volume = _first_float(row, ("oi_to_24h_volume_pct",))
+
+    parts = [f"short accounts {short_pct:.1f}%" if short_pct is not None else "short accounts n/a"]
+    if long_pct is not None:
+        parts.append(f"long accounts {long_pct:.1f}%")
+    if ratio is not None:
+        parts.append(f"L/S acct {ratio:.2f}")
+    if oi_delta is not None:
+        parts.append(f"OI change {oi_delta:+.1f}%")
+    if oi_to_volume is not None:
+        parts.append(f"OI/24h vol {oi_to_volume:.1f}%")
+    return " | ".join(parts)
 
 
 def build_discord_flag_card(
@@ -258,6 +285,7 @@ def build_discord_flag_card(
         "",
         f"Convex Score: {score:.0f}/100",
         f"Structure: {infer_structure(row, holder_text)}",
+        f"Perp positioning: {infer_perp_positioning(row)}",
         f"Why flagged: {infer_why_flagged(row, holder_text)}",
         f"Observed trigger: {infer_convex_trigger(row)}",
         f"Invalidation: {infer_invalidation(row)}",

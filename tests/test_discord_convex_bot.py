@@ -62,6 +62,7 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
     assert "Scan source: test cache" in description
     assert "Convex Score: 88/100" in description
     assert "Structure:" in description
+    assert "Perp positioning: short accounts 61.2% | long accounts 38.8%" in description
     assert "Observed trigger:" in description
     assert "Risk level: High" in description
     assert "Research constraint: entries, sizing, stops, and execution are your own responsibility" in description
