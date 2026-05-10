@@ -35,6 +35,22 @@ def test_contract_hint_loader_accepts_spreadsheet_safe_addresses(tmp_path) -> No
     assert clean_contract_address("6.91348E+46") == ""
 
 
+def test_contract_hint_file_overrides_scan_row_contract_for_discord(tmp_path) -> None:
+    address = "0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e"
+    stale_address = "0x1111111111111111111111111111111111111111"
+    path = tmp_path / "hints.csv"
+    path.write_text(f"symbol,chain,contract_address\nCHIPUSDT,arbitrum,{address}\n", encoding="utf-8")
+
+    hint = resolve_contract_hint(
+        pd.Series({"symbol": "CHIPUSDT", "token_platform": "ethereum", "token_contract": stale_address}),
+        hints_path=path,
+    )
+
+    assert hint is not None
+    assert hint.chain == "arbitrum"
+    assert hint.contract_address == address
+
+
 def test_parse_explorer_holder_rows_computes_percent_from_supply_when_page_percent_is_zero() -> None:
     html = """
     <table><tbody>

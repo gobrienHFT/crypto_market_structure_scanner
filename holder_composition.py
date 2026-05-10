@@ -260,17 +260,18 @@ def load_contract_hints(path: Path | None = None) -> dict[str, ContractHint]:
 
 
 def resolve_contract_hint(row: Mapping[str, Any], *, hints_path: Path | None = None) -> ContractHint | None:
+    hints = load_contract_hints(hints_path)
+    for candidate_symbol in _candidate_symbols(row):
+        hint = hints.get(candidate_symbol)
+        if hint:
+            return hint
+
     contract = clean_contract_address(_first_text(row, ("token_contract", "contract_address", "contract")))
     chain = normalize_chain(_first_text(row, ("token_platform", "chain", "token_chain")))
     symbol = _candidate_symbols(row)[0] if _candidate_symbols(row) else ""
     if ADDRESS_RE.fullmatch(contract) and chain:
         return ContractHint(symbol=symbol, chain=chain, contract_address=contract, source="scan row")
 
-    hints = load_contract_hints(hints_path)
-    for candidate_symbol in _candidate_symbols(row):
-        hint = hints.get(candidate_symbol)
-        if hint:
-            return hint
     return None
 
 

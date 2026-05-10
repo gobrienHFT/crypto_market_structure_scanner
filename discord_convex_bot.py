@@ -90,8 +90,8 @@ def _holder_composition_text(row: pd.Series) -> str:
         return ""
     return format_holder_composition_for_discord(
         composition,
-        include_top_holders=_env_int("DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS", 3, minimum=0),
-        max_chars=_env_int("DISCORD_HOLDER_COMPOSITION_MAX_CHARS", 900, minimum=200),
+        include_top_holders=_env_int("DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS", 0, minimum=0),
+        max_chars=_env_int("DISCORD_HOLDER_COMPOSITION_MAX_CHARS", 520, minimum=200),
     )
 
 

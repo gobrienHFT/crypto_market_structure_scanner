@@ -26,6 +26,7 @@ from external_markets import (
     fetch_external_crime_metrics,
     normalize_base_asset,
 )
+from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
 from screener import ScreenerData, build_screener_data
@@ -2916,6 +2917,42 @@ DISCORD_CONVEX_CACHE_PATH = Path(
         default=str(APP_DIR / "data" / "latest_convex_longs.csv"),
     )
 )
+DISCORD_HOLDER_CONTRACTS_FILE = Path(
+    _env_value(
+        "DISCORD_HOLDER_CONTRACTS_FILE",
+        default=str(APP_DIR / "data" / "discord_holder_contracts.csv"),
+    )
+)
+DISCORD_HOLDER_COMPOSITION_ENABLED = _env_value("DISCORD_HOLDER_COMPOSITION_ENABLED", default="1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DISCORD_HOLDER_COMPOSITION_SHOW_MISSING = _env_value(
+    "DISCORD_HOLDER_COMPOSITION_SHOW_MISSING",
+    default="0",
+).strip().lower() in {"1", "true", "yes", "on"}
+DISCORD_HOLDER_COMPOSITION_TIMEOUT_SECONDS = _parse_env_int(
+    _env_value("DISCORD_HOLDER_COMPOSITION_TIMEOUT_SECONDS", default="12"),
+    default=12,
+    minimum=3,
+)
+DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS = _parse_env_int(
+    _env_value("DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS", default="100"),
+    default=100,
+    minimum=10,
+)
+DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS = _parse_env_int(
+    _env_value("DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS", default="0"),
+    default=0,
+    minimum=0,
+)
+DISCORD_HOLDER_COMPOSITION_MAX_CHARS = _parse_env_int(
+    _env_value("DISCORD_HOLDER_COMPOSITION_MAX_CHARS", default="520"),
+    default=520,
+    minimum=200,
+)
 
 if not IMPORT_ONLY:
     st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
@@ -3076,6 +3113,27 @@ def _eligible_discord_convex_candidates(candidates: pd.DataFrame) -> pd.DataFram
     return candidates.loc[eligible_indices].copy()
 
 
+def _discord_holder_composition_text(row: pd.Series) -> str:
+    if not DISCORD_HOLDER_COMPOSITION_ENABLED:
+        return ""
+    try:
+        composition = fetch_holder_composition(
+            row.to_dict(),
+            hints_path=DISCORD_HOLDER_CONTRACTS_FILE,
+            timeout=DISCORD_HOLDER_COMPOSITION_TIMEOUT_SECONDS,
+            max_holders=DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS,
+        )
+    except Exception as exc:
+        return f"Holder composition unavailable: {exc}"
+    if composition.error == "no contract hint" and not DISCORD_HOLDER_COMPOSITION_SHOW_MISSING:
+        return ""
+    return format_holder_composition_for_discord(
+        composition,
+        include_top_holders=DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS,
+        max_chars=DISCORD_HOLDER_COMPOSITION_MAX_CHARS,
+    )
+
+
 def _discord_candidate_line(row: pd.Series) -> str:
     symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     base_asset = str(row.get("base_asset", "")).upper().strip()
@@ -3093,12 +3151,15 @@ def _discord_candidate_line(row: pd.Series) -> str:
     if len(note) > 220:
         note = f"{note[:217]}..."
     if compact_metrics and note:
-        return f"{label} | {compact_metrics}\n{note}"
-    if compact_metrics:
-        return f"{label} | {compact_metrics}"
-    if note:
-        return f"{label}\n{note}"
-    return label
+        base = f"{label} | {compact_metrics}\n{note}"
+    elif compact_metrics:
+        base = f"{label} | {compact_metrics}"
+    elif note:
+        base = f"{label}\n{note}"
+    else:
+        base = label
+    holder_text = _discord_holder_composition_text(row)
+    return f"{base}\n{holder_text}" if holder_text else base
 
 
 def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> None:
