@@ -1,129 +1,207 @@
-# practical_market_maker
+Overview
 
-## Ultra Micro Runner
+crypto_market_structure_scanner is a research and monitoring framework for identifying structurally unusual crypto assets across Binance perpetual markets and public on-chain data.
 
-`run_ultra_micro_market_maker.bat` runs the most defensive live futures loop in this repo:
+The project combines:
 
-- pulls from the full Binance USDT perpetual universe, excluding TradFi by default
-- tuned for a roughly 20 euro account: starts at 1x and can only raise as far as 3x
-- caps leverage from recent 1-minute volatility, so violent coins are skipped instead of force-traded
-- uses isolated margin, maker-only entries, 50% account allocation, positive net-profit targets, and an emergency ROE close
-- persists the `F` dashboard summary to `logs/ultra_micro_stats.csv`
-- persists closed-trade accounting to `logs/ultra_micro_trades.csv`
-- restarts automatically if the process exits
+market structure analytics
+liquidity and float analysis
+holder concentration modelling
+futures/open-interest screening
+Discord-based alerting and monitoring
+interactive Streamlit dashboards
 
-Important: Binance USD-M futures currently enforce a 5 USDT minimum notional on listed perpetuals. With about 20 euro of equity, that minimum is reachable without extreme leverage, so the runner no longer allows the 125x tiny-equity mode. Rule 1 is do not blow up the account.
+The repository is designed for research, monitoring, and signal discovery workflows rather than automated execution.
 
-## Crime Pump On-Chain Concentration Scanner
+Core Features
+Market Structure Scanner
 
-The Streamlit dashboard now includes an `On-Chain Concentration` mode for structural-risk analysis of ERC-20/BEP-20 holder distribution:
+The scanner evaluates Binance perpetual markets using a range of structural and liquidity-based metrics, including:
 
-- resolves token metadata and chain contracts from local hints, no-key public token lists, and explorer-compatible contract rows
-- fetches top holder data through Etherscan-family explorer adapters for Ethereum and BNB Chain
-- classifies exchange, liquidity pool, bridge, staking, vesting, treasury, multisig, owner/admin, unexplained whale, burn, and unknown holders
-- computes raw and adjusted concentration, adjusted float, Gini, HHI, RaveDAO-type thin-float metrics, controlled-float flags, wrapped-representation guardrails, and structural-risk scores
-- adds a manipulable-whale filter that separates CEX/custody/storage/vesting/bridge/wrapper/LP/burn/reserve holders from unresolved wallets and linked wallet clusters that may control tradable float
-- exposes a `Manipulable Whales` leaderboard sorted by largest manipulable holder, manipulable-whale score, cluster supply, and filtered top-holder control
-- adds a Binance perpetual universe scanner that automatically ranks controlled-float squeeze candidates by insider/whale concentration, linked clusters, futures-vs-spot volume, OI pressure, adjusted-float churn, low-float/FDV gaps, and RaveDAO-type structure
-- stores scan results in `data/concentration_scanner.sqlite`
-- supports manual holder category overrides with immediate recomputation
-- includes cached fixture scans for RaveDAO-like, LAB-like, BIO-like, and wrapped KAVA-like acceptance cases
+relative volume expansion
+open-interest changes
+volatility compression/expansion
+float-adjusted activity
+futures-versus-spot participation
+liquidity asymmetry
+concentration-adjusted turnover
+structural squeeze conditions
 
-Optional explorer/API keys are read from environment variables only:
+Results are surfaced through an interactive Streamlit dashboard and can be exported or distributed through Discord integrations.
 
-- `COINGECKO_API_KEY`
-- `ETHERSCAN_API_KEY`
-- `BSCSCAN_API_KEY`
+On-Chain Concentration Analytics
 
-The scanner uses structural-risk language only. It does not generate legal conclusions from on-chain data alone.
+The platform includes a dedicated on-chain concentration engine for evaluating token distribution quality and tradable float characteristics across ERC-20 and BEP-20 assets.
 
-## Discord Market-Structure Alerts
+Features include:
 
-The breakout dashboard can post every scanned market-structure candidate to a Discord channel through a channel webhook.
+contract and token metadata resolution
+top-holder analysis
+holder classification heuristics
+linked-wallet clustering
+adjusted float estimation
+concentration scoring
+liquidity and custody filtering
+thin-float detection
+structural risk ranking
 
-1. In Discord, open your channel settings, choose `Integrations`, create a webhook, and copy the webhook URL.
-2. Add this to your local `.env` file:
+The system distinguishes between:
 
-```text
+exchange wallets
+liquidity pools
+treasury/reserve wallets
+bridges/wrappers
+vesting contracts
+multisigs
+unresolved whale clusters
+
+This allows concentration metrics to focus more directly on potentially tradable circulating supply rather than nominal supply figures.
+
+The scanner stores outputs locally in:
+
+data/concentration_scanner.sqlite
+
+Supported optional API integrations:
+
+COINGECKO_API_KEY
+ETHERSCAN_API_KEY
+BSCSCAN_API_KEY
+
+The repository uses probabilistic and structural classification methods only and does not make legal or compliance assertions.
+
+Streamlit Dashboard
+
+The Streamlit interface provides:
+
+live scanner controls
+ranked candidate tables
+concentration overlays
+holder composition summaries
+contract inspection
+scan persistence
+cached historical comparisons
+
+The dashboard is designed for rapid discretionary review and iterative market monitoring.
+
+Discord Integrations
+
+The repository includes optional Discord integrations for automated scan distribution and remote monitoring workflows.
+
+Webhook Alerts
+
+Scanner results can be automatically posted to Discord channels using webhooks.
+
+Supported features:
+
+ranked scan summaries
+configurable cooldowns
+top-N filtering
+threshold-based alerting
+automated monitoring loops
+holder composition attachments
+
+Example environment configuration:
+
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_CONVEX_ALERTS_ENABLED=1
 DISCORD_CONVEX_ALERT_TOP_N=10
-DISCORD_CONVEX_ALERT_MIN_SCORE=0
 DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES=240
-```
+Discord Bot Commands
 
-The dashboard sends alerts after `Scan now` completes. Per-symbol cooldown state is stored in
-`data/discord_convex_alert_state.csv`, which is ignored by git.
+The repository also supports a lightweight Discord bot interface for querying cached scanner outputs directly from Discord.
 
-To call the latest scan from Discord chat, create a Discord application bot and add these to `.env`:
+Supported commands include:
 
-```text
+/convex
+/convex_status
+/coin <symbol>
+
+The bot can retrieve:
+
+latest scanner rankings
+symbol-level structural metrics
+holder composition summaries
+cached contract metadata
+
+Example environment configuration:
+
 DISCORD_BOT_TOKEN=your_bot_token
 DISCORD_GUILD_ID=your_server_id
-DISCORD_ALLOWED_CHANNEL_ID=your_pre_pump_channel_id
-DISCORD_CONVEX_COMMAND_TOP_N=10
-DISCORD_LOGIN_RETRY_SECONDS=90
-DISCORD_SYMBOL_SLASH_ALIASES=PLAYUSDT
-DISCORD_SYMBOL_SHORTCUTS_ENABLED=0
-DISCORD_MESSAGE_CONTENT_INTENT_ENABLED=0
-```
+DISCORD_ALLOWED_CHANNEL_ID=your_channel_id
+Automated Monitoring Runner
 
-Run `run_discord_convex_bot.bat`, then use `/convex` in Discord to pull the latest cached scan.
-Use `/convex_status` to check whether the dashboard has written a cache yet. `DISCORD_GUILD_ID`
-is recommended because guild slash commands sync almost immediately; global slash commands can take longer.
-Use `/coin PLAYUSDT` to pull one symbol's latest scan/live stats plus holder composition when a contract hint exists.
-The optional `DISCORD_SYMBOL_SLASH_ALIASES` list creates lowercase one-tap slash commands such as `/playusdt`
-without requiring privileged Discord intents.
-If you enable Discord Developer Portal -> Bot -> Privileged Gateway Intents -> Message Content Intent, the bot also
-accepts fast channel shortcuts like `/PLAYUSDT` or `!PLAYUSDT` in `DISCORD_ALLOWED_CHANNEL_ID` after you set both
-`DISCORD_SYMBOL_SHORTCUTS_ENABLED=1` and `DISCORD_MESSAGE_CONTENT_INTENT_ENABLED=1`.
+The watcher service supports scheduled rescanning and automatic reposting of newly detected candidates.
 
-For automatic no-click alerts, run `run_discord_convex_watcher.bat`. It scans on a timer and posts only newly appearing
-market-structure candidates through `DISCORD_WEBHOOK_URL`.
+Example configuration:
 
-```text
-DISCORD_WATCHER_SCAN_MODE=Deep
 DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
 DISCORD_WATCHER_TOP_N=25
 DISCORD_WATCHER_REALERT_HOURS=12
-DISCORD_HOLDER_COMPOSITION_ENABLED=1
-```
 
-The watcher stores state in `data/discord_convex_watcher_state.csv` so a coin already active in the scan is not reposted
-every scan.
+State persistence prevents repeated reposting of unchanged candidates.
 
-Discord alerts also try to attach a compact holder composition summary for every new scanner candidate:
+Holder Contract Resolution
 
-- contract resolution uses scan columns when present, then `data/discord_holder_contracts.csv`, then `DISCORD_HOLDER_CONTRACTS`
-- holder rows are pulled from Etherscan-family `generic-tokenholders2` pages and GoPlus token-security data, without API keys
-- summaries include top 1/5/10/observed concentration, holder count, total supply, whale/shark/dolphin/shrimp-style buckets, and a few top holders
-- failures are non-blocking, so a Convex alert still posts even if holder data is temporarily unavailable
+The repository includes tooling for maintaining local token contract mappings used by the scanner and Discord integrations.
 
-To bulk-fill the local contract hint spreadsheet without API keys, run:
+Bulk contract resolution utility:
 
-```powershell
 python .\scripts\build_discord_holder_contracts.py --limit 6000
-```
 
-This writes:
+Generated outputs include:
 
-- `data/discord_holder_contracts.csv` for the bot and watcher
-- `data/discord_holder_contracts_spreadsheet_safe.csv` for Google Sheets / Excel imports
-- `data/discord_holder_contracts_full.csv` as the expanded source/audit list
+data/discord_holder_contracts.csv
+data/discord_holder_contracts_spreadsheet_safe.csv
+data/discord_holder_contracts_full.csv
 
-When opening a contract CSV in Sheets or Excel, import `contract_address` as text or use the spreadsheet-safe CSV. If a cell has already become scientific notation, for example `6.91348E+46`, the real address has been destroyed and must be reloaded from the generated CSV.
+Manual overrides are also supported.
 
-To add manual contract hints, copy `discord_holder_contracts.example.csv` to `data/discord_holder_contracts.csv` and add rows:
+Example:
 
-```text
 symbol,chain,contract_address
-CHIPUSDT,arbitrum,0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e
-```
+CHIPUSDT,arbitrum,0x...
+Design Philosophy
 
-You can also use `.env` for quick one-line hints:
+The repository focuses on:
 
-```text
-DISCORD_HOLDER_CONTRACTS=CHIPUSDT:arbitrum:0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e
-DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS=100
-DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS=0
-```
+structural market analysis
+observable liquidity conditions
+float dynamics
+positioning asymmetry
+concentration-adjusted participation
+operational monitoring workflows
+
+The emphasis is on transparent research tooling, reproducible scans, and practical monitoring infrastructure rather than predictive claims or opaque signal generation.
+
+Technology Stack
+Python
+Streamlit
+SQLite
+Discord API
+Binance market data APIs
+Etherscan-family explorers
+GoPlus token-security integrations
+Local Setup
+
+Example environment variables:
+
+COINGECKO_API_KEY=
+ETHERSCAN_API_KEY=
+BSCSCAN_API_KEY=
+
+DISCORD_WEBHOOK_URL=
+DISCORD_BOT_TOKEN=
+DISCORD_GUILD_ID=
+DISCORD_ALLOWED_CHANNEL_ID=
+
+Launch the dashboard:
+
+streamlit run dashboard.py
+
+Run the Discord watcher:
+
+run_discord_convex_watcher.bat
+
+Run the Discord bot:
+
+run_discord_convex_bot.bat
