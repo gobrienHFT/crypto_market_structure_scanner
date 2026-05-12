@@ -69,6 +69,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return _env_value(name, fallback).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_csv(name: str, default: str = "") -> list[str]:
+    raw = _env_value(name, default)
+    return [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+
+
 def _now() -> pd.Timestamp:
     return pd.Timestamp.now(tz="UTC")
 
@@ -152,9 +157,17 @@ def _candidate_line(row: pd.Series) -> str:
     return build_discord_flag_card(row, holder_text=holder_text)
 
 
+def _ensure_alert_scores(frame: pd.DataFrame) -> pd.DataFrame:
+    scored = frame.copy()
+    if "terminal_edge_score" not in scored.columns:
+        scored = apply_terminal_model(scored)
+    if "timing_score" not in scored.columns or "timing_state" not in scored.columns:
+        scored = apply_timing_model(scored)
+    return scored
+
+
 def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[str], pd.DataFrame]:
-    candidates = apply_terminal_model(candidates)
-    candidates = apply_timing_model(candidates)
+    candidates = _ensure_alert_scores(candidates)
     cards: list[str] = []
     archive_rows: list[dict[str, Any]] = []
     for _, row in candidates.iterrows():
@@ -168,7 +181,50 @@ def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[st
     return cards, pd.DataFrame(archive_rows)
 
 
-def _scan_convex_longs(scan_mode: str) -> pd.DataFrame:
+def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: int) -> pd.DataFrame:
+    if all_df.empty:
+        return all_df.copy()
+    scored = _ensure_alert_scores(all_df)
+    source = alert_source.strip().lower().replace("-", "_")
+
+    if source in {"convex", "legacy_convex"}:
+        candidates = scored[scored.get("trade_bucket", pd.Series("", index=scored.index)).astype(str).eq("Convex Long")].copy()
+        if candidates.empty and "trade_bucket_score" in scored.columns:
+            candidates = scored.sort_values(["trade_bucket_score", "symbol"], ascending=[False, True]).head(top_n).copy()
+        return candidates.head(top_n)
+
+    if source == "terminal":
+        min_terminal = _env_float("DISCORD_WATCHER_MIN_TERMINAL_SCORE", 65.0, minimum=0.0)
+        candidates = scored[pd.to_numeric(scored.get("terminal_edge_score"), errors="coerce").fillna(0.0) >= min_terminal].copy()
+        return candidates.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(top_n)
+
+    if source == "timing":
+        min_timing = _env_float("DISCORD_WATCHER_MIN_TIMING_SCORE", 58.0, minimum=0.0)
+        excluded_states = {state.lower() for state in _env_csv("DISCORD_WATCHER_EXCLUDE_TIMING_STATES", "Extended / fragile,Dead / invalidating,No timing edge")}
+        candidates = scored[pd.to_numeric(scored.get("timing_score"), errors="coerce").fillna(0.0) >= min_timing].copy()
+        state_text = candidates.get("timing_state", pd.Series("", index=candidates.index)).astype(str).str.lower()
+        candidates = candidates[~state_text.isin(excluded_states)]
+        return candidates.sort_values(["timing_score", "terminal_edge_score", "symbol"], ascending=[False, False, True]).head(top_n)
+
+    min_terminal = _env_float("DISCORD_WATCHER_MIN_TERMINAL_SCORE", 60.0, minimum=0.0)
+    min_timing = _env_float("DISCORD_WATCHER_MIN_TIMING_SCORE", 55.0, minimum=0.0)
+    allowed_states = {state.lower() for state in _env_csv("DISCORD_WATCHER_ALLOWED_TIMING_STATES", "Coiling,Triggering,Confirmed")}
+    terminal_ok = pd.to_numeric(scored.get("terminal_edge_score"), errors="coerce").fillna(0.0) >= min_terminal
+    timing_ok = pd.to_numeric(scored.get("timing_score"), errors="coerce").fillna(0.0) >= min_timing
+    state_text = scored.get("timing_state", pd.Series("", index=scored.index)).astype(str).str.lower()
+    state_ok = state_text.isin(allowed_states)
+    candidates = scored[terminal_ok & timing_ok & state_ok].copy()
+    candidates["watcher_alert_score"] = (
+        pd.to_numeric(candidates.get("terminal_edge_score"), errors="coerce").fillna(0.0) * 0.52
+        + pd.to_numeric(candidates.get("timing_score"), errors="coerce").fillna(0.0) * 0.48
+    )
+    return candidates.sort_values(
+        ["watcher_alert_score", "timing_score", "terminal_edge_score", "symbol"],
+        ascending=[False, False, False, True],
+    ).head(top_n)
+
+
+def _scan_alert_candidates(scan_mode: str, *, alert_source: str, top_n: int) -> pd.DataFrame:
     os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
     print(f"{_iso_now()} starting {scan_mode} scan...")
     import app as scanner_app
@@ -176,11 +232,15 @@ def _scan_convex_longs(scan_mode: str) -> pd.DataFrame:
     scan_fn = getattr(scanner_app.run_scan, "__wrapped__", scanner_app.run_scan)
     _, all_df = scan_fn(int(time.time()), scan_mode)
     scanner_app._write_latest_convex_longs_cache(all_df, scan_mode=scan_mode)
-    candidates = scanner_app._discord_convex_candidates(all_df).copy()
+    if alert_source.strip().lower().replace("-", "_") in {"convex", "legacy_convex"}:
+        candidates = scanner_app._discord_convex_candidates(all_df).copy().head(top_n)
+    else:
+        candidates = _select_alert_candidates(all_df, alert_source=alert_source, top_n=top_n)
     if candidates.empty:
         return candidates
     candidates.insert(0, "scanned_at_utc", _iso_now())
     candidates.insert(1, "scan_mode", scan_mode)
+    candidates.insert(2, "watcher_alert_source", alert_source)
     return candidates
 
 
@@ -215,8 +275,10 @@ def _update_state(state: pd.DataFrame, candidates: pd.DataFrame, alerted: pd.Dat
     new_rows: list[dict[str, Any]] = []
     existing_symbols = set(state["symbol"].astype(str).str.upper())
     for symbol, row in by_symbol.items():
-        score = _safe_float(row.get("trade_bucket_score"))
+        score = _safe_float(row.get("watcher_alert_score")) or _safe_float(row.get("timing_score")) or _safe_float(row.get("terminal_edge_score")) or _safe_float(row.get("trade_bucket_score"))
         note = str(row.get("trade_bucket_note", "")).strip()[:300]
+        if not note:
+            note = str(row.get("timing_state", "") or row.get("terminal_setup_archetype", "")).strip()[:300]
         if symbol in existing_symbols:
             state.loc[state["symbol"] == symbol, ["active", "last_seen_at", "last_score", "last_note"]] = [
                 True,
@@ -246,7 +308,7 @@ def _update_state(state: pd.DataFrame, candidates: pd.DataFrame, alerted: pd.Dat
     return state.drop_duplicates(subset=["symbol"], keep="last")
 
 
-def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) -> pd.DataFrame:
+def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, alert_source: str, dry_run: bool) -> pd.DataFrame:
     if candidates.empty:
         return pd.DataFrame()
     webhook_url = _env_value("DISCORD_WEBHOOK_URL")
@@ -265,6 +327,7 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) ->
                 "color": 0x22C55E,
                 "fields": [
                     {"name": "Scan mode", "value": scan_mode, "inline": True},
+                    {"name": "Alert source", "value": alert_source, "inline": True},
                     {"name": "Detected", "value": _iso_now(), "inline": True},
                 ],
                 "footer": {"text": DISCORD_FOOTER},
@@ -281,13 +344,13 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) ->
     return archive_rows
 
 
-def run_once(*, scan_mode: str, top_n: int, realert_hours: float, dry_run: bool) -> tuple[int, int]:
+def run_once(*, scan_mode: str, top_n: int, realert_hours: float, dry_run: bool, alert_source: str) -> tuple[int, int]:
     state = _load_state()
-    candidates = _scan_convex_longs(scan_mode).head(top_n).copy()
+    candidates = _scan_alert_candidates(scan_mode, alert_source=alert_source, top_n=top_n).head(top_n).copy()
     new_candidates = _eligible_new_candidates(candidates, state, realert_hours=realert_hours)
     archived_rows = pd.DataFrame()
     if not new_candidates.empty:
-        archived_rows = _post_webhook(new_candidates, scan_mode=scan_mode, dry_run=dry_run)
+        archived_rows = _post_webhook(new_candidates, scan_mode=scan_mode, alert_source=alert_source, dry_run=dry_run)
     if dry_run:
         return len(candidates), len(new_candidates)
     if not archived_rows.empty:
@@ -307,6 +370,7 @@ def main() -> None:
     args = parser.parse_args()
 
     scan_mode = _env_value("DISCORD_WATCHER_SCAN_MODE", "Deep")
+    alert_source = _env_value("DISCORD_WATCHER_ALERT_SOURCE", "terminal_timing")
     interval_seconds = _env_int("DISCORD_WATCHER_SCAN_INTERVAL_SECONDS", 180, minimum=30)
     top_n = _env_int("DISCORD_WATCHER_TOP_N", 25, minimum=1)
     realert_hours = _env_float("DISCORD_WATCHER_REALERT_HOURS", 12.0, minimum=0.0)
@@ -314,12 +378,12 @@ def main() -> None:
     dry_run = args.dry_run or _env_value("DISCORD_WATCHER_DRY_RUN", "0").strip().lower() in {"1", "true", "yes", "on"}
 
     print(
-        f"Convex watcher started: mode={scan_mode}, interval={interval_seconds}s, top_n={top_n}, "
+        f"Convex watcher started: mode={scan_mode}, alert_source={alert_source}, interval={interval_seconds}s, top_n={top_n}, "
         f"realert_hours={realert_hours}, dry_run={dry_run}."
     )
     while True:
         try:
-            total, alerted = run_once(scan_mode=scan_mode, top_n=top_n, realert_hours=realert_hours, dry_run=dry_run)
+            total, alerted = run_once(scan_mode=scan_mode, top_n=top_n, realert_hours=realert_hours, dry_run=dry_run, alert_source=alert_source)
             print(f"{_iso_now()} scan complete: {total} market-structure candidates, {alerted} new alerts.")
         except Exception as exc:
             print(f"{_iso_now()} watcher error: {exc}. Retrying in {retry_seconds}s.")

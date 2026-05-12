@@ -264,11 +264,22 @@ Example configuration:
 
 ```text
 DISCORD_WATCHER_SCAN_MODE=Deep
+DISCORD_WATCHER_ALERT_SOURCE=terminal_timing
 DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
 DISCORD_WATCHER_TOP_N=25
 DISCORD_WATCHER_REALERT_HOURS=12
+DISCORD_WATCHER_MIN_TERMINAL_SCORE=60
+DISCORD_WATCHER_MIN_TIMING_SCORE=55
+DISCORD_WATCHER_ALLOWED_TIMING_STATES=Coiling,Triggering,Confirmed
 DISCORD_HOLDER_COMPOSITION_ENABLED=1
 ```
+
+`DISCORD_WATCHER_ALERT_SOURCE` controls what the automatic watcher posts:
+
+- `terminal_timing` requires both structural evidence and current timing quality.
+- `terminal` alerts from the structural evidence ranking only.
+- `timing` alerts from the timing ranking only.
+- `convex` keeps the older candidate-selection behavior.
 
 The watcher stores state locally so unchanged candidates are not reposted every scan:
 
