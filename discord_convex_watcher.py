@@ -19,6 +19,7 @@ from discord_flag_formatter import (
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from proof_engine import archive_alerts, refresh_outcomes
+from terminal_engine import apply_terminal_model
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -151,6 +152,7 @@ def _candidate_line(row: pd.Series) -> str:
 
 
 def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[str], pd.DataFrame]:
+    candidates = apply_terminal_model(candidates)
     cards: list[str] = []
     archive_rows: list[dict[str, Any]] = []
     for _, row in candidates.iterrows():

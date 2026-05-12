@@ -20,6 +20,7 @@ from discord_flag_formatter import (
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
+from terminal_engine import apply_terminal_model, build_setup_dossier
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -133,6 +134,8 @@ def _feature_required_tier(feature: str) -> str:
         "archive": "pro",
         "shortcut": "paid",
         "shorts": "free",
+        "terminal": "paid",
+        "dossier": "paid",
     }
     env_name = f"DISCORD_{feature.upper()}_MIN_TIER"
     return _normalize_tier(_env_value(env_name, defaults.get(feature, "paid")))
@@ -267,7 +270,7 @@ def _load_coin_scan_row(symbol: str) -> tuple[pd.Series | None, str]:
         return cache_row, "latest Convex cache"
     snapshot_row = _row_for_symbol(_latest_snapshot_frame(), symbol)
     if snapshot_row is not None:
-        return snapshot_row, "latest pre-pump snapshot"
+        return snapshot_row, "latest scanner snapshot"
     return None, ""
 
 
@@ -312,9 +315,10 @@ def _live_binance_row(symbol: str) -> tuple[pd.Series | None, str]:
 
 
 def _coin_stats_description(row: pd.Series, *, source: str) -> str:
+    enriched = apply_terminal_model(pd.DataFrame([row.to_dict()])).iloc[0]
     holder_text = _holder_composition_text(row)
     prefix = f"{DISCORD_PRODUCT_IDENTITY}\n\nScan source: {source}\n\n"
-    card = build_discord_flag_card(row, holder_text=holder_text, max_chars=DISCORD_EMBED_DESCRIPTION_LIMIT - len(prefix))
+    card = build_discord_flag_card(enriched, holder_text=holder_text, max_chars=DISCORD_EMBED_DESCRIPTION_LIMIT - len(prefix))
     return f"{prefix}{card}"
 
 
@@ -353,11 +357,46 @@ def _load_candidates(limit: int) -> tuple[str, str]:
 
     scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
     scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
+    frame = apply_terminal_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     title = f"Latest scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     return title, description
+
+
+def _load_terminal_list(limit: int) -> tuple[str, str]:
+    frame = _read_csv_if_exists(_cache_path())
+    if frame.empty:
+        frame = _latest_snapshot_frame()
+    if frame.empty:
+        return "Market-structure evidence terminal", "No scanner cache exists yet. Run a dashboard scan first."
+    frame = apply_terminal_model(frame)
+    frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
+    lines = [
+        (
+            f"{str(row.get('symbol', '')).upper()} | terminal {(_safe_float(row.get('terminal_edge_score')) or 0.0):.1f} | "
+            f"{row.get('terminal_setup_archetype', 'watchlist structure')} | shorts "
+            f"{(_safe_float(row.get('short_account_pct')) or 0.0):.1f}% | "
+            f"{row.get('terminal_liquidity_reality', 'liquidity check required')}"
+        )
+        for _, row in frame.iterrows()
+    ]
+    return "Market-structure evidence terminal", "```text\n" + "\n".join(lines)[:1850] + "\n```"
+
+
+def _load_dossier(symbol_query: str) -> tuple[str, str]:
+    symbol = _normalize_symbol_query(symbol_query)
+    if not symbol:
+        return "Setup dossier", "Use `/dossier symbol:PLAYUSDT`."
+    row, source = _load_coin_scan_row(symbol)
+    if row is None:
+        row, source = _live_binance_row(symbol)
+    if row is None:
+        return f"{symbol} dossier", "No latest scan row or live Binance futures symbol found yet."
+    enriched = apply_terminal_model(pd.DataFrame([row.to_dict()])).iloc[0]
+    text = build_setup_dossier(enriched)
+    return f"{symbol} dossier ({source})", text[:DISCORD_EMBED_DESCRIPTION_LIMIT]
 
 
 def _load_shorts_list() -> tuple[str, list[str]]:
@@ -587,6 +626,43 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    terminal_kwargs = {"name": "terminal", "description": "Show top market-structure evidence rows."}
+    if guild is not None:
+        terminal_kwargs["guild"] = guild
+
+    @tree.command(**terminal_kwargs)
+    async def terminal(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("terminal")):
+            await interaction.response.send_message(_access_denied_message("terminal"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(_load_terminal_list, _env_int("DISCORD_TERMINAL_TOP_N", 25, minimum=1))
+        embed = discord.Embed(title=title, description=description, color=0x8B5CF6)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    dossier_kwargs = {"name": "dossier", "description": "Show the market-structure evidence dossier for one symbol."}
+    if guild is not None:
+        dossier_kwargs["guild"] = guild
+
+    @tree.command(**dossier_kwargs)
+    @app_commands.describe(symbol="Symbol to inspect, for example PLAYUSDT or PLAY")
+    async def dossier(interaction: discord.Interaction, symbol: str) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("dossier")):
+            await interaction.response.send_message(_access_denied_message("dossier"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(_load_dossier, symbol)
+        embed = discord.Embed(title=title, description=description, color=0x8B5CF6)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
 
     coin_kwargs = {"name": "coin", "description": "Show latest scan/live stats for one futures symbol."}
     if guild is not None:

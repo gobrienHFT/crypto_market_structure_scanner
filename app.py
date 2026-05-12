@@ -38,6 +38,7 @@ from pnl import PnLDashboardResult, build_pnl_dashboard_data
 from proof_engine import archive_alerts
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
 from screener import ScreenerData, build_screener_data
+from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
@@ -1588,7 +1589,7 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
 
     def _precision_note(row: pd.Series) -> str:
         if bool(row.get("crime_excluded_major")):
-            return "Major/liquid tape excluded from the pre-pump precision radar."
+            return "Major/liquid tape excluded from the pre-ignition precision radar."
         factors: list[str] = []
         if _safe_float(row.get("pre_pump_compression_score")) >= 55.0:
             factors.append("compression")
@@ -1605,7 +1606,7 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
         if _safe_float(row.get("no_chase_penalty_score")) >= 60.0:
             factors.append("no-chase blocked")
         if not factors:
-            return "No high-precision pre-pump pattern in this scan."
+            return "No high-precision pre-ignition pattern in this scan."
         return " | ".join(factors[:6])
 
     def _setup_note(row: pd.Series) -> str:
@@ -1613,7 +1614,7 @@ def _apply_rave_lab_setup_scores(all_df: pd.DataFrame) -> pd.DataFrame:
             return "Major/liquid tape excluded from this controlled-float upside radar."
         factors: list[str] = []
         if _safe_float(row.get("pre_pump_precision_score")) >= 62.0:
-            factors.append("pre-pump precision")
+            factors.append("pre-ignition precision")
         if _safe_float(row.get("dormant_short_fuse_score")) >= 58.0:
             factors.append("low-vol short fuse")
         if _safe_float(row.get("centralized_ownership_score")) >= 55.0:
@@ -1853,7 +1854,7 @@ def _apply_pre_pump_scan_memory(all_df: pd.DataFrame) -> pd.DataFrame:
         if _safe_float(row.get("no_chase_penalty_score")) >= 60.0:
             factors.append("no-chase blocked")
         if not factors:
-            return "No high-precision pre-pump pattern in this scan."
+            return "No high-precision pre-ignition pattern in this scan."
         return " | ".join(factors[:6])
 
     all_df["pre_pump_precision_note"] = all_df.apply(_memory_note, axis=1)
@@ -2416,7 +2417,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         if pd.notna(row.get("valuation_trap_score")) and float(row["valuation_trap_score"]) >= 55.0:
             triggers.append("valuation trap")
         if bool(row.get("pre_pump_candidate_flag")):
-            triggers.append("pre-pump candidate")
+            triggers.append("pre-ignition candidate")
         if bool(row.get("convexity_prime_flag")):
             triggers.append("convexity prime")
         if bool(row.get("early_convexity_flag")):
@@ -3091,6 +3092,7 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "rave_lab_setup_note",
         "dormant_short_fuse_note",
         "pre_pump_precision_note",
+        *TERMINAL_SCORE_COLUMNS,
     ]
     cache_frame = _discord_convex_candidates(all_df).head(max(50, DISCORD_CONVEX_ALERT_TOP_N)).copy()
     if cache_frame.empty:
@@ -4554,6 +4556,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = apply_convexity_model(all_df)
     all_df = _apply_rave_lab_setup_scores(all_df)
     all_df = _apply_pre_pump_scan_memory(all_df)
+    all_df = apply_terminal_model(all_df)
     all_df = _score_trade_buckets(all_df)
     highs_df = all_df[(all_df["broke_high_90d"]) | (all_df["broke_high_180d"])].copy()
     highs_df = highs_df.sort_values(
@@ -4584,14 +4587,14 @@ def load_screener_cached(refresh_nonce: int) -> ScreenerData:
 
 def render_breakout_dashboard() -> None:
     st.title("Binance USDT Perp Breakout Dashboard")
-    st.caption("Single-click scan for 5D/20D/90D/180D highs and lows plus funding/carry, crowding, and crime-pump diagnostics.")
+    st.caption("Single-click scan for 5D/20D/90D/180D highs and lows plus funding/carry, crowding, and structural diagnostics.")
     scan_mode = st.radio(
         "Scan Mode",
         ("Fast", "Deep", "Full ATH"),
         horizontal=True,
         help=(
             "Fast scans the top crypto perps with Binance est funding and breakout data first. "
-            "Deep adds heavier crime-pump diagnostics. Full ATH also scans the wider non-major perp universe for 20x+ ATH runway, "
+            "Deep adds heavier market-structure diagnostics. Full ATH also scans the wider non-major perp universe for 20x+ ATH runway, "
             f"capped at {FULL_ATH_MAX_SYMBOLS_TO_SCAN} symbols and {FULL_ATH_EXTERNAL_SYMBOLS_TO_SCAN} external enrichments to avoid hammering public APIs."
         ),
         key="breakout_scan_mode",
@@ -4603,7 +4606,7 @@ def render_breakout_dashboard() -> None:
             "Running full ATH runway scan with throttled external enrichment..."
             if scan_mode == "Full ATH"
             else
-            "Running deep Binance scan with crime-pump diagnostics..."
+            "Running deep Binance scan with market-structure diagnostics..."
             if scan_mode == "Deep"
             else "Running fast Binance scan with breakout and est-funding data..."
         )
@@ -4638,17 +4641,17 @@ def render_breakout_dashboard() -> None:
                 help="24-hour quote volume used as a rough size/liquidity proxy.",
             ),
             "crime_microstructure_score": st.column_config.NumberColumn(
-                "Crime Micro",
+                "Microstructure",
                 format="%.1f",
-                help="Higher means thinner/smaller tape and therefore more plausible as a true crime-pump candidate.",
+                help="Higher means thinner/smaller tape and therefore more plausible as a structural squeeze candidate.",
             ),
             "crime_largecap_penalty_score": st.column_config.NumberColumn(
                 "Large-Cap Penalty",
                 format="%.1f",
-                help="Higher means the symbol behaves more like a major liquid tape and should rank lower in crime-pump views.",
+                help="Higher means the symbol behaves more like a major liquid tape and should rank lower in structure-radar views.",
             ),
             "crime_eligible": st.column_config.CheckboxColumn(
-                "Crime Eligible",
+                "Structure Eligible",
                 help="Only thinner/smaller names should make the crime tape. Large liquid majors are filtered out here.",
             ),
             "crime_mechanics_score": st.column_config.NumberColumn(
@@ -4713,7 +4716,7 @@ def render_breakout_dashboard() -> None:
                 help="Scores quiet 24h range and muted returns with a gentle volume/trade wake-up. Built for pre-breakout compression.",
             ),
             "pre_pump_short_fuse_score": st.column_config.NumberColumn(
-                "Pre-Pump Fuse",
+                "Pre-Ignition Fuse",
                 format="%.1f",
                 help="Pre-breakout score combining low volatility, dominant shorts, low float, and centralized ownership.",
             ),
@@ -4738,17 +4741,17 @@ def render_breakout_dashboard() -> None:
                 help="CHIP-style setup score: quiet tape, dominant shorts, owner/float concentration, small CEX-flow confirmation, and low late-stage heat.",
             ),
             "pre_pump_precision_score": st.column_config.NumberColumn(
-                "Pre-Pump Precision",
+                "Pre-Ignition Precision",
                 format="%.1f",
-                help="Highest-precision pre-pump score combining compression, short trap, silent OI, float/owner concentration, CEX lane wake-up, depth withdrawal, and no-chase filters.",
+                help="Highest-precision pre-ignition score combining compression, short trap, silent OI, float/owner concentration, CEX lane wake-up, depth withdrawal, and no-chase filters.",
             ),
             "pre_pump_precision_flag": st.column_config.CheckboxColumn(
                 "Precision Flag",
-                help="True when the pre-pump pattern clears compression, short-trap, float/ownership, and no-chase gates.",
+                help="True when the pre-ignition pattern clears compression, short-trap, float/ownership, and no-chase gates.",
             ),
             "pre_pump_precision_note": st.column_config.TextColumn(
                 "Precision Note",
-                help="Short explanation of the precision pre-pump pattern.",
+                help="Short explanation of the precision pre-ignition pattern.",
             ),
             "cex_lane_wakeup_score": st.column_config.NumberColumn(
                 "CEX Wake",
@@ -4845,7 +4848,7 @@ def render_breakout_dashboard() -> None:
                 help="Early-phase convexity score prioritizing controlled float, sponsored spot, expansion readiness, squeeze optionality, and runway while penalizing late-stage heat.",
             ),
             "pre_pump_candidate_flag": st.column_config.CheckboxColumn(
-                "Pre-Pump",
+                "Pre-Ignition",
                 help="True when the setup has sponsor/float/pre-ignition confluence but is not yet in chase-risk territory.",
             ),
             "early_convexity_flag": st.column_config.CheckboxColumn(
@@ -4981,7 +4984,7 @@ def render_breakout_dashboard() -> None:
                 help="How violently the move can fail if support fades: MM pull risk, upper wick, weak close, thin ask depth, sponsor mismatch, OTC inventory risk, and exhaustion.",
             ),
             "crime_pump_score_v2": st.column_config.NumberColumn(
-                "Crime Pump Score v2",
+                "Structure Score v2",
                 format="%.1f",
                 help="Lifecycle score: Float Trap 27%, Ignition 23%, Perp Pressure 22%, Venue Support 16%, Exit Fragility 12%, minus Large-Cap Stabilizer 20%.",
             ),
@@ -5214,12 +5217,12 @@ def render_breakout_dashboard() -> None:
             ),
             "crime_excluded_major": st.column_config.CheckboxColumn(
                 "Major Excluded",
-                help="True when the base asset is in the configured major-exclusion list for crime-pump scans.",
+                help="True when the base asset is in the configured major-exclusion list for structure scans.",
             ),
             "crime_seed_score": st.column_config.NumberColumn(
-                "Crime Seed",
+                "Structure Seed",
                 format="%.1f",
-                help="Pre-scan ranking score used to choose which non-major symbols receive the expensive crime diagnostics.",
+                help="Pre-scan ranking score used to choose which non-major symbols receive the expensive structure diagnostics.",
             ),
             "spot_external_quote_volume_24h": st.column_config.NumberColumn(
                 "Ext Spot Vol",
@@ -5534,7 +5537,7 @@ def render_breakout_dashboard() -> None:
             "oi_delta_pct": st.column_config.NumberColumn(
                 "OI Delta",
                 format="%.2f%%",
-                help="Change in open-interest notional value over the crime-pump period.",
+                help="Change in open-interest notional value over the structure scan period.",
             ),
             "oi_to_24h_volume_pct": st.column_config.NumberColumn(
                 "OI / 24H Vol",
@@ -5544,7 +5547,7 @@ def render_breakout_dashboard() -> None:
             "taker_buy_sell_ratio": st.column_config.NumberColumn(
                 "Taker B/S",
                 format="%.2f",
-                help="Aggressive buy volume divided by aggressive sell volume over the crime-pump period.",
+                help="Aggressive buy volume divided by aggressive sell volume over the structure scan period.",
             ),
             "taker_buy_share_pct": st.column_config.NumberColumn("Taker Buy %", format="%.1f%%"),
             "top_trader_position_ratio": st.column_config.NumberColumn(
@@ -5572,7 +5575,7 @@ def render_breakout_dashboard() -> None:
             "basis_rate_pct": st.column_config.NumberColumn(
                 "Basis Rate",
                 format="%.3f%%",
-                help="Perpetual basis rate over the selected crime-pump period.",
+                help="Perpetual basis rate over the selected structure scan period.",
             ),
             "basis_usdt": st.column_config.NumberColumn("Basis", format="%.4f"),
             "ask_depth_1pct_usdt": st.column_config.NumberColumn(
@@ -5587,7 +5590,7 @@ def render_breakout_dashboard() -> None:
             ),
             "crime_carry_stress_score": st.column_config.NumberColumn("Carry Stress", format="%.1f"),
             "crime_pump_score": st.column_config.NumberColumn(
-                "Crime Pump Score",
+                "Structure Score",
                 format="%.1f",
                 help="Composite stress score using 1H velocity, volume spike, OI expansion, carry/basis stress, taker aggression, crowd divergence, and book thinness.",
             ),
@@ -5601,6 +5604,25 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Later-stage blowoff score emphasizing wickiness, carry stress, crowding, OI fade, and leverage saturation.",
             ),
+            "terminal_edge_score": st.column_config.NumberColumn(
+                "Terminal Edge",
+                format="%.1f",
+                help="Evidence score combining float, shorts, ignition, runway, regime, liquidity reality, and late-stage risk.",
+            ),
+            "terminal_regime_score": st.column_config.NumberColumn("Regime", format="%.1f"),
+            "terminal_liquidity_score": st.column_config.NumberColumn("Liquidity Reality", format="%.1f"),
+            "terminal_float_score": st.column_config.NumberColumn("Float Evidence", format="%.1f"),
+            "terminal_short_pressure_score": st.column_config.NumberColumn("Short Evidence", format="%.1f"),
+            "terminal_ignition_score": st.column_config.NumberColumn("Ignition Evidence", format="%.1f"),
+            "terminal_runway_score": st.column_config.NumberColumn("Runway Evidence", format="%.1f"),
+            "terminal_risk_score": st.column_config.NumberColumn("Late Risk", format="%.1f"),
+            "terminal_market_regime": st.column_config.TextColumn("Market Regime"),
+            "terminal_liquidity_reality": st.column_config.TextColumn("Liquidity Reality"),
+            "terminal_setup_archetype": st.column_config.TextColumn("Archetype"),
+            "terminal_evidence_summary": st.column_config.TextColumn("Evidence Summary"),
+            "terminal_confirmation_needed": st.column_config.TextColumn("Confirmation Needed"),
+            "terminal_invalidation_map": st.column_config.TextColumn("Invalidation Map"),
+            "terminal_case_study_key": st.column_config.TextColumn("Case Study Key"),
         }
         scan_mode_label = str(scan_mode)
         if scan_mode_label == "Full ATH":
@@ -5653,14 +5675,14 @@ def render_breakout_dashboard() -> None:
         d4.metric("180D low breaks", int(all_df["broke_low_180d"].sum()) if not all_df.empty else 0)
 
         e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Crime candidates", int(all_df["crime_pump_flag"].sum()) if not all_df.empty else 0)
+        e1.metric("Structure candidates", int(all_df["crime_pump_flag"].sum()) if not all_df.empty else 0)
         e2.metric("Ignition setups", int(all_df["ignition_setup_flag"].sum()) if not all_df.empty else 0)
         e3.metric("Exhaustion flags", int(all_df["exhaustion_flag"].sum()) if not all_df.empty else 0)
         median_pump_score = float(all_df["crime_pump_score"].median()) if not all_df.empty else 0.0
-        e4.metric("Median pump score", f"{median_pump_score:.1f}")
+        e4.metric("Median structure score", f"{median_pump_score:.1f}")
 
         f1, f2, f3, f4 = st.columns(4)
-        f1.metric("Pre-pump", int(all_df["pre_pump_candidate_flag"].sum()) if not all_df.empty else 0)
+        f1.metric("Pre-ignition", int(all_df["pre_pump_candidate_flag"].sum()) if not all_df.empty else 0)
         f2.metric("Convex prime", int(all_df["convexity_prime_flag"].sum()) if not all_df.empty else 0)
         f3.metric("Chase risk", int(all_df["convexity_chase_risk_flag"].sum()) if not all_df.empty else 0)
         median_convexity = float(all_df["convexity_entry_score"].median()) if not all_df.empty else 0.0
@@ -5868,7 +5890,8 @@ def render_breakout_dashboard() -> None:
                 "Carry / Funding",
                 "Funding Flipped // Short Squeeze",
                 "20x ATH Runway",
-                "Crime Pump",
+                "Structure Radar",
+                "Terminal Evidence",
                 "Short Account Moves",
                 "RAVE/LAB Radar",
             ]
@@ -6354,9 +6377,9 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[7]:
             if scan_mode == "Fast":
-                st.info("Fast mode skips the heavier crime-pump fetches for speed. Switch to Deep scan for the full crime diagnostics.")
+                st.info("Fast mode skips the heavier structure fetches for speed. Switch to Deep scan for the full structural diagnostics.")
             st.caption(
-                "Crime Pump flags try to catch the nastier perp squeezes: fast upside velocity, big 1H and 24H momentum, "
+                "Structure-radar flags try to catch unusual perp squeezes: fast upside velocity, big 1H and 24H momentum, "
                 "trade-count expansion, rising OI, aggressive taker buys, positive carry/basis, crowd-longing ahead of top traders, "
                 "a thin ask book, external spot support, Coinbase spot liquidity-sponsor diagnostics, manual MM/social-graph confluence, and float/holder concentration proxies. "
                 "Majors are excluded from this tab by default. "
@@ -6683,7 +6706,7 @@ def render_breakout_dashboard() -> None:
                 "distance_to_high_20d_pct",
                 "distance_to_high_90d_pct",
             ]
-            st.markdown("#### Crime Pump Convexity")
+            st.markdown("#### Market-Structure Convexity")
             st.caption(
                 "These are the same triage buckets, but now with explicit early-convexity ranking. Convex Long should be the names "
                 "that still have real asymmetry left if the sponsor flow persists, not just whatever is already obviously ripping."
@@ -6713,13 +6736,13 @@ def render_breakout_dashboard() -> None:
             ].copy()
             crime_view_df = candidate_view_df.copy()
             radar_1, radar_2, radar_3, radar_4, radar_5 = st.columns(5)
-            radar_1.metric("Pre-pump candidates", int(all_df["pre_pump_candidate_flag"].sum()) if not all_df.empty else 0)
+            radar_1.metric("Pre-ignition candidates", int(all_df["pre_pump_candidate_flag"].sum()) if not all_df.empty else 0)
             radar_2.metric("Convex prime", int(all_df["convexity_prime_flag"].sum()) if not all_df.empty else 0)
             radar_3.metric("Squeeze machines", int(all_df["squeeze_machine_flag"].sum()) if not all_df.empty else 0)
             radar_4.metric("Chase risk", int(all_df["convexity_chase_risk_flag"].sum()) if not all_df.empty else 0)
             radar_5.metric("Median entry score", f"{float(candidate_view_df['convexity_entry_score'].median()) if not candidate_view_df.empty else 0.0:.1f}")
 
-            st.markdown("#### Pre-Pump Radar")
+            st.markdown("#### Pre-Ignition Radar")
             top_convexity_df = candidate_view_df.sort_values(
                 [
                     "pre_pump_candidate_flag",
@@ -6743,7 +6766,7 @@ def render_breakout_dashboard() -> None:
                 ascending=[False] * 16 + [True],
             )
             if top_convexity_df.empty:
-                st.info("No symbols are showing strong pre-pump convexity right now.")
+                st.info("No symbols are showing strong pre-ignition convexity right now.")
             else:
                 st.dataframe(
                     _display_frame(top_convexity_df.head(20), crime_bucket_cols),
@@ -6752,7 +6775,7 @@ def render_breakout_dashboard() -> None:
                     column_config=breakout_column_config,
                 )
 
-            st.markdown("#### Crime Pump Buckets")
+            st.markdown("#### Structure Buckets")
             crime_convex_df = crime_view_df[crime_view_df["trade_bucket"] == "Convex Long"].sort_values(
                 [
                     "pre_pump_candidate_flag",
@@ -6796,7 +6819,7 @@ def render_breakout_dashboard() -> None:
 
             crime_convex_col.subheader("Convex Long")
             if crime_convex_df.empty:
-                crime_convex_col.info("No cleaner convex-long crime candidates in this scan.")
+                crime_convex_col.info("No cleaner convex-long structure candidates in this scan.")
             else:
                 crime_convex_col.dataframe(
                     _display_frame(crime_convex_df, crime_bucket_cols),
@@ -6807,7 +6830,7 @@ def render_breakout_dashboard() -> None:
 
             crime_scalp_col.subheader("Scalp Only")
             if crime_scalp_df.empty:
-                crime_scalp_col.info("No scalp-only crime names right now.")
+                crime_scalp_col.info("No scalp-only structure names right now.")
             else:
                 crime_scalp_col.dataframe(
                     _display_frame(crime_scalp_df, crime_bucket_cols),
@@ -6818,7 +6841,7 @@ def render_breakout_dashboard() -> None:
 
             crime_avoid_col.subheader("Avoid")
             if crime_avoid_df.empty:
-                crime_avoid_col.info("No late / toxic crime names are currently flagged.")
+                crime_avoid_col.info("No late / fragile structure names are currently flagged.")
             else:
                 crime_avoid_col.dataframe(
                     _display_frame(crime_avoid_df, crime_bucket_cols),
@@ -6827,7 +6850,7 @@ def render_breakout_dashboard() -> None:
                     column_config=breakout_column_config,
                 )
 
-            st.markdown("#### Ranked Crime Tape")
+            st.markdown("#### Ranked Structure Tape")
             ranked_crime_df = crime_view_df.sort_values(
                 [
                     "active_squeeze_flag",
@@ -6879,7 +6902,7 @@ def render_breakout_dashboard() -> None:
                 ],
             )
             if ranked_crime_df.empty:
-                st.info("No symbols are currently crossing the pre-pump / crime-structure filters after excluding majors.")
+                st.info("No symbols are currently crossing the pre-ignition / structure filters after excluding majors.")
             else:
                 st.dataframe(
                     _display_frame(ranked_crime_df.head(30), crime_cols),
@@ -6906,9 +6929,9 @@ def render_breakout_dashboard() -> None:
                 | ranked_crime_df["squeeze_risk_flag"]
                 | ranked_crime_df["blowoff_risk_flag"]
             ]
-            with st.expander("Show flagged crime-pump candidates only"):
+            with st.expander("Show flagged structure candidates only"):
                 if flagged_crime_df.empty:
-                    st.info("No symbols are crossing the current crime-pump, ignition, exhaustion, or squeeze/blowoff thresholds.")
+                    st.info("No symbols are crossing the current structure, ignition, exhaustion, or squeeze/blowoff thresholds.")
                 else:
                     st.dataframe(
                         _display_frame(flagged_crime_df, crime_cols),
@@ -6918,6 +6941,110 @@ def render_breakout_dashboard() -> None:
                     )
 
         with screener_tabs[8]:
+            st.caption(
+                "A terminal-style evidence view: score every perp by float structure, short pressure, ignition, runway, "
+                "liquidity reality, market regime, and late-stage risk. This is research tooling, not trade instruction."
+            )
+            terminal_cols = [
+                "symbol",
+                "base_asset",
+                "trade_bucket",
+                "trade_bucket_score",
+                "terminal_edge_score",
+                "terminal_setup_archetype",
+                "terminal_market_regime",
+                "terminal_liquidity_reality",
+                "terminal_evidence_summary",
+                "terminal_confirmation_needed",
+                "terminal_invalidation_map",
+                "terminal_float_score",
+                "terminal_short_pressure_score",
+                "terminal_ignition_score",
+                "terminal_runway_score",
+                "terminal_liquidity_score",
+                "terminal_regime_score",
+                "terminal_risk_score",
+                "pre_pump_precision_score",
+                "dormant_short_fuse_score",
+                "rave_lab_setup_score",
+                "convexity_entry_score",
+                "clean_convex_setup_score",
+                "forced_buying_setup_score",
+                "short_account_pct",
+                "short_account_change_max_pct",
+                "long_account_pct",
+                "oi_delta_pct",
+                "oi_value_usdt",
+                "daily_quote_volume_multiple",
+                "hour_volume_multiple",
+                "hour_trade_count_multiple",
+                "day_return_pct",
+                "range_24h_pct",
+                "top10_holder_pct",
+                "insider_team_holder_pct",
+                "low_float_score",
+                "centralized_ownership_score",
+                "fdv_to_market_cap",
+                "locked_supply_pct",
+                "target_cex_flow_score",
+                "cex_to_dex_volume_ratio",
+                "ask_depth_1pct_usdt",
+                "ask_depth_to_24h_volume_pct",
+                "ath_multiple",
+                "convexity_late_penalty",
+                "no_chase_penalty_score",
+                "terminal_case_study_key",
+            ]
+            terminal_df = all_df.copy().sort_values(
+                [
+                    "terminal_edge_score",
+                    "pre_pump_precision_flag",
+                    "dormant_short_fuse_flag",
+                    "terminal_short_pressure_score",
+                    "terminal_float_score",
+                    "terminal_ignition_score",
+                    "terminal_risk_score",
+                    "symbol",
+                ],
+                ascending=[False, False, False, False, False, False, True, True],
+            )
+            t1, t2, t3, t4 = st.columns(4)
+            t1.metric("Top terminal score", f"{float(pd.to_numeric(terminal_df['terminal_edge_score'], errors='coerce').max()):.1f}" if not terminal_df.empty else "n/a")
+            t2.metric("Score 75+", int((pd.to_numeric(terminal_df["terminal_edge_score"], errors="coerce").fillna(0) >= 75).sum()) if not terminal_df.empty else 0)
+            t3.metric("Low-vol short fuse", int(terminal_df.get("dormant_short_fuse_flag", pd.Series(False, index=terminal_df.index)).fillna(False).astype(bool).sum()) if not terminal_df.empty else 0)
+            t4.metric("Precision flags", int(terminal_df.get("pre_pump_precision_flag", pd.Series(False, index=terminal_df.index)).fillna(False).astype(bool).sum()) if not terminal_df.empty else 0)
+
+            st.subheader("Market-Structure Evidence Terminal")
+            if terminal_df.empty:
+                st.info("No terminal evidence rows are available yet.")
+            else:
+                st.dataframe(
+                    _display_frame(terminal_df.head(60), terminal_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+                selected_symbol = st.selectbox(
+                    "Open setup dossier",
+                    terminal_df["symbol"].astype(str).head(60).tolist(),
+                    key="terminal_dossier_symbol",
+                )
+                selected_row = terminal_df[terminal_df["symbol"].astype(str) == selected_symbol].head(1)
+                if not selected_row.empty:
+                    st.markdown(build_setup_dossier(selected_row.iloc[0]))
+
+            with st.expander("Show full terminal table"):
+                if terminal_df.empty:
+                    st.info("No terminal rows to show.")
+                else:
+                    st.dataframe(
+                        _display_frame(terminal_df, terminal_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[9]:
             st.caption(
                 "Ranks the biggest changes in Binance global short-account share by symbol. "
                 f"Period: {LONG_SHORT_RATIO_PERIOD}; windows: {', '.join(f'{window}p' for window in SHORT_ACCOUNT_CHANGE_WINDOWS)}; "
@@ -7069,7 +7196,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[9]:
+        with screener_tabs[10]:
             st.caption(
                 "Ranks RAVE/LAB-style controlled-float upside structures by combining centralized holder/insider proxies, "
                 "low-float and FDV gap, rising short-account share, target CEX-flow proxies for Binance/Bitget/Gate/OKX, "
@@ -7225,13 +7352,13 @@ def render_breakout_dashboard() -> None:
             r3.metric("Precision flags", int(radar_df.get("pre_pump_precision_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
             r4.metric("Watchlist", int(radar_df.get("rave_lab_watch_flag", pd.Series(False, index=radar_df.index)).fillna(False).astype(bool).sum()))
 
-            st.subheader("High-Precision Pre-Pump Radar")
+            st.subheader("High-Precision Pre-Ignition Radar")
             st.caption(
                 "This is the strictest view: compression + short trap + silent OI + low-float/owner pressure, "
                 "with CEX/depth scan memory and a no-chase gate."
             )
             if precision_df.empty:
-                st.info("No high-precision pre-pump rows currently clear the filter.")
+                st.info("No high-precision pre-ignition rows currently clear the filter.")
             else:
                 st.dataframe(
                     _display_frame(precision_df.head(35), rave_lab_cols),
@@ -7242,7 +7369,7 @@ def render_breakout_dashboard() -> None:
 
             st.subheader("Low-Vol Short Fuse")
             st.caption(
-                "CHIP-style pre-pump radar: quiet 24h range, muted returns, shorts already dominant or building, "
+                "CHIP-style pre-ignition radar: quiet 24h range, muted returns, shorts already dominant or building, "
                 "and enough owner/float concentration to make the float structurally fragile."
             )
             if dormant_short_fuse_df.empty:
@@ -7302,7 +7429,7 @@ def render_breakout_dashboard() -> None:
 
             st.subheader("Forward Label Tracker")
             st.caption(
-                "Every scan appends a lightweight snapshot. This panel labels prior top-10 pre-pump candidates by "
+                "Every scan appends a lightweight snapshot. This panel labels prior top-10 pre-ignition candidates by "
                 "the best later price observed inside each horizon, so we can tune for precision instead of guessing."
             )
             history = _read_pre_pump_snapshot_history()
@@ -7467,7 +7594,7 @@ def render_breakout_dashboard() -> None:
             )
     else:
         st.markdown(
-            '<div class="card">Click <b>Scan now</b> to fetch Binance data once and show 5D/20D/90D/180D breakouts plus live carry, modeled next funding, crowding, and the new crime-pump tab.</div>',
+            '<div class="card">Click <b>Scan now</b> to fetch Binance data once and show 5D/20D/90D/180D breakouts plus live carry, modeled next funding, crowding, and the structure-radar tabs.</div>',
             unsafe_allow_html=True,
         )
 
@@ -7849,7 +7976,7 @@ def _render_concentration_result(result: Any) -> None:
     with tabs[0]:
         mission_cols = st.columns(4)
         mission_cols[0].metric("Controlled-Float Squeeze", f"{result.master_score.controlled_float_squeeze_score:.1f}")
-        mission_cols[1].metric("Pre-Pump Risk", f"{result.master_score.pre_pump_risk_score:.1f}")
+        mission_cols[1].metric("Pre-Ignition Risk", f"{result.master_score.pre_pump_risk_score:.1f}")
         mission_cols[2].metric("Insider/Whale Concentration", f"{result.master_score.insider_whale_concentration_score:.1f}")
         mission_cols[3].metric("Futures / Spot", f"{result.perp_context.futures_to_spot_volume_ratio:.2f}x" if result.perp_context.futures_to_spot_volume_ratio is not None else "n/a")
         st.write("Ranked reasons")
