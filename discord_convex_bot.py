@@ -185,6 +185,10 @@ def _snapshot_path() -> Path:
     return Path(_env_value("DISCORD_PRE_PUMP_SNAPSHOT_PATH", str(APP_DIR / "data" / "pre_pump_scan_snapshots.csv")))
 
 
+def _shorts_cache_path() -> Path:
+    return Path(_env_value("DISCORD_SHORTS_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_majority.csv")))
+
+
 def _normalize_symbol_query(raw_symbol: str) -> str:
     match = SYMBOL_QUERY_RE.fullmatch(str(raw_symbol or "").strip())
     if not match:
@@ -357,31 +361,118 @@ def _load_candidates(limit: int) -> tuple[str, str]:
 
 
 def _load_shorts_list() -> tuple[str, list[str]]:
+    live_frame, live_error = _load_live_shorts_frame()
+    if not live_frame.empty:
+        return _format_shorts_frame(live_frame, source="live Binance account-ratio scan")
+    if live_error:
+        cache_title, cache_chunks = _load_cached_shorts_list(f"Live scan unavailable: {live_error}")
+        return cache_title, cache_chunks
+    return _load_cached_shorts_list("")
+
+
+def _load_live_shorts_frame() -> tuple[pd.DataFrame, str]:
+    cache_path = _shorts_cache_path()
+    ttl_seconds = _env_int("DISCORD_SHORTS_CACHE_TTL_SECONDS", 120, minimum=0)
+    if ttl_seconds > 0 and cache_path.exists() and time.time() - cache_path.stat().st_mtime <= ttl_seconds:
+        try:
+            cached = pd.read_csv(cache_path)
+            if not cached.empty:
+                return cached, ""
+        except Exception:
+            pass
+
+    try:
+        client = BinanceFuturesPublic(
+            timeout=_env_int("DISCORD_SHORTS_BINANCE_TIMEOUT_SECONDS", 10, minimum=3),
+            requests_per_second=float(_env_value("DISCORD_SHORTS_REQUESTS_PER_SECOND", "8")),
+            retries=_env_int("DISCORD_SHORTS_BINANCE_RETRIES", 2, minimum=1),
+        )
+        symbols = [item.symbol for item in client.perpetual_usdt_symbols() if item.symbol]
+    except Exception as exc:
+        return pd.DataFrame(), str(exc)
+
+    max_symbols = _env_int("DISCORD_SHORTS_MAX_SYMBOLS", 0, minimum=0)
+    if max_symbols > 0:
+        symbols = symbols[:max_symbols]
+    period = _env_value("DISCORD_SHORTS_RATIO_PERIOD", "5m")
+    rows: list[dict[str, Any]] = []
+    errors = 0
+    for symbol in symbols:
+        try:
+            ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=1)
+        except Exception:
+            errors += 1
+            continue
+        if not ratio_rows:
+            continue
+        latest = ratio_rows[-1]
+        long_pct = _safe_float(latest.get("longAccount"))
+        short_pct = _safe_float(latest.get("shortAccount"))
+        ratio = _safe_float(latest.get("longShortRatio"))
+        if long_pct is not None and abs(long_pct) <= 1.0:
+            long_pct *= 100.0
+        if short_pct is not None and abs(short_pct) <= 1.0:
+            short_pct *= 100.0
+        if short_pct is None:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "short_account_pct": short_pct,
+                "long_account_pct": long_pct,
+                "long_short_account_ratio": ratio,
+                "scan_mode": f"live {period}",
+                "scanned_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            }
+        )
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame, f"no live account-ratio rows returned ({errors} symbol errors)"
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(cache_path, index=False)
+    except Exception:
+        pass
+    return frame, ""
+
+
+def _load_cached_shorts_list(prefix: str = "") -> tuple[str, list[str]]:
     path = _cache_path()
     if not path.exists():
-        return "Short-account majority list", [f"No scanner cache yet: `{path}`"]
+        message = f"No scanner cache yet: `{path}`"
+        return "Short-account majority list", [f"{prefix}\n{message}".strip()]
     try:
         frame = pd.read_csv(path)
     except Exception as exc:
-        return "Short-account majority list", [f"Could not read scanner cache: `{exc}`"]
+        return "Short-account majority list", [f"{prefix}\nCould not read scanner cache: `{exc}`".strip()]
     if frame.empty or "short_account_pct" not in frame.columns:
-        return "Short-account majority list", ["No short-account percentage data exists in the latest cache."]
+        return "Short-account majority list", [f"{prefix}\nNo short-account percentage data exists in the latest cache.".strip()]
+    return _format_shorts_frame(frame, source="latest scanner cache", prefix=prefix)
 
+
+def _format_shorts_frame(frame: pd.DataFrame, *, source: str, prefix: str = "") -> tuple[str, list[str]]:
     frame = frame.copy()
     frame["short_account_pct"] = pd.to_numeric(frame["short_account_pct"], errors="coerce")
     matches = frame[frame["short_account_pct"].gt(50.0)].copy()
     if matches.empty:
-        return "Short-account majority list", ["No tokens in the latest cache have more than 50% of accounts short."]
+        return "Short-account majority list", [f"{prefix}\nNo tokens have more than 50% of accounts short in {source}.".strip()]
     matches["symbol"] = matches["symbol"].astype(str).str.upper().str.strip()
     matches = matches[matches["symbol"].ne("")].drop_duplicates(subset=["symbol"], keep="first")
     matches = matches.sort_values(["short_account_pct", "symbol"], ascending=[False, True])
     scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
     scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
-    symbols = matches["symbol"].tolist()
+    include_pct = _env_bool("DISCORD_SHORTS_INCLUDE_PCT", False)
+    symbols = [
+        f"{row.symbol} {float(row.short_account_pct):.1f}%" if include_pct else str(row.symbol)
+        for row in matches[["symbol", "short_account_pct"]].itertuples(index=False)
+    ]
     header = (
         f"Short-account majority tokens ({len(symbols)})\n"
-        f"Threshold: >50% accounts short | Scan: {scan_mode} | Cache: {scanned_at}\n\n"
+        f"Threshold: >50% accounts short | Source: {source} | Scan: {scan_mode} | Updated: {scanned_at}\n\n"
     )
+    if prefix:
+        header = f"{prefix}\n\n{header}"
     chunks: list[str] = []
     current = header
     for symbol in symbols:

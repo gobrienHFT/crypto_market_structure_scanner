@@ -70,6 +70,7 @@ def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch)
         ]
     ).to_csv(cache, index=False)
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_load_live_shorts_frame", lambda: (pd.DataFrame(), "live unavailable"))
 
     title, chunks = bot._load_shorts_list()
     output = "\n".join(chunks)
@@ -78,6 +79,23 @@ def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch)
     assert "CCCUSDT" in output
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
+
+
+def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
+    live = pd.DataFrame(
+        [
+            {"symbol": "PLAYUSDT", "short_account_pct": 52.3, "scan_mode": "live 5m", "scanned_at_utc": "now"},
+            {"symbol": "RAVEUSDT", "short_account_pct": 49.0, "scan_mode": "live 5m", "scanned_at_utc": "now"},
+        ]
+    )
+    monkeypatch.setattr(bot, "_load_live_shorts_frame", lambda: (live, ""))
+
+    _, chunks = bot._load_shorts_list()
+    output = "\n".join(chunks)
+
+    assert "Source: live Binance account-ratio scan" in output
+    assert "PLAYUSDT" in output
+    assert "RAVEUSDT" not in output
 
 
 def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypatch) -> None:
