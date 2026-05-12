@@ -7,6 +7,7 @@ from discord_flag_formatter import (
     infer_perp_positioning,
     infer_risk_level,
     join_discord_flag_cards,
+    sanitize_discord_language,
 )
 
 
@@ -116,3 +117,15 @@ def test_joined_cards_begin_with_all_candidate_names_when_details_truncate() -> 
     assert "detailed commentary" in joined
     assert "see Candidates line above" in joined
     assert len(joined) <= 900
+
+
+def test_language_sanitizer_rewrites_trade_call_terms() -> None:
+    dirty = "pump call with buy signal and worth holding longer because taker buyers appeared"
+
+    clean = sanitize_discord_language(dirty)
+
+    assert "pump call" not in clean.lower()
+    assert "buy signal" not in clean.lower()
+    assert "worth holding longer" not in clean.lower()
+    assert "buyers" not in clean.lower()
+    assert "market-structure flag" in clean

@@ -18,6 +18,7 @@ from discord_flag_formatter import (
     join_discord_flag_cards,
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
+from proof_engine import archive_alerts, refresh_outcomes
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -149,6 +150,20 @@ def _candidate_line(row: pd.Series) -> str:
     return build_discord_flag_card(row, holder_text=holder_text)
 
 
+def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[str], pd.DataFrame]:
+    cards: list[str] = []
+    archive_rows: list[dict[str, Any]] = []
+    for _, row in candidates.iterrows():
+        holder_text = _holder_composition_text(row)
+        card = build_discord_flag_card(row, holder_text=holder_text)
+        cards.append(card)
+        record = row.to_dict()
+        record["_holder_text"] = holder_text
+        record["_raw_bot_output"] = card
+        archive_rows.append(record)
+    return cards, pd.DataFrame(archive_rows)
+
+
 def _scan_convex_longs(scan_mode: str) -> pd.DataFrame:
     os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
     print(f"{_iso_now()} starting {scan_mode} scan...")
@@ -227,14 +242,14 @@ def _update_state(state: pd.DataFrame, candidates: pd.DataFrame, alerted: pd.Dat
     return state.drop_duplicates(subset=["symbol"], keep="last")
 
 
-def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) -> None:
+def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) -> pd.DataFrame:
     if candidates.empty:
-        return
+        return pd.DataFrame()
     webhook_url = _env_value("DISCORD_WEBHOOK_URL")
     if not webhook_url and not dry_run:
         raise RuntimeError("DISCORD_WEBHOOK_URL is not set.")
 
-    lines = [_candidate_line(row) for _, row in candidates.iterrows()]
+    lines, archive_rows = _candidate_cards_and_archive_rows(candidates)
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     payload = {
@@ -255,20 +270,26 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, dry_run: bool) ->
     if dry_run:
         print("DRY RUN webhook payload:")
         print(payload)
-        return
+        return archive_rows
     response = requests.post(webhook_url, json=payload, timeout=15)
     if response.status_code >= 300:
         raise RuntimeError(f"Discord webhook HTTP {response.status_code}: {response.text[:250]}")
+    return archive_rows
 
 
 def run_once(*, scan_mode: str, top_n: int, realert_hours: float, dry_run: bool) -> tuple[int, int]:
     state = _load_state()
     candidates = _scan_convex_longs(scan_mode).head(top_n).copy()
     new_candidates = _eligible_new_candidates(candidates, state, realert_hours=realert_hours)
+    archived_rows = pd.DataFrame()
     if not new_candidates.empty:
-        _post_webhook(new_candidates, scan_mode=scan_mode, dry_run=dry_run)
+        archived_rows = _post_webhook(new_candidates, scan_mode=scan_mode, dry_run=dry_run)
     if dry_run:
         return len(candidates), len(new_candidates)
+    if not archived_rows.empty:
+        archive_alerts(archived_rows, scan_mode=scan_mode)
+    if _env_bool("DISCORD_PROOF_REFRESH_ENABLED", True):
+        refresh_outcomes(max_rows=_env_int("DISCORD_PROOF_REFRESH_MAX_ROWS", 12, minimum=1))
     updated_state = _update_state(state, candidates, new_candidates if not dry_run else pd.DataFrame())
     _save_state(updated_state)
     return len(candidates), len(new_candidates)

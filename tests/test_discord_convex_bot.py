@@ -38,6 +38,48 @@ def test_message_content_intent_requires_explicit_opt_in(monkeypatch) -> None:
     assert not bot._env_bool("DISCORD_MESSAGE_CONTENT_INTENT_ENABLED", False)
 
 
+def test_discord_access_tier_resolves_from_roles_and_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_DEFAULT_USER_TIER", "free")
+    monkeypatch.setenv("DISCORD_PAID_ROLE_IDS", "111,222")
+    monkeypatch.setenv("DISCORD_PRO_ROLE_IDS", "333")
+
+    assert bot._tier_for_role_ids(set()) == "free"
+    assert bot._tier_for_role_ids({222}) == "paid"
+    assert bot._tier_for_role_ids({333}) == "pro"
+    assert bot._tier_allows("paid", "free")
+    assert bot._tier_allows("pro", "paid")
+    assert not bot._tier_allows("free", "paid")
+
+
+def test_feature_tier_defaults_keep_existing_server_permissive(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_DEFAULT_USER_TIER", raising=False)
+    monkeypatch.delenv("DISCORD_COIN_MIN_TIER", raising=False)
+
+    assert bot._tier_for_role_ids(set()) == "pro"
+    assert bot._feature_required_tier("coin") == "paid"
+    assert bot._tier_allows(bot._tier_for_role_ids(set()), bot._feature_required_tier("coin"))
+
+
+def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "latest.csv"
+    pd.DataFrame(
+        [
+            {"symbol": "AAAUSDT", "short_account_pct": 49.9, "scan_mode": "Deep", "scanned_at_utc": "2026-01-01T00:00:00Z"},
+            {"symbol": "BBBUSDT", "short_account_pct": 50.1, "scan_mode": "Deep", "scanned_at_utc": "2026-01-01T00:00:00Z"},
+            {"symbol": "CCCUSDT", "short_account_pct": 72.5, "scan_mode": "Deep", "scanned_at_utc": "2026-01-01T00:00:00Z"},
+        ]
+    ).to_csv(cache, index=False)
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+
+    title, chunks = bot._load_shorts_list()
+    output = "\n".join(chunks)
+
+    assert title == "Short-account majority list"
+    assert "CCCUSDT" in output
+    assert "BBBUSDT" in output
+    assert "AAAUSDT" not in output
+
+
 def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_HOLDER_COMPOSITION_ENABLED", "0")
     row = pd.Series(

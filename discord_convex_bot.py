@@ -19,10 +19,12 @@ from discord_flag_formatter import (
     join_discord_flag_cards,
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
+from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 
 
 APP_DIR = Path(__file__).resolve().parent
 SYMBOL_QUERY_RE = re.compile(r"^[!/]?\$?([A-Za-z0-9]{2,30})$")
+ACCESS_LEVELS = {"free": 0, "paid": 1, "pro": 2}
 
 if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -60,6 +62,15 @@ def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
     return parsed
 
 
+def _env_csv_ints(name: str) -> set[int]:
+    values: set[int] = set()
+    for chunk in re.split(r"[,;\s]+", _env_value(name, "")):
+        chunk = chunk.strip()
+        if chunk.isdigit():
+            values.add(int(chunk))
+    return values
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         parsed = float(value)
@@ -68,6 +79,72 @@ def _safe_float(value: Any) -> float | None:
     if pd.isna(parsed):
         return None
     return parsed
+
+
+def _normalize_tier(raw_tier: str) -> str:
+    tier = str(raw_tier or "").strip().lower()
+    return tier if tier in ACCESS_LEVELS else "pro"
+
+
+def _tier_rank(tier: str) -> int:
+    return ACCESS_LEVELS.get(_normalize_tier(tier), ACCESS_LEVELS["pro"])
+
+
+def _tier_for_role_ids(role_ids: set[int]) -> str:
+    pro_roles = _env_csv_ints("DISCORD_PRO_ROLE_IDS")
+    paid_roles = _env_csv_ints("DISCORD_PAID_ROLE_IDS")
+    if role_ids & pro_roles:
+        return "pro"
+    if role_ids & paid_roles:
+        return "paid"
+    return _normalize_tier(_env_value("DISCORD_DEFAULT_USER_TIER", "pro"))
+
+
+def _role_ids_from_subject(subject: Any) -> set[int]:
+    roles = getattr(subject, "roles", []) or []
+    role_ids: set[int] = set()
+    for role in roles:
+        role_id = getattr(role, "id", None)
+        if role_id is not None:
+            try:
+                role_ids.add(int(role_id))
+            except Exception:
+                pass
+    return role_ids
+
+
+def _interaction_role_ids(interaction: Any) -> set[int]:
+    return _role_ids_from_subject(getattr(interaction, "user", None))
+
+
+def _interaction_tier(interaction: Any) -> str:
+    return _tier_for_role_ids(_interaction_role_ids(interaction))
+
+
+def _tier_allows(tier: str, required: str) -> bool:
+    return _tier_rank(tier) >= _tier_rank(required)
+
+
+def _feature_required_tier(feature: str) -> str:
+    defaults = {
+        "convex": "free",
+        "coin": "paid",
+        "scoreboard": "paid",
+        "archive": "pro",
+        "shortcut": "paid",
+        "shorts": "free",
+    }
+    env_name = f"DISCORD_{feature.upper()}_MIN_TIER"
+    return _normalize_tier(_env_value(env_name, defaults.get(feature, "paid")))
+
+
+def _free_sample_limit() -> int:
+    return _env_int("DISCORD_FREE_SAMPLE_TOP_N", 3, minimum=1)
+
+
+def _access_denied_message(feature: str) -> str:
+    required = _feature_required_tier(feature)
+    return f"This command is available for {required}+ access in this server."
 
 
 def _holder_contract_hints_path() -> Path:
@@ -113,7 +190,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
     if not match:
         return ""
     symbol = match.group(1).upper()
-    if symbol in {"CONVEX", "CONVEX_STATUS", "COIN"}:
+    if symbol in {"CONVEX", "CONVEX_STATUS", "CONVEX_SCOREBOARD", "CONVEX_ARCHIVE", "COIN", "SHORTS"}:
         return ""
     if not symbol.endswith("USDT"):
         symbol = f"{symbol}USDT"
@@ -279,6 +356,46 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     return title, description
 
 
+def _load_shorts_list() -> tuple[str, list[str]]:
+    path = _cache_path()
+    if not path.exists():
+        return "Short-account majority list", [f"No scanner cache yet: `{path}`"]
+    try:
+        frame = pd.read_csv(path)
+    except Exception as exc:
+        return "Short-account majority list", [f"Could not read scanner cache: `{exc}`"]
+    if frame.empty or "short_account_pct" not in frame.columns:
+        return "Short-account majority list", ["No short-account percentage data exists in the latest cache."]
+
+    frame = frame.copy()
+    frame["short_account_pct"] = pd.to_numeric(frame["short_account_pct"], errors="coerce")
+    matches = frame[frame["short_account_pct"].gt(50.0)].copy()
+    if matches.empty:
+        return "Short-account majority list", ["No tokens in the latest cache have more than 50% of accounts short."]
+    matches["symbol"] = matches["symbol"].astype(str).str.upper().str.strip()
+    matches = matches[matches["symbol"].ne("")].drop_duplicates(subset=["symbol"], keep="first")
+    matches = matches.sort_values(["short_account_pct", "symbol"], ascending=[False, True])
+    scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
+    scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
+    symbols = matches["symbol"].tolist()
+    header = (
+        f"Short-account majority tokens ({len(symbols)})\n"
+        f"Threshold: >50% accounts short | Scan: {scan_mode} | Cache: {scanned_at}\n\n"
+    )
+    chunks: list[str] = []
+    current = header
+    for symbol in symbols:
+        addition = f"{symbol}\n"
+        if len(current) + len(addition) > 1850:
+            chunks.append(current.rstrip())
+            current = addition
+        else:
+            current += addition
+    if current.strip():
+        chunks.append(current.rstrip())
+    return "Short-account majority list", chunks
+
+
 def _cache_status() -> str:
     path = _cache_path()
     if not path.exists():
@@ -288,7 +405,17 @@ def _cache_status() -> str:
     except Exception as exc:
         return f"Cache exists but could not be read: `{exc}`"
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return f"Cache: `{path}`\nRows: `{len(frame)}`\nModified: `{modified}`"
+    archive = proof_archive_path()
+    archive_rows = len(pd.read_csv(archive)) if archive.exists() else 0
+    return f"Cache: `{path}`\nRows: `{len(frame)}`\nModified: `{modified}`\nProof archive rows: `{archive_rows}`"
+
+
+def _scoreboard_text() -> str:
+    if _env_bool("DISCORD_SCOREBOARD_REFRESH_OUTCOMES", True):
+        refresh_outcomes(max_rows=_env_int("DISCORD_SCOREBOARD_REFRESH_MAX_ROWS", 20, minimum=1))
+    if _env_bool("DISCORD_WEEKLY_REPORT_WRITE_ENABLED", True):
+        write_weekly_report()
+    return weekly_scoreboard_text()
 
 
 def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
@@ -335,12 +462,40 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
+        tier = _interaction_tier(interaction)
+        if not _tier_allows(tier, _feature_required_tier("convex")):
+            await interaction.response.send_message(_access_denied_message("convex"), ephemeral=True)
+            return
         await interaction.response.defer(thinking=True)
         capped_limit = min(max(int(limit), 1), 25)
+        if tier == "free":
+            capped_limit = min(capped_limit, _free_sample_limit())
         title, description = await asyncio.to_thread(_load_candidates, capped_limit)
         embed = discord.Embed(title=title, description=description, color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
+
+    shorts_kwargs = {"name": "shorts", "description": "List every cached token with more than 50% of accounts short."}
+    if guild is not None:
+        shorts_kwargs["guild"] = guild
+
+    @tree.command(**shorts_kwargs)
+    async def shorts(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("shorts")):
+            await interaction.response.send_message(_access_denied_message("shorts"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(_load_shorts_list)
+        if not chunks:
+            chunks = ["No short-account majority tokens found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF59E0B)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
 
     coin_kwargs = {"name": "coin", "description": "Show latest scan/live stats for one futures symbol."}
     if guild is not None:
@@ -352,6 +507,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("coin")):
+            await interaction.response.send_message(_access_denied_message("coin"), ephemeral=True)
+            return
         await interaction.response.defer(thinking=True)
         title, description = await asyncio.to_thread(_load_coin_stats, symbol)
         embed = discord.Embed(title=title, description=description, color=0x38BDF8)
@@ -362,6 +520,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         async def symbol_alias(interaction: discord.Interaction) -> None:
             if not _channel_allowed(interaction):
                 await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+                return
+            if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("coin")):
+                await interaction.response.send_message(_access_denied_message("coin"), ephemeral=True)
                 return
             await interaction.response.defer(thinking=True)
             title, description = await asyncio.to_thread(_load_coin_stats, alias_symbol)
@@ -392,11 +553,48 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         status = await asyncio.to_thread(_cache_status)
         await interaction.response.send_message(status)
 
+    scoreboard_kwargs = {"name": "convex_scoreboard", "description": "Show trailing proof-engine outcome stats."}
+    if guild is not None:
+        scoreboard_kwargs["guild"] = guild
+
+    @tree.command(**scoreboard_kwargs)
+    async def convex_scoreboard(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("scoreboard")):
+            await interaction.response.send_message(_access_denied_message("scoreboard"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        text = await asyncio.to_thread(_scoreboard_text)
+        await interaction.followup.send(f"```text\n{text[:1800]}\n```")
+
+    archive_kwargs = {"name": "convex_archive", "description": "Export archived scanner flags and outcomes."}
+    if guild is not None:
+        archive_kwargs["guild"] = guild
+
+    @tree.command(**archive_kwargs)
+    async def convex_archive(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("archive")):
+            await interaction.response.send_message(_access_denied_message("archive"), ephemeral=True)
+            return
+        path = proof_archive_path()
+        if not path.exists():
+            await interaction.response.send_message("No proof archive exists yet.")
+            return
+        await interaction.response.defer(thinking=True)
+        await interaction.followup.send("Proof archive export.", file=discord.File(str(path), filename=path.name))
+
     @client.event
     async def on_message(message: discord.Message) -> None:
         if not symbol_shortcuts_enabled or message.author.bot:
             return
         if allowed_channel_id is not None and message.channel.id != allowed_channel_id:
+            return
+        if not _tier_allows(_tier_for_role_ids(_role_ids_from_subject(message.author)), _feature_required_tier("shortcut")):
             return
         if not _looks_like_symbol_shortcut(message.content):
             return
@@ -451,7 +649,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/convex`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
+                    "Convex bot online. Use `/convex_status`, `/convex`, `/shorts`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")

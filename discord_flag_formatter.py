@@ -19,6 +19,28 @@ DISCORD_EMBED_DESCRIPTION_LIMIT = 3900
 DISCORD_FLAG_CARD_TARGET_CHARS = 1450
 
 
+LANGUAGE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\bpump call\b", "market-structure flag"),
+    (r"\bbuy call\b", "market-structure flag"),
+    (r"\bbuy signal\b", "confirmation signal"),
+    (r"\bpump signal\b", "structure signal"),
+    (r"\bpump\b", "price expansion"),
+    (r"\bbuying\b", "spot demand"),
+    (r"\bbuyers\b", "participants"),
+    (r"\bbuy\b", "enter"),
+    (r"\bworth holding longer\b", "structure remains relevant while"),
+    (r"\bholding longer\b", "remaining exposed"),
+    (r"\bhold longer\b", "remain exposed"),
+)
+
+
+def sanitize_discord_language(text: str) -> str:
+    sanitized = str(text or "")
+    for pattern, replacement in LANGUAGE_REPLACEMENTS:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         parsed = float(value)
@@ -202,7 +224,7 @@ def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
     if short_pct is not None and short_pct >= 60.0 and (oi_delta is None or oi_delta >= 0.0):
         return "short crowd remains crowded while OI holds or expands; reclaim pressure can create reflexive conditions."
     if _has_note(row, "taker buyers", "strong hourly close"):
-        return "taker buyers and close quality suggest momentum while the structure remains early."
+        return "taker flow and close quality suggest momentum while the structure remains early."
     if price_24h is not None and price_24h > 0.0 and volume_multiple is not None and volume_multiple >= 1.5:
         return "price is expanding with volume confirmation before the structure appears fully extended."
     if oi_delta is not None and oi_delta > 0.0:
@@ -302,9 +324,10 @@ def build_discord_flag_card(
         candidate = f"{base}\n{holder_block}" if holder_block else base
     else:
         candidate = base
+    candidate = sanitize_discord_language(candidate)
     if len(candidate) <= max_chars:
         return candidate
-    return f"{base[: max_chars - 3].rstrip()}..."
+    return sanitize_discord_language(f"{base[: max_chars - 3].rstrip()}...")
 
 
 def _symbol_from_card(card: str) -> str:
@@ -329,7 +352,7 @@ def join_discord_flag_cards(cards: list[str], *, max_chars: int = DISCORD_EMBED_
     output: list[str] = [summary] if summary else []
     used = len(summary)
     for index, card in enumerate(cards):
-        block = card.strip()
+        block = sanitize_discord_language(card.strip())
         separator = "\n\n" if output else ""
         next_len = used + len(separator) + len(block)
         if next_len > max_chars:
@@ -343,4 +366,4 @@ def join_discord_flag_cards(cards: list[str], *, max_chars: int = DISCORD_EMBED_
             break
         output.append(block)
         used = next_len
-    return "\n\n".join(output)
+    return sanitize_discord_language("\n\n".join(output))

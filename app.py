@@ -20,6 +20,13 @@ from concentration_scanner.perp_universe import DEFAULT_SEED_PATH, BinancePerpUn
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
 from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
+from discord_flag_formatter import (
+    DISCORD_EMBED_DESCRIPTION_LIMIT,
+    DISCORD_FOOTER,
+    DISCORD_PRODUCT_IDENTITY,
+    build_discord_flag_card,
+    join_discord_flag_cards,
+)
 from external_markets import (
     fetch_coinbase_spot_bases,
     fetch_dwf_labs_portfolio_members,
@@ -28,6 +35,7 @@ from external_markets import (
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
+from proof_engine import archive_alerts
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
 from screener import ScreenerData, build_screener_data
 
@@ -3135,43 +3143,19 @@ def _discord_holder_composition_text(row: pd.Series) -> str:
 
 
 def _discord_candidate_line(row: pd.Series) -> str:
-    symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
-    base_asset = str(row.get("base_asset", "")).upper().strip()
-    label = f"**{symbol}**" if not base_asset or base_asset == symbol.replace("USDT", "") else f"**{symbol}** ({base_asset})"
-    metrics = [
-        _metric_fragment(row, "bucket", ("_discord_bucket_score", "trade_bucket_score")),
-        _metric_fragment(row, "convex", ("convexity_entry_score", "convexity_score")),
-        _metric_fragment(row, "setup", ("rave_lab_setup_score", "pre_pump_precision_score")),
-        _metric_fragment(row, "short acct", ("short_account_pct",), suffix="%"),
-        _metric_fragment(row, "24h", ("price_change_24h_pct", "change_24h_pct", "day_change_pct"), suffix="%"),
-        _metric_fragment(row, "OI", ("oi_delta_pct", "oi_value_change_since_scan_pct"), suffix="%"),
-    ]
-    compact_metrics = " | ".join(metric for metric in metrics if metric)
-    note = str(row.get("trade_bucket_note", "")).strip()
-    if len(note) > 220:
-        note = f"{note[:217]}..."
-    if compact_metrics and note:
-        base = f"{label} | {compact_metrics}\n{note}"
-    elif compact_metrics:
-        base = f"{label} | {compact_metrics}"
-    elif note:
-        base = f"{label}\n{note}"
-    else:
-        base = label
     holder_text = _discord_holder_composition_text(row)
-    return f"{base}\n{holder_text}" if holder_text else base
+    return build_discord_flag_card(row, holder_text=holder_text)
 
 
 def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> None:
     lines = [_discord_candidate_line(row) for _, row in candidates.iterrows()]
-    description = "\n\n".join(lines)
-    if len(description) > 3900:
-        description = f"{description[:3890]}\n..."
+    card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
+    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     payload = {
         "username": "Convex Scanner",
         "embeds": [
             {
-                "title": f"{len(candidates)} Convex Long candidate{'s' if len(candidates) != 1 else ''}",
+                "title": f"{len(candidates)} market-structure candidate{'s' if len(candidates) != 1 else ''}",
                 "description": description,
                 "color": 0x22C55E,
                 "fields": [
@@ -3184,7 +3168,7 @@ def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> N
                     },
                 ],
                 "footer": {
-                    "text": "Structural-risk scan only. Not a legal conclusion or trade instruction.",
+                    "text": DISCORD_FOOTER,
                 },
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
@@ -3193,6 +3177,7 @@ def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> N
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
     if response.status_code >= 300:
         raise RuntimeError(f"Discord webhook HTTP {response.status_code}: {response.text[:180]}")
+    archive_alerts(candidates, scan_mode=scan_mode)
 
 
 def _record_discord_convex_alerts(candidates: pd.DataFrame) -> None:

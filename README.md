@@ -169,17 +169,23 @@ Supported commands include:
 
 ```text
 /convex
+/shorts
 /convex_status
+/convex_scoreboard
+/convex_archive
 /coin <symbol>
 ```
 
 The bot can retrieve:
 
 - latest cached scanner rankings
+- full cached list of symbols where more than 50% of accounts are short
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries
 - contract metadata when available
+- trailing proof-engine outcome summaries
+- local proof-archive exports
 
 Example `.env` configuration:
 
@@ -189,6 +195,10 @@ DISCORD_GUILD_ID=
 DISCORD_ALLOWED_CHANNEL_ID=
 DISCORD_CONVEX_COMMAND_TOP_N=10
 DISCORD_LOGIN_RETRY_SECONDS=90
+DISCORD_DEFAULT_USER_TIER=pro
+DISCORD_FREE_SAMPLE_TOP_N=3
+DISCORD_PAID_ROLE_IDS=
+DISCORD_PRO_ROLE_IDS=
 ```
 
 `DISCORD_GUILD_ID` is recommended because guild slash commands usually sync faster than global Discord commands.
@@ -201,7 +211,52 @@ run_discord_convex_bot.bat
 
 ---
 
-## 6. Automated Discord Watcher
+## 6. Proof Archive and Outcome Tracking
+
+Discord alerts are archived locally so scanner quality can be measured over time instead of judged by screenshots.
+
+The append-only archive writes one JSON line per alert:
+
+```text
+data/archive/flags/YYYY-MM-DD.jsonl
+```
+
+Each record includes the ticker, timestamp, flagged price, scanner score, scan mode, reason tags, holder concentration metrics, OI/volume state, liquidity/risk tags, source URL when available, the raw bot output, and a `research_tooling_only` status field.
+
+Outcome refreshes append versioned JSONL records:
+
+```text
+data/archive/outcomes/YYYY-MM-DD_outcomes.jsonl
+```
+
+Outcomes track max upside after 1h, 4h, 24h, and 7d, max drawdown after the flag, time to +20%, time to +50%, time to 2x, whether OI/volume confirmed, and whether the structure invalidated by the current rules.
+
+Weekly report generation writes:
+
+```text
+data/archive/reports/weekly_YYYY-WW.md
+data/archive/reports/weekly_YYYY-WW.csv
+```
+
+The legacy CSV summary remains available at:
+
+```text
+data/discord_convex_alert_archive.csv
+```
+
+Useful configuration:
+
+```text
+DISCORD_PROOF_ARCHIVE_ROOT=data/archive
+DISCORD_PROOF_REFRESH_ENABLED=1
+DISCORD_PROOF_REFRESH_MAX_ROWS=12
+DISCORD_SCOREBOARD_REFRESH_OUTCOMES=1
+DISCORD_WEEKLY_REPORT_WRITE_ENABLED=1
+```
+
+---
+
+## 7. Automated Discord Watcher
 
 The watcher service supports scheduled rescanning and automatic posting of newly detected scanner candidates.
 
@@ -229,7 +284,7 @@ run_discord_convex_watcher.bat
 
 ---
 
-## 7. Holder Composition Summaries
+## 8. Holder Composition Summaries
 
 Discord alerts and dashboard views can attach compact holder-composition summaries when token contract data is available.
 
@@ -256,7 +311,7 @@ Failures in holder composition retrieval are non-blocking. Scanner alerts can st
 
 ---
 
-## 8. Contract Resolution Tooling
+## 9. Contract Resolution Tooling
 
 The repository includes utilities for maintaining local contract mappings used by the scanner, dashboard, and Discord integrations.
 
