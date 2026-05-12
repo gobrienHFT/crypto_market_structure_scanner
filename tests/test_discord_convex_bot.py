@@ -79,6 +79,7 @@ def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch)
     assert "CCCUSDT" in output
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
+    assert output.index("CCCUSDT 72.5%") < output.index("BBBUSDT 50.1%")
 
 
 def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
@@ -94,7 +95,7 @@ def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert "Source: live Binance account-ratio scan" in output
-    assert "PLAYUSDT" in output
+    assert "PLAYUSDT 52.3%" in output
     assert "RAVEUSDT" not in output
 
 

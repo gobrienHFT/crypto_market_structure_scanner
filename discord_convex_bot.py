@@ -462,7 +462,7 @@ def _format_shorts_frame(frame: pd.DataFrame, *, source: str, prefix: str = "") 
     matches = matches.sort_values(["short_account_pct", "symbol"], ascending=[False, True])
     scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
     scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
-    include_pct = _env_bool("DISCORD_SHORTS_INCLUDE_PCT", False)
+    include_pct = _env_bool("DISCORD_SHORTS_INCLUDE_PCT", True)
     symbols = [
         f"{row.symbol} {float(row.short_account_pct):.1f}%" if include_pct else str(row.symbol)
         for row in matches[["symbol", "short_account_pct"]].itertuples(index=False)
