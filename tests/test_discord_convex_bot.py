@@ -15,6 +15,8 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/convex") == ""
     assert bot._normalize_symbol_query("/convex_status") == ""
     assert bot._normalize_symbol_query("/coin") == ""
+    assert bot._normalize_symbol_query("/timing") == ""
+    assert bot._normalize_symbol_query("/dossier") == ""
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
@@ -97,6 +99,40 @@ def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
     assert "Source: live Binance account-ratio scan" in output
     assert "PLAYUSDT 52.3%" in output
     assert "RAVEUSDT" not in output
+
+
+def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "AAAUSDT",
+                "terminal_edge_score": 45,
+                "short_account_pct": 49,
+                "oi_delta_pct": 0.1,
+                "hour_return_pct": 0.0,
+            },
+            {
+                "symbol": "BBBUSDT",
+                "terminal_edge_score": 72,
+                "short_account_pct": 62,
+                "oi_delta_pct": 3.0,
+                "hour_return_pct": 2.0,
+                "hour_volume_multiple": 2.0,
+                "hour_trade_count_multiple": 1.8,
+                "hour_close_location_pct": 80,
+                "distance_to_high_5d_pct": 1.0,
+            },
+        ]
+    ).to_csv(cache, index=False)
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+
+    title, output = bot._load_timing_list(2)
+
+    assert title == "Timing watchlist"
+    assert "BBBUSDT" in output
+    assert "timing" in output
+    assert output.index("BBBUSDT") < output.index("AAAUSDT")
 
 
 def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypatch) -> None:

@@ -39,6 +39,9 @@ def test_archive_alerts_records_proof_fields(tmp_path, monkeypatch) -> None:
                 "terminal_market_regime": "calm beta tape",
                 "terminal_liquidity_reality": "cap-table supply; exits can gap",
                 "terminal_evidence_summary": "terminal 78/100 | short accounts 62.5%",
+                "timing_score": 66.6,
+                "timing_state": "Triggering",
+                "timing_observed_trigger": "OI expanding, volume lifting",
                 "_holder_text": "Holder composition Top1 22.0% | Top5 61.0% | Top100 97.0%",
             }
         ]
@@ -56,6 +59,8 @@ def test_archive_alerts_records_proof_fields(tmp_path, monkeypatch) -> None:
     assert "short 62.5%" in row["oi_volume_state"]
     assert row["terminal_edge_score"] == 77.7
     assert row["terminal_setup_archetype"] == "low-vol short-fuse"
+    assert row["timing_score"] == 66.6
+    assert row["timing_state"] == "Triggering"
     assert load_archive(path).iloc[0]["alert_id"] == row["alert_id"]
     flag_path = tmp_path / "data_archive" / "flags" / "2026-01-01.jsonl"
     flag_record = json.loads(flag_path.read_text(encoding="utf-8").splitlines()[0])
@@ -63,6 +68,8 @@ def test_archive_alerts_records_proof_fields(tmp_path, monkeypatch) -> None:
     assert flag_record["reason_tags"] == ["high_scanner_score", "controlled_float", "short-account_skew", "short_account_pressure"]
     assert flag_record["terminal_edge_score"] == 77.7
     assert flag_record["terminal_liquidity_reality"] == "cap-table supply; exits can gap"
+    assert flag_record["timing_score"] == 66.6
+    assert flag_record["timing_state"] == "Triggering"
     assert flag_record["disclaimer"] == "research_tooling_only"
 
 

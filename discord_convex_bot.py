@@ -21,6 +21,7 @@ from discord_flag_formatter import (
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 from terminal_engine import apply_terminal_model, build_setup_dossier
+from timing_engine import apply_timing_model, build_timing_card
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -136,6 +137,7 @@ def _feature_required_tier(feature: str) -> str:
         "shorts": "free",
         "terminal": "paid",
         "dossier": "paid",
+        "timing": "paid",
     }
     env_name = f"DISCORD_{feature.upper()}_MIN_TIER"
     return _normalize_tier(_env_value(env_name, defaults.get(feature, "paid")))
@@ -197,7 +199,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
     if not match:
         return ""
     symbol = match.group(1).upper()
-    if symbol in {"CONVEX", "CONVEX_STATUS", "CONVEX_SCOREBOARD", "CONVEX_ARCHIVE", "COIN", "SHORTS"}:
+    if symbol in {"CONVEX", "CONVEX_STATUS", "CONVEX_SCOREBOARD", "CONVEX_ARCHIVE", "COIN", "SHORTS", "TERMINAL", "TIMING", "DOSSIER"}:
         return ""
     if not symbol.endswith("USDT"):
         symbol = f"{symbol}USDT"
@@ -315,7 +317,7 @@ def _live_binance_row(symbol: str) -> tuple[pd.Series | None, str]:
 
 
 def _coin_stats_description(row: pd.Series, *, source: str) -> str:
-    enriched = apply_terminal_model(pd.DataFrame([row.to_dict()])).iloc[0]
+    enriched = apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
     holder_text = _holder_composition_text(row)
     prefix = f"{DISCORD_PRODUCT_IDENTITY}\n\nScan source: {source}\n\n"
     card = build_discord_flag_card(enriched, holder_text=holder_text, max_chars=DISCORD_EMBED_DESCRIPTION_LIMIT - len(prefix))
@@ -358,6 +360,7 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
     scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
     frame = apply_terminal_model(frame)
+    frame = apply_timing_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
@@ -372,6 +375,7 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
     if frame.empty:
         return "Market-structure evidence terminal", "No scanner cache exists yet. Run a dashboard scan first."
     frame = apply_terminal_model(frame)
+    frame = apply_timing_model(frame)
     frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
     lines = [
         (
@@ -394,9 +398,31 @@ def _load_dossier(symbol_query: str) -> tuple[str, str]:
         row, source = _live_binance_row(symbol)
     if row is None:
         return f"{symbol} dossier", "No latest scan row or live Binance futures symbol found yet."
-    enriched = apply_terminal_model(pd.DataFrame([row.to_dict()])).iloc[0]
-    text = build_setup_dossier(enriched)
+    enriched = apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
+    text = build_setup_dossier(enriched) + "\n\n## Timing\n\n```text\n" + build_timing_card(enriched) + "\n```"
     return f"{symbol} dossier ({source})", text[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def _load_timing_list(limit: int) -> tuple[str, str]:
+    frame = _read_csv_if_exists(_cache_path())
+    if frame.empty:
+        frame = _latest_snapshot_frame()
+    if frame.empty:
+        return "Timing watchlist", "No scanner cache exists yet. Run a dashboard scan first."
+    frame = apply_timing_model(apply_terminal_model(frame))
+    frame = frame.sort_values(
+        ["timing_score", "timing_trigger_score", "timing_too_late_score", "symbol"],
+        ascending=[False, False, True, True],
+    ).head(limit)
+    lines = [
+        (
+            f"{str(row.get('symbol', '')).upper()} | timing {(_safe_float(row.get('timing_score')) or 0.0):.1f} | "
+            f"{row.get('timing_state', 'No timing edge')} | shorts {(_safe_float(row.get('short_account_pct')) or 0.0):.1f}% | "
+            f"{row.get('timing_observed_trigger', 'pending')}"
+        )
+        for _, row in frame.iterrows()
+    ]
+    return "Timing watchlist", "```text\n" + "\n".join(lines)[:1850] + "\n```"
 
 
 def _load_shorts_list() -> tuple[str, list[str]]:
@@ -642,6 +668,24 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         await interaction.response.defer(thinking=True)
         title, description = await asyncio.to_thread(_load_terminal_list, _env_int("DISCORD_TERMINAL_TOP_N", 25, minimum=1))
         embed = discord.Embed(title=title, description=description, color=0x8B5CF6)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    timing_kwargs = {"name": "timing", "description": "Show symbols with the strongest current timing conditions."}
+    if guild is not None:
+        timing_kwargs["guild"] = guild
+
+    @tree.command(**timing_kwargs)
+    async def timing(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("timing")):
+            await interaction.response.send_message(_access_denied_message("timing"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(_load_timing_list, _env_int("DISCORD_TIMING_TOP_N", 25, minimum=1))
+        embed = discord.Embed(title=title, description=description, color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
 

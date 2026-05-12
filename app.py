@@ -39,6 +39,7 @@ from proof_engine import archive_alerts
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
 from screener import ScreenerData, build_screener_data
 from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
+from timing_engine import TIMING_SCORE_COLUMNS, apply_timing_model, build_timing_card
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
@@ -3093,6 +3094,7 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "dormant_short_fuse_note",
         "pre_pump_precision_note",
         *TERMINAL_SCORE_COLUMNS,
+        *TIMING_SCORE_COLUMNS,
     ]
     cache_frame = _discord_convex_candidates(all_df).head(max(50, DISCORD_CONVEX_ALERT_TOP_N)).copy()
     if cache_frame.empty:
@@ -4557,6 +4559,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = _apply_rave_lab_setup_scores(all_df)
     all_df = _apply_pre_pump_scan_memory(all_df)
     all_df = apply_terminal_model(all_df)
+    all_df = apply_timing_model(all_df)
     all_df = _score_trade_buckets(all_df)
     highs_df = all_df[(all_df["broke_high_90d"]) | (all_df["broke_high_180d"])].copy()
     highs_df = highs_df.sort_values(
@@ -5623,6 +5626,23 @@ def render_breakout_dashboard() -> None:
             "terminal_confirmation_needed": st.column_config.TextColumn("Confirmation Needed"),
             "terminal_invalidation_map": st.column_config.TextColumn("Invalidation Map"),
             "terminal_case_study_key": st.column_config.TextColumn("Case Study Key"),
+            "timing_score": st.column_config.NumberColumn(
+                "Timing Score",
+                format="%.1f",
+                help="Short-horizon timing score: trigger quality, reclaim proximity, flow confirmation, early/not-late status, and liquidity sanity.",
+            ),
+            "timing_trigger_score": st.column_config.NumberColumn("Trigger", format="%.1f"),
+            "timing_reclaim_score": st.column_config.NumberColumn("Reclaim", format="%.1f"),
+            "timing_flow_score": st.column_config.NumberColumn("Flow", format="%.1f"),
+            "timing_early_score": st.column_config.NumberColumn("Early", format="%.1f"),
+            "timing_too_late_score": st.column_config.NumberColumn("Too Late", format="%.1f"),
+            "timing_state": st.column_config.TextColumn("Timing State"),
+            "timing_observed_trigger": st.column_config.TextColumn("Observed Trigger"),
+            "timing_confirmation_needed": st.column_config.TextColumn("Timing Confirmation"),
+            "timing_invalidation": st.column_config.TextColumn("Timing Invalidation"),
+            "timing_failure_condition": st.column_config.TextColumn("Failure Condition"),
+            "timing_hold_condition": st.column_config.TextColumn("Structure Relevant While"),
+            "timing_liquidity_warning": st.column_config.TextColumn("Timing Liquidity"),
         }
         scan_mode_label = str(scan_mode)
         if scan_mode_label == "Full ATH":
@@ -5892,6 +5912,7 @@ def render_breakout_dashboard() -> None:
                 "20x ATH Runway",
                 "Structure Radar",
                 "Terminal Evidence",
+                "Timing",
                 "Short Account Moves",
                 "RAVE/LAB Radar",
             ]
@@ -7046,6 +7067,90 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[9]:
             st.caption(
+                "Timing view: separates structural selection from the current moment. "
+                "It looks for triggering/reclaiming setups and penalizes late, wick-heavy, or fading flow."
+            )
+            timing_cols = [
+                "symbol",
+                "base_asset",
+                "trade_bucket",
+                "terminal_edge_score",
+                "timing_score",
+                "timing_state",
+                "timing_observed_trigger",
+                "timing_confirmation_needed",
+                "timing_invalidation",
+                "timing_failure_condition",
+                "timing_hold_condition",
+                "timing_liquidity_warning",
+                "timing_trigger_score",
+                "timing_reclaim_score",
+                "timing_flow_score",
+                "timing_early_score",
+                "timing_too_late_score",
+                "short_account_pct",
+                "long_account_pct",
+                "oi_delta_pct",
+                "hour_return_pct",
+                "day_return_pct",
+                "hour_volume_multiple",
+                "daily_quote_volume_multiple",
+                "hour_trade_count_multiple",
+                "hour_close_location_pct",
+                "hour_upper_wick_pct",
+                "distance_to_high_5d_pct",
+                "distance_to_high_20d_pct",
+                "ask_depth_1pct_usdt",
+                "top100_holder_pct",
+            ]
+            timing_df = all_df.copy().sort_values(
+                [
+                    "timing_score",
+                    "timing_trigger_score",
+                    "timing_too_late_score",
+                    "terminal_edge_score",
+                    "symbol",
+                ],
+                ascending=[False, False, True, False, True],
+            )
+            timing_metrics = st.columns(4)
+            timing_metrics[0].metric("Top timing score", f"{float(pd.to_numeric(timing_df['timing_score'], errors='coerce').max()):.1f}" if not timing_df.empty else "n/a")
+            timing_metrics[1].metric("Triggering+", int(timing_df["timing_state"].isin(["Triggering", "Confirmed"]).sum()) if not timing_df.empty else 0)
+            timing_metrics[2].metric("Coiling", int(timing_df["timing_state"].eq("Coiling").sum()) if not timing_df.empty else 0)
+            timing_metrics[3].metric("Extended/fragile", int(timing_df["timing_state"].eq("Extended / fragile").sum()) if not timing_df.empty else 0)
+
+            st.subheader("Timing Watchlist")
+            if timing_df.empty:
+                st.info("No timing rows are available yet.")
+            else:
+                st.dataframe(
+                    _display_frame(timing_df.head(60), timing_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+                timing_symbol = st.selectbox(
+                    "Open timing card",
+                    timing_df["symbol"].astype(str).head(60).tolist(),
+                    key="timing_card_symbol",
+                )
+                timing_row = timing_df[timing_df["symbol"].astype(str) == timing_symbol].head(1)
+                if not timing_row.empty:
+                    st.markdown("```text\n" + build_timing_card(timing_row.iloc[0]) + "\n```")
+
+            with st.expander("Show full timing table"):
+                if timing_df.empty:
+                    st.info("No timing rows to show.")
+                else:
+                    st.dataframe(
+                        _display_frame(timing_df, timing_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[10]:
+            st.caption(
                 "Ranks the biggest changes in Binance global short-account share by symbol. "
                 f"Period: {LONG_SHORT_RATIO_PERIOD}; windows: {', '.join(f'{window}p' for window in SHORT_ACCOUNT_CHANGE_WINDOWS)}; "
                 f"history rows requested per symbol: {LONG_SHORT_RATIO_HISTORY_LIMIT}. "
@@ -7196,7 +7301,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[10]:
+        with screener_tabs[11]:
             st.caption(
                 "Ranks RAVE/LAB-style controlled-float upside structures by combining centralized holder/insider proxies, "
                 "low-float and FDV gap, rising short-account share, target CEX-flow proxies for Binance/Bitget/Gate/OKX, "
