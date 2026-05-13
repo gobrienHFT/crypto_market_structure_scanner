@@ -257,6 +257,23 @@ def _latest_snapshot_frame() -> pd.DataFrame:
     return frame
 
 
+def _fresh_scanner_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, str]:
+    if not _env_bool("DISCORD_TIMING_LIVE_SCAN_ENABLED", True):
+        return pd.DataFrame(), "live scan disabled"
+    mode = (scan_mode or _env_value("DISCORD_TIMING_SCAN_MODE", "Deep")).strip() or "Deep"
+    try:
+        os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
+        import app as scanner_app
+
+        scan_fn = getattr(scanner_app.run_scan, "__wrapped__", scanner_app.run_scan)
+        _, all_df = scan_fn(int(time.time()), mode)
+        if all_df.empty:
+            return pd.DataFrame(), f"fresh {mode} scan returned no rows"
+        return all_df.copy(), f"fresh {mode} scan"
+    except Exception as exc:
+        return pd.DataFrame(), f"fresh scan unavailable: {exc}"
+
+
 def _row_for_symbol(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
     if frame.empty or "symbol" not in frame.columns:
         return None
@@ -404,11 +421,15 @@ def _load_dossier(symbol_query: str) -> tuple[str, str]:
 
 
 def _load_timing_list(limit: int) -> tuple[str, str]:
-    frame = _read_csv_if_exists(_cache_path())
+    frame, source = _fresh_scanner_frame()
     if frame.empty:
         frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot"
     if frame.empty:
-        return "Timing watchlist", "No scanner cache exists yet. Run a dashboard scan first."
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    if frame.empty:
+        return "Timing watchlist", "No live scan, scanner snapshot, or cache exists yet."
     frame = apply_timing_model(apply_terminal_model(frame))
     frame = frame.sort_values(
         ["timing_score", "timing_trigger_score", "timing_too_late_score", "symbol"],
@@ -422,7 +443,8 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
         )
         for _, row in frame.iterrows()
     ]
-    return "Timing watchlist", "```text\n" + "\n".join(lines)[:1850] + "\n```"
+    header = f"Source: {source} | Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
 
 def _load_shorts_list() -> tuple[str, list[str]]:
