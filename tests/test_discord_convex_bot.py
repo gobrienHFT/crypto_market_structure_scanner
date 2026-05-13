@@ -53,6 +53,16 @@ def test_discord_access_tier_resolves_from_roles_and_defaults(monkeypatch) -> No
     assert not bot._tier_allows("free", "paid")
 
 
+def test_trade_bot_send_failure_is_reported_without_raising() -> None:
+    class FailingChannel:
+        async def send(self, _message: str) -> None:
+            raise RuntimeError("missing access")
+
+    error = bot.asyncio.run(bot._safe_trade_bot_send(FailingChannel(), "hello"))
+    assert "RuntimeError" in error
+    assert "missing access" in error
+
+
 def test_feature_tier_defaults_keep_existing_server_permissive(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_DEFAULT_USER_TIER", raising=False)
     monkeypatch.delenv("DISCORD_COIN_MIN_TIER", raising=False)

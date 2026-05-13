@@ -467,21 +467,32 @@ def _trade_bot_text(message: str) -> str:
     return "```text\n" + str(message or "").strip()[:1850] + "\n```"
 
 
+async def _safe_trade_bot_send(channel: Any, message: str) -> str:
+    try:
+        await channel.send(_trade_bot_text(message))
+        return ""
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+
+
 async def _trade_bot_loop(channel: Any, config: TradeBotConfig) -> None:
     global _TRADE_BOT_RUNTIME, _TRADE_BOT_STOP_REQUESTED
     runtime = TradeBotRuntime(config)
     _TRADE_BOT_RUNTIME = runtime
     client = _trade_bot_client()
+    stopped_cleanly = False
     try:
-        await channel.send(
-            _trade_bot_text(
-                "Trade setup bot started.\n"
-                f"Mode: {config.mode}\n"
-                f"Scan mode: {config.scan_mode}\n"
-                f"Interval: {config.interval_seconds}s\n"
-                "Live orders require TRADE_BOT_LIVE_ENABLED=1. Paper mode is the default."
-            )
+        startup_message = (
+            "Trade setup bot started.\n"
+            f"Mode: {config.mode}\n"
+            f"Scan mode: {config.scan_mode}\n"
+            f"Interval: {config.interval_seconds}s\n"
+            "Live orders require TRADE_BOT_LIVE_ENABLED=1. Paper mode is the default."
         )
+        runtime.last_message = startup_message
+        send_error = await _safe_trade_bot_send(channel, startup_message)
+        if send_error:
+            runtime.last_message = f"Started, but Discord channel send failed: {send_error}"
         while not _TRADE_BOT_STOP_REQUESTED:
             try:
                 frame, source = await asyncio.to_thread(_fresh_scanner_frame, config.scan_mode)
@@ -496,22 +507,31 @@ async def _trade_bot_loop(channel: Any, config: TradeBotConfig) -> None:
                 if " open; mark " in message and not _env_bool("TRADE_BOT_NOTIFY_MONITOR", False):
                     should_notify = False
                 if should_notify:
-                    await channel.send(_trade_bot_text(message))
+                    send_error = await _safe_trade_bot_send(channel, message)
+                    if send_error:
+                        runtime.last_message = f"{message} | Discord send failed: {send_error}"
             except asyncio.CancelledError:
+                stopped_cleanly = True
                 break
             except Exception as exc:
                 message = f"Trade setup bot cycle error: {exc}"
                 if runtime:
                     runtime.last_message = message
-                await channel.send(_trade_bot_text(message))
+                send_error = await _safe_trade_bot_send(channel, message)
+                if send_error:
+                    runtime.last_message = f"{message} | Discord send failed: {send_error}"
             try:
                 await asyncio.sleep(max(15, int(config.interval_seconds)))
             except asyncio.CancelledError:
+                stopped_cleanly = True
                 break
+    except Exception as exc:
+        runtime.last_message = f"Trade setup bot fatal error: {type(exc).__name__}: {exc}"
     finally:
-        if runtime:
+        if runtime and (_TRADE_BOT_STOP_REQUESTED or stopped_cleanly):
             runtime.last_message = "stop requested"
-        await channel.send(_trade_bot_text("Trade setup bot stopped."))
+        if _TRADE_BOT_STOP_REQUESTED or stopped_cleanly:
+            await _safe_trade_bot_send(channel, "Trade setup bot stopped.")
 
 
 def _load_shorts_list() -> tuple[str, list[str]]:
@@ -843,8 +863,20 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             await interaction.response.send_message(_access_denied_message("tradebot_status"), ephemeral=True)
             return
         running = _TRADE_BOT_TASK is not None and not _TRADE_BOT_TASK.done()
+        task_note = ""
+        if _TRADE_BOT_TASK is not None and _TRADE_BOT_TASK.done():
+            try:
+                exc = _TRADE_BOT_TASK.exception()
+            except asyncio.CancelledError:
+                exc = None
+                task_note = "Task: cancelled"
+            if exc is not None:
+                task_note = f"Task exception: {type(exc).__name__}: {exc}"
+            elif not task_note:
+                task_note = "Task: exited"
         status = _TRADE_BOT_RUNTIME.status_text() if _TRADE_BOT_RUNTIME is not None else "Trade setup bot has not been started in this process."
-        await interaction.response.send_message(_trade_bot_text(f"Running: {running}\n{status}"), ephemeral=True)
+        task_line = f"\n{task_note}" if task_note else ""
+        await interaction.response.send_message(_trade_bot_text(f"Running: {running}{task_line}\n{status}"), ephemeral=True)
 
     dossier_kwargs = {"name": "dossier", "description": "Show the market-structure evidence dossier for one symbol."}
     if guild is not None:
