@@ -22,11 +22,15 @@ from holder_composition import fetch_holder_composition, format_holder_compositi
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
+from trade_setup_pipeline import TradeBotConfig, TradeBotRuntime
 
 
 APP_DIR = Path(__file__).resolve().parent
 SYMBOL_QUERY_RE = re.compile(r"^[!/]?\$?([A-Za-z0-9]{2,30})$")
 ACCESS_LEVELS = {"free": 0, "paid": 1, "pro": 2}
+_TRADE_BOT_TASK: asyncio.Task[Any] | None = None
+_TRADE_BOT_RUNTIME: TradeBotRuntime | None = None
+_TRADE_BOT_STOP_REQUESTED = False
 
 if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -138,6 +142,9 @@ def _feature_required_tier(feature: str) -> str:
         "terminal": "paid",
         "dossier": "paid",
         "timing": "paid",
+        "startbot": "pro",
+        "stopbot": "pro",
+        "tradebot_status": "pro",
     }
     env_name = f"DISCORD_{feature.upper()}_MIN_TIER"
     return _normalize_tier(_env_value(env_name, defaults.get(feature, "paid")))
@@ -447,6 +454,66 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
 
+def _trade_bot_client() -> BinanceFuturesPublic:
+    return BinanceFuturesPublic(
+        timeout=_env_int("TRADE_BOT_HTTP_TIMEOUT_SECONDS", 12, minimum=3),
+        requests_per_second=_env_int("TRADE_BOT_REQUESTS_PER_SECOND", 3, minimum=1),
+        api_key=os.environ.get("BINANCE_API_KEY", ""),
+        api_secret=os.environ.get("BINANCE_API_SECRET", ""),
+    )
+
+
+def _trade_bot_text(message: str) -> str:
+    return "```text\n" + str(message or "").strip()[:1850] + "\n```"
+
+
+async def _trade_bot_loop(channel: Any, config: TradeBotConfig) -> None:
+    global _TRADE_BOT_RUNTIME, _TRADE_BOT_STOP_REQUESTED
+    runtime = TradeBotRuntime(config)
+    _TRADE_BOT_RUNTIME = runtime
+    client = _trade_bot_client()
+    try:
+        await channel.send(
+            _trade_bot_text(
+                "Trade setup bot started.\n"
+                f"Mode: {config.mode}\n"
+                f"Scan mode: {config.scan_mode}\n"
+                f"Interval: {config.interval_seconds}s\n"
+                "Live orders require TRADE_BOT_LIVE_ENABLED=1. Paper mode is the default."
+            )
+        )
+        while not _TRADE_BOT_STOP_REQUESTED:
+            try:
+                frame, source = await asyncio.to_thread(_fresh_scanner_frame, config.scan_mode)
+                if frame.empty:
+                    message = f"No fresh scan frame available: {source}"
+                else:
+                    frame = apply_timing_model(apply_terminal_model(frame))
+                    message = await asyncio.to_thread(runtime.run_cycle, frame, client)
+                should_notify = True
+                if message.startswith("No setup") and not _env_bool("TRADE_BOT_NOTIFY_NO_SETUP", False):
+                    should_notify = False
+                if " open; mark " in message and not _env_bool("TRADE_BOT_NOTIFY_MONITOR", False):
+                    should_notify = False
+                if should_notify:
+                    await channel.send(_trade_bot_text(message))
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                message = f"Trade setup bot cycle error: {exc}"
+                if runtime:
+                    runtime.last_message = message
+                await channel.send(_trade_bot_text(message))
+            try:
+                await asyncio.sleep(max(15, int(config.interval_seconds)))
+            except asyncio.CancelledError:
+                break
+    finally:
+        if runtime:
+            runtime.last_message = "stop requested"
+        await channel.send(_trade_bot_text("Trade setup bot stopped."))
+
+
 def _load_shorts_list() -> tuple[str, list[str]]:
     live_frame, live_error = _load_live_shorts_frame()
     if not live_frame.empty:
@@ -710,6 +777,74 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed = discord.Embed(title=title, description=description, color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
+
+    startbot_kwargs = {"name": "startbot", "description": "Start the gated trade setup bot. Defaults to paper mode."}
+    if guild is not None:
+        startbot_kwargs["guild"] = guild
+
+    @tree.command(**startbot_kwargs)
+    @app_commands.describe(mode="paper or live", scan_mode="Fast, Deep, or Full ATH")
+    async def startbot(interaction: discord.Interaction, mode: str = "paper", scan_mode: str = "Deep") -> None:
+        global _TRADE_BOT_TASK, _TRADE_BOT_STOP_REQUESTED
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("startbot")):
+            await interaction.response.send_message(_access_denied_message("startbot"), ephemeral=True)
+            return
+        if _TRADE_BOT_TASK is not None and not _TRADE_BOT_TASK.done():
+            await interaction.response.send_message("Trade setup bot is already running. Use `/tradebot_status` or `/stopbot`.", ephemeral=True)
+            return
+        if interaction.channel is None:
+            await interaction.response.send_message("Could not resolve the current Discord channel.", ephemeral=True)
+            return
+        config = TradeBotConfig.from_env(mode=mode, scan_mode=scan_mode)
+        if config.mode == "live" and not _env_bool("TRADE_BOT_LIVE_ENABLED", False):
+            await interaction.response.send_message(
+                "Live mode refused because `TRADE_BOT_LIVE_ENABLED=1` is not set. Start with `/startbot mode:paper`.",
+                ephemeral=True,
+            )
+            return
+        _TRADE_BOT_STOP_REQUESTED = False
+        _TRADE_BOT_TASK = asyncio.create_task(_trade_bot_loop(interaction.channel, config))
+        await interaction.response.send_message(
+            f"Trade setup bot starting in `{config.mode}` mode. Scan mode `{config.scan_mode}`. Use `/tradebot_status` for state.",
+            ephemeral=True,
+        )
+
+    stopbot_kwargs = {"name": "stopbot", "description": "Stop the trade setup bot loop."}
+    if guild is not None:
+        stopbot_kwargs["guild"] = guild
+
+    @tree.command(**stopbot_kwargs)
+    async def stopbot(interaction: discord.Interaction) -> None:
+        global _TRADE_BOT_TASK, _TRADE_BOT_STOP_REQUESTED
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("stopbot")):
+            await interaction.response.send_message(_access_denied_message("stopbot"), ephemeral=True)
+            return
+        _TRADE_BOT_STOP_REQUESTED = True
+        if _TRADE_BOT_TASK is not None and not _TRADE_BOT_TASK.done():
+            _TRADE_BOT_TASK.cancel()
+        await interaction.response.send_message("Trade setup bot stop requested.", ephemeral=True)
+
+    tradebot_status_kwargs = {"name": "tradebot_status", "description": "Show trade setup bot status and tracked PnL."}
+    if guild is not None:
+        tradebot_status_kwargs["guild"] = guild
+
+    @tree.command(**tradebot_status_kwargs)
+    async def tradebot_status(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("tradebot_status")):
+            await interaction.response.send_message(_access_denied_message("tradebot_status"), ephemeral=True)
+            return
+        running = _TRADE_BOT_TASK is not None and not _TRADE_BOT_TASK.done()
+        status = _TRADE_BOT_RUNTIME.status_text() if _TRADE_BOT_RUNTIME is not None else "Trade setup bot has not been started in this process."
+        await interaction.response.send_message(_trade_bot_text(f"Running: {running}\n{status}"), ephemeral=True)
 
     dossier_kwargs = {"name": "dossier", "description": "Show the market-structure evidence dossier for one symbol."}
     if guild is not None:
