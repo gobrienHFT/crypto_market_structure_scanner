@@ -63,6 +63,31 @@ def test_trade_bot_send_failure_is_reported_without_raising() -> None:
     assert "missing access" in error
 
 
+def test_trade_bot_send_uses_webhook_fallback(monkeypatch) -> None:
+    class FailingChannel:
+        async def send(self, _message: str) -> None:
+            raise RuntimeError("missing access")
+
+    class Response:
+        status_code = 204
+        text = ""
+
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append((url, json, timeout))
+        return Response()
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
+    monkeypatch.setattr(bot.requests, "post", fake_post)
+
+    error = bot.asyncio.run(bot._safe_trade_bot_send(FailingChannel(), "hello"))
+    assert error == ""
+    assert calls
+    assert calls[0][0] == "https://discord.test/webhook"
+    assert "hello" in calls[0][1]["content"]
+
+
 def test_feature_tier_defaults_keep_existing_server_permissive(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_DEFAULT_USER_TIER", raising=False)
     monkeypatch.delenv("DISCORD_COIN_MIN_TIER", raising=False)

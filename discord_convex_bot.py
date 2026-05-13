@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import requests
 
 from binance_futures import BinanceFuturesPublic
 from discord_flag_formatter import (
@@ -472,7 +473,22 @@ async def _safe_trade_bot_send(channel: Any, message: str) -> str:
         await channel.send(_trade_bot_text(message))
         return ""
     except Exception as exc:
-        return f"{type(exc).__name__}: {exc}"
+        channel_error = f"{type(exc).__name__}: {exc}"
+    webhook_url = _env_value("TRADE_BOT_DISCORD_WEBHOOK_URL", _env_value("DISCORD_WEBHOOK_URL"))
+    if not webhook_url:
+        return channel_error
+    try:
+        response = await asyncio.to_thread(
+            requests.post,
+            webhook_url,
+            json={"username": "Convex Trade Setup Bot", "content": _trade_bot_text(message)},
+            timeout=15,
+        )
+        if response.status_code < 300:
+            return ""
+        return f"{channel_error}; webhook HTTP {response.status_code}: {response.text[:180]}"
+    except Exception as webhook_exc:
+        return f"{channel_error}; webhook {type(webhook_exc).__name__}: {webhook_exc}"
 
 
 async def _trade_bot_loop(channel: Any, config: TradeBotConfig) -> None:
