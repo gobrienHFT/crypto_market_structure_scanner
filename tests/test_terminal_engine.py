@@ -52,3 +52,21 @@ def test_terminal_dossier_uses_research_language() -> None:
 
 def test_liquidity_reality_flags_cap_table_supply() -> None:
     assert infer_liquidity_reality({"top100_holder_pct": 99.5}) == "cap-table supply; exits can gap"
+
+
+def test_terminal_evidence_includes_range_breakout_event() -> None:
+    scored = apply_terminal_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "RANGEUSDT",
+                    "terminal_edge_score": 55,
+                    "range_breakout_event": "20D high, 90D high hit",
+                    "range_breakout_score": 62,
+                    "price_volume_ignition_score": 40,
+                }
+            ]
+        )
+    )
+
+    assert "20D high, 90D high hit" in scored.iloc[0]["terminal_evidence_summary"]

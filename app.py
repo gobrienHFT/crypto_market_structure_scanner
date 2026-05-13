@@ -1928,6 +1928,65 @@ def _pre_pump_label_events(history: pd.DataFrame, *, horizon_hours: int = 24, to
     return pd.DataFrame(events)
 
 
+RANGE_BREAKOUT_COLUMNS = [
+    "range_breakout_event",
+    "range_breakout_side",
+    "range_breakout_score",
+    "range_high_break_count",
+    "range_low_break_count",
+]
+
+
+def _apply_range_breakout_events(all_df: pd.DataFrame) -> pd.DataFrame:
+    if all_df.empty:
+        for column in RANGE_BREAKOUT_COLUMNS:
+            all_df[column] = pd.Series(dtype="object" if column.endswith(("event", "side")) else "float64")
+        return all_df
+
+    out = all_df.copy()
+    windows = (20, 90, 180)
+    high_cols = [f"broke_high_{window}d" for window in windows]
+    low_cols = [f"broke_low_{window}d" for window in windows]
+    for column in high_cols + low_cols:
+        if column not in out.columns:
+            out[column] = False
+        out[column] = out[column].fillna(False).astype(bool)
+
+    high_count = sum(out[column].astype(int) for column in high_cols)
+    low_count = sum(out[column].astype(int) for column in low_cols)
+    out["range_high_break_count"] = high_count.astype("int64")
+    out["range_low_break_count"] = low_count.astype("int64")
+    out["range_breakout_score"] = (
+        out["broke_high_20d"].astype(float) * 28.0
+        + out["broke_high_90d"].astype(float) * 34.0
+        + out["broke_high_180d"].astype(float) * 42.0
+        + out["broke_low_20d"].astype(float) * 22.0
+        + out["broke_low_90d"].astype(float) * 28.0
+        + out["broke_low_180d"].astype(float) * 34.0
+    ).clip(lower=0.0, upper=100.0)
+
+    def _event(row: pd.Series) -> str:
+        high_events = [f"{window}D high" for window in windows if bool(row.get(f"broke_high_{window}d"))]
+        low_events = [f"{window}D low" for window in windows if bool(row.get(f"broke_low_{window}d"))]
+        events = high_events + low_events
+        return ", ".join(events) + " hit" if events else ""
+
+    def _side(row: pd.Series) -> str:
+        high_n = int(row.get("range_high_break_count", 0) or 0)
+        low_n = int(row.get("range_low_break_count", 0) or 0)
+        if high_n and low_n:
+            return "both"
+        if high_n:
+            return "high"
+        if low_n:
+            return "low"
+        return ""
+
+    out["range_breakout_event"] = out.apply(_event, axis=1)
+    out["range_breakout_side"] = out.apply(_side, axis=1)
+    return out
+
+
 def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     if all_df.empty:
         all_df["trade_bucket"] = pd.Series(dtype="object")
@@ -2081,12 +2140,15 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "no_chase_penalty_score",
         "pre_pump_precision_score",
         "rave_lab_setup_score",
+        "range_breakout_score",
+        "range_high_break_count",
+        "range_low_break_count",
     ]
     for col in numeric_cols:
         all_df[col] = pd.to_numeric(all_df[col], errors="coerce")
 
-    long_breakout = all_df["broke_high_20d"] | all_df["broke_high_5d"] | all_df["broke_high_90d"]
-    short_breakout = all_df["broke_low_20d"] | all_df["broke_low_5d"] | all_df["broke_low_90d"]
+    long_breakout = all_df["broke_high_20d"] | all_df["broke_high_5d"] | all_df["broke_high_90d"] | all_df["broke_high_180d"]
+    short_breakout = all_df["broke_low_20d"] | all_df["broke_low_5d"] | all_df["broke_low_90d"] | all_df["broke_low_180d"]
     major_excluded = all_df["crime_excluded_major"].fillna(False).astype(bool)
     coinbase_lane = all_df["coinbase_lane_flag"].fillna(False).astype(bool)
     owner_controlled = all_df["owner_controlled_flag"].fillna(False).astype(bool)
@@ -2376,12 +2438,17 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     def _bucket_note(row: pd.Series) -> str:
         bucket = str(row.get("trade_bucket", "Watch"))
         triggers: list[str] = []
-        if bool(row.get("broke_high_20d")):
+        range_event = str(row.get("range_breakout_event", "") or "").strip()
+        if range_event:
+            triggers.append(range_event)
+        elif bool(row.get("broke_high_180d")):
+            triggers.append("180D high break")
+        elif bool(row.get("broke_high_90d")):
+            triggers.append("90D high break")
+        elif bool(row.get("broke_high_20d")):
             triggers.append("20D breakout")
         elif bool(row.get("broke_high_5d")):
             triggers.append("5D breakout")
-        elif bool(row.get("broke_high_90d")):
-            triggers.append("90D breakout")
         if pd.notna(row.get("crime_ignition_score")) and float(row["crime_ignition_score"]) >= 68.0:
             triggers.append("high ignition")
         if pd.notna(row.get("oi_delta_pct")) and float(row["oi_delta_pct"]) >= 2.0:
@@ -3075,6 +3142,13 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "trade_bucket",
         "trade_bucket_score",
         "trade_bucket_note",
+        *RANGE_BREAKOUT_COLUMNS,
+        "broke_high_20d",
+        "broke_high_90d",
+        "broke_high_180d",
+        "broke_low_20d",
+        "broke_low_90d",
+        "broke_low_180d",
         "last_price",
         "price_change_24h_pct",
         "change_24h_pct",
@@ -4517,6 +4591,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 "mm_bid_support_score",
                 "mm_withdrawal_risk_score",
                 *EXTERNAL_CRIME_COLUMNS,
+                *RANGE_BREAKOUT_COLUMNS,
                 *LIFECYCLE_SCORE_COLUMNS,
                 *CONVEXITY_SCORE_COLUMNS,
                 *SHORT_SQUEEZE_SCORE_COLUMNS,
@@ -4551,6 +4626,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = _apply_dwf_mm_proximity_signal(all_df)
     all_df = _apply_cmc_mover_metrics(all_df, cmc_movers_df)
     all_df = _apply_external_crime_metrics(all_df, external_crime_symbols if deep_scan else set())
+    all_df = _apply_range_breakout_events(all_df)
     all_df = _apply_ath_runway(all_df)
     all_df = _apply_crime_pump_scores(all_df)
     all_df = apply_lifecycle_model(all_df)
@@ -4561,12 +4637,12 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = apply_terminal_model(all_df)
     all_df = apply_timing_model(all_df)
     all_df = _score_trade_buckets(all_df)
-    highs_df = all_df[(all_df["broke_high_90d"]) | (all_df["broke_high_180d"])].copy()
-    highs_df = highs_df.sort_values(
-        ["broke_high_180d", "broke_high_90d", "carry_funding_pct", "symbol"],
-        ascending=[False, False, False, True],
+    range_events_df = all_df[pd.to_numeric(all_df["range_breakout_score"], errors="coerce").fillna(0.0) > 0.0].copy()
+    range_events_df = range_events_df.sort_values(
+        ["range_breakout_score", "range_high_break_count", "range_low_break_count", "carry_funding_pct", "symbol"],
+        ascending=[False, False, False, False, True],
     )
-    return highs_df, all_df
+    return range_events_df, all_df
 
 
 @_cache_data(ttl=120, show_spinner=False)
@@ -5087,6 +5163,18 @@ def render_breakout_dashboard() -> None:
                 format="%d",
                 help="How many of the 5D, 20D, 90D, and 180D highs broke in the latest move.",
             ),
+            "range_breakout_event": st.column_config.TextColumn(
+                "Range Event",
+                help="20D/90D/180D high or low events hit in the latest scan window.",
+            ),
+            "range_breakout_side": st.column_config.TextColumn("Range Side"),
+            "range_breakout_score": st.column_config.NumberColumn(
+                "Range Event Score",
+                format="%.1f",
+                help="Scores 20D/90D/180D high and low events, with longer-window breaks weighted more heavily.",
+            ),
+            "range_high_break_count": st.column_config.NumberColumn("High Breaks", format="%d"),
+            "range_low_break_count": st.column_config.NumberColumn("Low Breaks", format="%d"),
             "short_squeeze_summary": st.column_config.TextColumn("Squeeze Summary"),
             "short_squeeze_top_factors": st.column_config.TextColumn("Squeeze Factors"),
             "short_squeeze_offsets": st.column_config.TextColumn("Squeeze Offsets"),
@@ -5731,6 +5819,11 @@ def render_breakout_dashboard() -> None:
             "trade_bucket",
             "trade_bucket_score",
             "trade_bucket_note",
+            "range_breakout_event",
+            "range_breakout_side",
+            "range_breakout_score",
+            "range_high_break_count",
+            "range_low_break_count",
             "pre_pump_candidate_flag",
             "convexity_score",
             "convexity_entry_score",
@@ -5859,15 +5952,20 @@ def render_breakout_dashboard() -> None:
                 column_config=breakout_column_config,
             )
 
-        st.subheader("Pairs that broke 90D/180D highs in the last 24h")
+        st.subheader("Pairs that hit 20D/90D/180D highs or lows in the last 24h")
         if highs_df.empty:
-            st.info("No 90D/180D upside breakouts detected in the scanned universe.")
+            st.info("No 20D/90D/180D high/low events detected in the scanned universe.")
         else:
             display_cols = [
                 "symbol",
                 "base_asset",
                 "trade_bucket",
                 "trade_bucket_score",
+                "range_breakout_event",
+                "range_breakout_side",
+                "range_breakout_score",
+                "range_high_break_count",
+                "range_low_break_count",
                 "market_type",
                 "last_price",
                 "funding_countdown_hours",
@@ -5887,12 +5985,19 @@ def render_breakout_dashboard() -> None:
                 "high_24h",
                 "high_5d",
                 "high_20d",
+                "low_20d",
                 "high_90d",
+                "low_90d",
                 "high_180d",
+                "low_180d",
                 "broke_high_5d",
+                "broke_low_5d",
                 "broke_high_20d",
+                "broke_low_20d",
                 "broke_high_90d",
+                "broke_low_90d",
                 "broke_high_180d",
+                "broke_low_180d",
             ]
             st.dataframe(
                 _display_frame(highs_df, display_cols),

@@ -155,13 +155,15 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
     dist_20d = _num(output, "distance_to_high_20d_pct", 35.0)
     terminal = _num(output, "terminal_edge_score")
     ask_depth_to_vol = _num(output, "ask_depth_to_24h_volume_pct", 0.15)
+    range_event_score = _num(output, "range_breakout_score")
 
     trigger_score = _clip(
         _score_linear(oi, 0.25, 5.0) * 0.28
-        + _score_band(hour_return, -2.0, 0.2, 7.5, 18.0) * 0.20
-        + _score_linear(close_loc, 52.0, 90.0) * 0.18
-        + _score_linear(volume_signal, 1.05, 4.0) * 0.18
-        + _score_linear(trade_count, 1.05, 3.0) * 0.16
+        + _score_band(hour_return, -2.0, 0.2, 7.5, 18.0) * 0.18
+        + _score_linear(close_loc, 52.0, 90.0) * 0.17
+        + _score_linear(volume_signal, 1.05, 4.0) * 0.17
+        + _score_linear(trade_count, 1.05, 3.0) * 0.14
+        + range_event_score * 0.06
     )
     reclaim_score = _clip(
         _score_linear(dist_5d.abs(), 0.0, 12.0, invert=True) * 0.55

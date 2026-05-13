@@ -3,6 +3,7 @@ import pandas as pd
 from discord_flag_formatter import (
     build_discord_flag_card,
     infer_convex_trigger,
+    infer_why_flagged,
     infer_liquidity_warning,
     infer_perp_positioning,
     infer_risk_level,
@@ -39,6 +40,20 @@ def test_high_short_pressure_and_rising_oi_produces_convex_trigger() -> None:
     )
 
     assert "short crowd remains crowded" in infer_convex_trigger(row)
+
+
+def test_range_breakout_event_is_included_in_flag_evidence() -> None:
+    row = pd.Series(
+        {
+            "symbol": "RANGEUSDT",
+            "trade_bucket_score": 78,
+            "range_breakout_event": "20D high, 90D high hit",
+            "oi_delta_pct": 0.5,
+        }
+    )
+
+    assert "20D high, 90D high hit" in infer_why_flagged(row)
+    assert "20D high, 90D high hit" in infer_convex_trigger(row)
 
 
 def test_low_holder_data_still_builds_valid_card() -> None:

@@ -176,6 +176,9 @@ def terminal_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     vol_x = _first_float(row, "daily_quote_volume_multiple", "hour_volume_multiple")
     if vol_x is not None and vol_x > 0:
         parts.append(f"volume {vol_x:.2f}x")
+    range_event = str(row.get("range_breakout_event", "") or "").strip() if hasattr(row, "get") else ""
+    if range_event:
+        parts.append(range_event)
     top10 = _first_float(row, "top10_holder_pct")
     if top10 is not None:
         parts.append(f"top10 holders {_fmt_pct(top10)}")
@@ -239,9 +242,10 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
     ignition_score = _clip(
         _num(output, "price_volume_ignition_score") * 0.28
         + _num(output, "convexity_preignition_score") * 0.22
-        + _num(output, "trend_confluence_score") * 0.18
+        + _num(output, "trend_confluence_score") * 0.14
         + _num(output, "spot_flow_confluence_score") * 0.16
-        + _num(output, "perp_squeeze_confluence_score") * 0.16
+        + _num(output, "perp_squeeze_confluence_score") * 0.14
+        + _num(output, "range_breakout_score") * 0.06
     )
     liquidity_score = _clip(
         100.0

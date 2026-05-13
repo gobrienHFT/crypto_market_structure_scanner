@@ -34,6 +34,23 @@ def test_timing_model_identifies_triggering_setup() -> None:
     assert "short accounts 61.0%" in row["timing_observed_trigger"]
 
 
+def test_range_breakout_event_improves_timing_trigger() -> None:
+    base = {
+        "symbol": "RANGEUSDT",
+        "terminal_edge_score": 55.0,
+        "short_account_pct": 52.0,
+        "oi_delta_pct": 0.8,
+        "hour_return_pct": 1.0,
+        "hour_volume_multiple": 1.2,
+        "hour_trade_count_multiple": 1.1,
+        "hour_close_location_pct": 61.0,
+    }
+    without_event = apply_timing_model(pd.DataFrame([base])).iloc[0]
+    with_event = apply_timing_model(pd.DataFrame([{**base, "range_breakout_score": 76.0}])).iloc[0]
+
+    assert with_event["timing_trigger_score"] > without_event["timing_trigger_score"]
+
+
 def test_timing_model_penalizes_late_wicky_move() -> None:
     row = apply_timing_model(
         pd.DataFrame(

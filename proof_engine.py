@@ -29,6 +29,9 @@ ARCHIVE_COLUMNS = [
     "oi_delta_pct",
     "quote_volume_24h",
     "trade_bucket_note",
+    "range_breakout_event",
+    "range_breakout_side",
+    "range_breakout_score",
     "holder_text",
     "terminal_edge_score",
     "terminal_setup_archetype",
@@ -209,6 +212,9 @@ def reason_tags(row: pd.Series | dict[str, Any]) -> str:
         tags.insert(0, f"score {score:.0f}")
     if short_pct is not None and short_pct >= 55:
         tags.append(f"short accounts {short_pct:.1f}%")
+    range_event = _row_text(row, "range_breakout_event")
+    if range_event:
+        tags.append(range_event)
     if _safe_float(row.get("top10_holder_pct")) is not None:
         tags.append(f"top10 holders {_safe_float(row.get('top10_holder_pct')):.1f}%")
     return _dedupe_tags(tags)
@@ -223,6 +229,9 @@ def reason_tag_list(row: pd.Series | dict[str, Any]) -> list[str]:
         tags.insert(0, "high_scanner_score")
     if short_pct is not None and short_pct >= 55:
         tags.append("short_account_pressure")
+    range_side = _row_text(row, "range_breakout_side").lower()
+    if range_side:
+        tags.append(f"{range_side}_range_break")
     if _safe_float(row.get("top10_holder_pct")) is not None:
         tags.append("holder_concentration")
     return _dedupe_tag_list(tags)
@@ -326,6 +335,9 @@ def _flag_json_record(row: pd.Series | dict[str, Any], *, timestamp: str, scan_m
         "holder_top10_pct": top10,
         "holder_top100_pct": top100,
         "chain_concentration": chain_concentration(row, holder_text),
+        "range_breakout_event": _row_text(row, "range_breakout_event"),
+        "range_breakout_side": _row_text(row, "range_breakout_side"),
+        "range_breakout_score": _first_float(row, "range_breakout_score"),
         "short_account_pct": _pct_value(row.get("short_account_pct")),
         "long_account_pct": _pct_value(row.get("long_account_pct")),
         "oi_state": _state_label(oi_change, positive="rising", negative="falling", flat="flat"),

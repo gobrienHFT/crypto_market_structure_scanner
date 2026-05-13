@@ -198,10 +198,13 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
     score = _score(row)
     short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     bits: list[str] = []
+    range_event = _first_text(row, ("range_breakout_event",))
     if score:
         bits.append(f"scanner score {score:.0f}/100")
     if short_pct is not None and short_pct >= 50.0:
         bits.append(f"{short_pct:.1f}% short-account pressure")
+    if range_event:
+        bits.append(range_event)
     if _has_note(row, "breakout"):
         bits.append("breakout pressure")
     if _has_note(row, "controlled float", "float trap", "low float"):
@@ -220,7 +223,10 @@ def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
     oi_delta = _first_float(row, ("oi_delta_pct", "oi_value_change_since_scan_pct"))
     price_24h = _first_float(row, ("price_change_24h_pct", "change_24h_pct", "day_change_pct"))
     volume_multiple = _first_float(row, ("hour_volume_multiple", "daily_quote_volume_multiple"))
+    range_event = _first_text(row, ("range_breakout_event",))
 
+    if range_event and (oi_delta is None or oi_delta >= 0.0):
+        return f"{range_event} while flow conditions remain under review."
     if short_pct is not None and short_pct >= 60.0 and (oi_delta is None or oi_delta >= 0.0):
         return "short crowd remains crowded while OI holds or expands; reclaim pressure can create reflexive conditions."
     if _has_note(row, "taker buyers", "strong hourly close"):
