@@ -53,14 +53,43 @@ def test_discord_access_tier_resolves_from_roles_and_defaults(monkeypatch) -> No
     assert not bot._tier_allows("free", "paid")
 
 
-def test_trade_bot_send_failure_is_reported_without_raising() -> None:
+def test_trade_bot_send_failure_is_reported_without_raising(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("TRADE_BOT_DISCORD_WEBHOOK_URL", raising=False)
+
     class FailingChannel:
         async def send(self, _message: str) -> None:
             raise RuntimeError("missing access")
 
     error = bot.asyncio.run(bot._safe_trade_bot_send(FailingChannel(), "hello"))
-    assert "RuntimeError" in error
+    assert "channel RuntimeError" in error
     assert "missing access" in error
+
+
+def test_trade_bot_send_prefers_webhook_by_default(monkeypatch) -> None:
+    class FailingChannel:
+        async def send(self, _message: str) -> None:
+            raise AssertionError("channel send should not be used when webhook succeeds")
+
+    class Response:
+        status_code = 204
+        text = ""
+
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append((url, json, timeout))
+        return Response()
+
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
+    monkeypatch.delenv("TRADE_BOT_DISCORD_SEND_METHOD", raising=False)
+    monkeypatch.setattr(bot.requests, "post", fake_post)
+
+    error = bot.asyncio.run(bot._safe_trade_bot_send(FailingChannel(), "hello"))
+    assert error == ""
+    assert calls
+    assert calls[0][0] == "https://discord.test/webhook"
+    assert "hello" in calls[0][1]["content"]
 
 
 def test_trade_bot_send_uses_webhook_fallback(monkeypatch) -> None:
@@ -79,6 +108,7 @@ def test_trade_bot_send_uses_webhook_fallback(monkeypatch) -> None:
         return Response()
 
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
+    monkeypatch.setenv("TRADE_BOT_DISCORD_SEND_METHOD", "channel_first")
     monkeypatch.setattr(bot.requests, "post", fake_post)
 
     error = bot.asyncio.run(bot._safe_trade_bot_send(FailingChannel(), "hello"))

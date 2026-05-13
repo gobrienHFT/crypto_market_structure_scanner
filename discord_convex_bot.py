@@ -469,26 +469,53 @@ def _trade_bot_text(message: str) -> str:
 
 
 async def _safe_trade_bot_send(channel: Any, message: str) -> str:
-    try:
-        await channel.send(_trade_bot_text(message))
-        return ""
-    except Exception as exc:
-        channel_error = f"{type(exc).__name__}: {exc}"
     webhook_url = _env_value("TRADE_BOT_DISCORD_WEBHOOK_URL", _env_value("DISCORD_WEBHOOK_URL"))
-    if not webhook_url:
-        return channel_error
-    try:
-        response = await asyncio.to_thread(
-            requests.post,
-            webhook_url,
-            json={"username": "Convex Trade Setup Bot", "content": _trade_bot_text(message)},
-            timeout=15,
-        )
-        if response.status_code < 300:
+    send_method = _env_value("TRADE_BOT_DISCORD_SEND_METHOD", "webhook_first").lower()
+    errors: list[str] = []
+
+    async def try_webhook() -> str:
+        if not webhook_url:
+            return "webhook not configured"
+        try:
+            response = await asyncio.to_thread(
+                requests.post,
+                webhook_url,
+                json={"username": "Convex Trade Setup Bot", "content": _trade_bot_text(message)},
+                timeout=15,
+            )
+            if response.status_code < 300:
+                return ""
+            return f"webhook HTTP {response.status_code}: {response.text[:180]}"
+        except Exception as webhook_exc:
+            return f"webhook {type(webhook_exc).__name__}: {webhook_exc}"
+
+    async def try_channel() -> str:
+        try:
+            await channel.send(_trade_bot_text(message))
             return ""
-        return f"{channel_error}; webhook HTTP {response.status_code}: {response.text[:180]}"
-    except Exception as webhook_exc:
-        return f"{channel_error}; webhook {type(webhook_exc).__name__}: {webhook_exc}"
+        except Exception as exc:
+            return f"channel {type(exc).__name__}: {exc}"
+
+    if send_method in {"webhook", "webhook_first"}:
+        error = await try_webhook()
+        if not error:
+            return ""
+        errors.append(error)
+        if send_method == "webhook":
+            return "; ".join(errors)
+
+    error = await try_channel()
+    if not error:
+        return ""
+    errors.append(error)
+
+    if send_method not in {"webhook", "webhook_first"}:
+        error = await try_webhook()
+        if not error:
+            return ""
+        errors.append(error)
+
+    return "; ".join(errors)
 
 
 async def _trade_bot_loop(channel: Any, config: TradeBotConfig) -> None:
