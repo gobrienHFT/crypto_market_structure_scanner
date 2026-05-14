@@ -105,6 +105,7 @@ def _metric_note(row: Mapping[str, Any] | pd.Series) -> str:
     return _first_text(
         row,
         (
+            "terminal_structural_opacity_note",
             "trade_bucket_note",
             "convexity_summary",
             "rave_lab_setup_note",
@@ -118,6 +119,7 @@ def _has_note(row: Mapping[str, Any] | pd.Series, *needles: str) -> bool:
     haystack = " | ".join(
         _first_text(row, (key,))
         for key in (
+            "terminal_structural_opacity_note",
             "trade_bucket_note",
             "convexity_summary",
             "rave_lab_setup_note",
@@ -126,6 +128,26 @@ def _has_note(row: Mapping[str, Any] | pd.Series, *needles: str) -> bool:
         )
     ).lower()
     return any(needle.lower() in haystack for needle in needles)
+
+
+def _opaque_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(
+        row,
+        (
+            "terminal_hidden_float_reflexivity_score",
+            "hidden_float_reflexivity_score",
+            "terminal_opaque_supply_score",
+            "opaque_supply_score",
+        ),
+    ) or 0.0
+
+
+def _exchange_flow_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("terminal_exchange_flow_score", "insider_cex_flow_score")) or 0.0
+
+
+def _private_unlock_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("terminal_private_unlock_score", "private_unlock_overhang_score")) or 0.0
 
 
 def infer_risk_level(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
@@ -184,9 +206,12 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
     else:
         flow = "flow confirmation pending"
 
-    if (top5 is not None and top5 >= 60.0) or (top10 is not None and top10 >= 70.0) or low_float >= 60.0:
+    opaque_score = _opaque_score(row)
+    if opaque_score >= 70.0:
+        float_text = "opaque-float / hidden-unlock risk"
+    elif (top5 is not None and top5 >= 60.0) or (top10 is not None and top10 >= 70.0) or low_float >= 60.0:
         float_text = "thin upside liquidity"
-    elif _has_note(row, "controlled float", "float trap", "low float"):
+    elif _has_note(row, "controlled float", "float trap", "low float", "opaque public float"):
         float_text = "controlled-float risk"
     else:
         float_text = "float risk unconfirmed"
@@ -207,7 +232,11 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
         bits.append(range_event)
     if _has_note(row, "breakout"):
         bits.append("breakout pressure")
-    if _has_note(row, "controlled float", "float trap", "low float"):
+    if _opaque_score(row) >= 60.0 or _private_unlock_score(row) >= 60.0:
+        bits.append("opaque supply/unlock risk")
+    if _exchange_flow_score(row) >= 60.0:
+        bits.append("issuer-linked CEX-flow signal")
+    if _has_note(row, "controlled float", "float trap", "low float", "opaque public float"):
         bits.append("controlled-float risk")
     if _has_note(row, "MM/sponsor", "DWF", "venue support", "CEX/spot lane"):
         bits.append("venue/sponsor-flow signal")
@@ -253,6 +282,10 @@ def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str
     top100 = _holder_pct(holder_text, "Top100")
     range_pct = _first_float(row, ("range_24h_pct",))
     volume = _first_float(row, ("quote_volume_24h", "volume_24h"))
+    if _opaque_score(row) >= 70.0 or _private_unlock_score(row) >= 70.0:
+        return "reported float may not capture private unlock/OTC supply; visible liquidity can reprice abruptly."
+    if _exchange_flow_score(row) >= 70.0:
+        return "clustered CEX-flow signal; visible depth can change quickly around stress."
     if top100 is not None and top100 >= 95.0:
         return f"top 100 holders control {top100:.1f}% observed supply; exits can gap if flow flips."
     if top5 is not None and top5 >= 60.0:
@@ -269,6 +302,8 @@ def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str
 def infer_dead_setup(row: Mapping[str, Any] | pd.Series) -> str:
     if _has_note(row, "late", "chase"):
         return "late extension without fresh OI/volume confirmation."
+    if _opaque_score(row) >= 70.0 or _private_unlock_score(row) >= 70.0:
+        return "exchange-flow dries up, OI rolls over, and unlock/holder evidence no longer supports float scarcity."
     return "OI contracts, short pressure unwinds, reclaim fails, and volume fades across the next scan window."
 
 
@@ -276,7 +311,7 @@ def infer_hold_longer_condition(row: Mapping[str, Any] | pd.Series) -> str:
     short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     if short_pct is not None and short_pct >= 60.0:
         return "higher lows continue while short pressure stays elevated and OI/volume expand without a liquidation flush."
-    if _has_note(row, "controlled float", "float trap"):
+    if _opaque_score(row) >= 70.0 or _has_note(row, "controlled float", "float trap", "opaque public float"):
         return "structure remains controlled-float, liquidity stays thin, and reclaim levels keep holding."
     return "trend keeps reclaiming levels with expanding volume and no OI flush."
 

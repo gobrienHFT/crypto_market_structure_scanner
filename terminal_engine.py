@@ -14,10 +14,16 @@ TERMINAL_SCORE_COLUMNS = [
     "terminal_short_pressure_score",
     "terminal_ignition_score",
     "terminal_runway_score",
+    "terminal_opaque_supply_score",
+    "terminal_exchange_flow_score",
+    "terminal_private_unlock_score",
+    "terminal_information_asymmetry_score",
+    "terminal_hidden_float_reflexivity_score",
     "terminal_risk_score",
     "terminal_market_regime",
     "terminal_liquidity_reality",
     "terminal_setup_archetype",
+    "terminal_structural_opacity_note",
     "terminal_evidence_summary",
     "terminal_confirmation_needed",
     "terminal_invalidation_map",
@@ -133,6 +139,17 @@ def infer_liquidity_reality(row: Mapping[str, Any] | pd.Series) -> str:
     spread = _first_float(row, "coinbase_bid_ask_spread_pct")
     quote_volume = _first_float(row, "quote_volume_24h")
     top100 = _first_float(row, "top100_holder_pct")
+    hidden_float = _first_float(
+        row,
+        "terminal_hidden_float_reflexivity_score",
+        "hidden_float_reflexivity_score",
+        "terminal_opaque_supply_score",
+    )
+    exchange_flow = _first_float(row, "terminal_exchange_flow_score", "insider_cex_flow_score")
+    if hidden_float is not None and hidden_float >= 70:
+        return "opaque float; reported supply may be incomplete"
+    if exchange_flow is not None and exchange_flow >= 70:
+        return "clustered CEX-flow; visible liquidity can reprice abruptly"
     if top100 is not None and top100 >= 95:
         return "cap-table supply; exits can gap"
     if ask_depth is not None and ask_depth < 75_000:
@@ -151,6 +168,14 @@ def infer_setup_archetype(row: Mapping[str, Any] | pd.Series) -> str:
         return "pre-ignition compression"
     if _row_bool(row, "dormant_short_fuse_flag"):
         return "low-vol short-fuse"
+    hidden_float = _first_float(
+        row,
+        "terminal_hidden_float_reflexivity_score",
+        "hidden_float_reflexivity_score",
+        "terminal_opaque_supply_score",
+    )
+    if hidden_float is not None and hidden_float >= 70:
+        return "opaque-float reflexivity"
     if _row_bool(row, "rave_lab_extreme_flag"):
         return "controlled-float reflexivity"
     if _row_bool(row, "forced_buying_setup_flag"):
@@ -182,12 +207,39 @@ def terminal_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     top10 = _first_float(row, "top10_holder_pct")
     if top10 is not None:
         parts.append(f"top10 holders {_fmt_pct(top10)}")
+    hidden_float = _first_float(row, "terminal_hidden_float_reflexivity_score", "hidden_float_reflexivity_score")
+    if hidden_float is not None and hidden_float >= 50:
+        parts.append(f"opaque-float {hidden_float:.0f}/100")
+    exchange_flow = _first_float(row, "terminal_exchange_flow_score", "insider_cex_flow_score")
+    if exchange_flow is not None and exchange_flow >= 50:
+        parts.append(f"CEX-flow {exchange_flow:.0f}/100")
+    private_unlock = _first_float(row, "terminal_private_unlock_score", "private_unlock_overhang_score")
+    if private_unlock is not None and private_unlock >= 50:
+        parts.append(f"private unlock/OTC {private_unlock:.0f}/100")
     ath = _first_float(row, "ath_multiple")
     if ath is not None:
         parts.append(f"{ath:.1f}x ATH runway")
     if not parts:
         parts.append("market-structure evidence pending")
     return " | ".join(parts[:7])
+
+
+def terminal_structural_opacity_note(row: Mapping[str, Any] | pd.Series) -> str:
+    notes: list[str] = []
+    hidden_float = _first_float(row, "terminal_hidden_float_reflexivity_score", "hidden_float_reflexivity_score") or 0.0
+    opaque_supply = _first_float(row, "terminal_opaque_supply_score", "opaque_supply_score") or 0.0
+    private_unlock = _first_float(row, "terminal_private_unlock_score", "private_unlock_overhang_score") or 0.0
+    exchange_flow = _first_float(row, "terminal_exchange_flow_score", "insider_cex_flow_score") or 0.0
+    info_asymmetry = _first_float(row, "terminal_information_asymmetry_score", "private_info_asymmetry_score") or 0.0
+    if hidden_float >= 70 or opaque_supply >= 70:
+        notes.append("opaque public float; private supply paths require review")
+    if private_unlock >= 60:
+        notes.append("private unlock/OTC overhang signal")
+    if exchange_flow >= 60:
+        notes.append("issuer-linked or insider-linked CEX-flow cluster signal")
+    if info_asymmetry >= 60:
+        notes.append("public token distribution data appears incomplete")
+    return " | ".join(notes) if notes else "no additional opaque-supply markers in current scan"
 
 
 def terminal_confirmation_needed(row: Mapping[str, Any] | pd.Series) -> str:
@@ -225,12 +277,59 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         return output
 
     output = frame.copy()
+    insider_control_pct = _clip(_num(output, "insider_supply_control_estimate_pct"))
+    cex_deposit_pct = _clip(_num(output, "insider_cex_deposit_pct"))
+    cex_withdrawal_pct = _clip(_num(output, "cex_withdrawal_recent_pct"))
+    otc_discount_pct = _clip(_num(output, "hidden_otc_discount_pct"))
+    distribution_transparency_risk = _clip(100.0 - _num(output, "distribution_transparency_score", default=100.0))
+
+    opaque_supply_score = _clip(
+        _num(output, "centralized_ownership_score") * 0.22
+        + _num(output, "float_trap_score") * 0.14
+        + insider_control_pct * 0.26
+        + _bool(output, "hidden_otc_terms_flag").astype(float) * 7.0
+        + _bool(output, "loan_default_token_repayment_flag").astype(float) * 7.0
+        + _bool(output, "vesting_terms_changed_flag").astype(float) * 6.0
+        + distribution_transparency_risk * 0.18
+    )
+    exchange_flow_score = _clip(
+        _clip(cex_deposit_pct * 1.2) * 0.34
+        + _clip(cex_withdrawal_pct * 1.4) * 0.28
+        + _clip(_num(output, "exchange_withdrawal_cluster_count") * 10.0) * 0.14
+        + _clip(_num(output, "exchange_withdrawal_cluster_pct") * 1.15) * 0.14
+        + _bool(output, "borrower_wallet_matches_buybacks_flag").astype(float) * 5.0
+        + _bool(output, "signer_linked_cluster_flag").astype(float) * 5.0
+    )
+    private_unlock_score = _clip(
+        _clip(otc_discount_pct * 1.25) * 0.26
+        + _num(output, "otc_unlock_cluster_score") * 0.20
+        + _num(output, "vesting_opacity_score") * 0.18
+        + _bool(output, "otc_unlocks_known_flag").astype(float) * 6.0
+        + _bool(output, "kol_allocation_unlock_risk_flag").astype(float) * 6.0
+        + _bool(output, "vesting_terms_changed_flag").astype(float) * 8.0
+        + _bool(output, "hidden_otc_terms_flag").astype(float) * 8.0
+    )
+    information_asymmetry_score = _clip(
+        opaque_supply_score * 0.34
+        + private_unlock_score * 0.30
+        + exchange_flow_score * 0.22
+        + _bool(output, "same_actor_prior_token_pattern_flag").astype(float) * 7.0
+        + _bool(output, "borrower_wallet_matches_buybacks_flag").astype(float) * 4.0
+        + _bool(output, "loan_default_token_repayment_flag").astype(float) * 3.0
+    )
+    hidden_float_reflexivity_score = _clip(
+        opaque_supply_score * 0.32
+        + exchange_flow_score * 0.25
+        + private_unlock_score * 0.23
+        + information_asymmetry_score * 0.20
+    )
     float_score = _clip(
-        _num(output, "centralized_ownership_score") * 0.32
-        + _num(output, "low_float_score") * 0.28
-        + _num(output, "float_trap_score") * 0.20
-        + _num(output, "valuation_trap_score") * 0.12
-        + _num(output, "rave_lab_setup_score") * 0.08
+        _num(output, "centralized_ownership_score") * 0.26
+        + _num(output, "low_float_score") * 0.22
+        + _num(output, "float_trap_score") * 0.18
+        + _num(output, "valuation_trap_score") * 0.10
+        + _num(output, "rave_lab_setup_score") * 0.06
+        + hidden_float_reflexivity_score * 0.18
     )
     short_score = _clip(
         _num(output, "short_dominance_score") * 0.32
@@ -274,12 +373,13 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         - _num(output, "crime_largecap_penalty_score") * 0.16
     )
     edge = _clip(
-        float_score * 0.22
+        float_score * 0.24
         + short_score * 0.20
         + ignition_score * 0.18
         + runway_score * 0.16
         + regime_score * 0.10
         + liquidity_score * 0.09
+        + hidden_float_reflexivity_score * 0.06
         - late_risk * 0.10
         + _bool(output, "pre_pump_precision_flag").astype(float) * 12.0
         + _bool(output, "dormant_short_fuse_flag").astype(float) * 8.0
@@ -291,12 +391,18 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
     output["terminal_ignition_score"] = ignition_score
     output["terminal_liquidity_score"] = liquidity_score
     output["terminal_runway_score"] = runway_score
+    output["terminal_opaque_supply_score"] = opaque_supply_score
+    output["terminal_exchange_flow_score"] = exchange_flow_score
+    output["terminal_private_unlock_score"] = private_unlock_score
+    output["terminal_information_asymmetry_score"] = information_asymmetry_score
+    output["terminal_hidden_float_reflexivity_score"] = hidden_float_reflexivity_score
     output["terminal_risk_score"] = late_risk
     output["terminal_regime_score"] = regime_score
     output["terminal_edge_score"] = edge
     output["terminal_market_regime"] = output.apply(infer_market_regime, axis=1)
     output["terminal_liquidity_reality"] = output.apply(infer_liquidity_reality, axis=1)
     output["terminal_setup_archetype"] = output.apply(infer_setup_archetype, axis=1)
+    output["terminal_structural_opacity_note"] = output.apply(terminal_structural_opacity_note, axis=1)
     output["terminal_evidence_summary"] = output.apply(terminal_evidence_summary, axis=1)
     output["terminal_confirmation_needed"] = output.apply(terminal_confirmation_needed, axis=1)
     output["terminal_invalidation_map"] = output.apply(terminal_invalidation_map, axis=1)
@@ -319,6 +425,7 @@ def build_setup_dossier(row: Mapping[str, Any] | pd.Series) -> str:
         f"- Regime: {_first_text(row, 'terminal_market_regime') or infer_market_regime(row)}",
         f"- Liquidity reality: {_first_text(row, 'terminal_liquidity_reality') or infer_liquidity_reality(row)}",
         f"- Evidence: {_first_text(row, 'terminal_evidence_summary') or terminal_evidence_summary(row)}",
+        f"- Structural opacity: {_first_text(row, 'terminal_structural_opacity_note') or terminal_structural_opacity_note(row)}",
         f"- Confirmation needed: {_first_text(row, 'terminal_confirmation_needed') or terminal_confirmation_needed(row)}",
         f"- Invalidation map: {_first_text(row, 'terminal_invalidation_map') or terminal_invalidation_map(row)}",
         "",
@@ -332,6 +439,9 @@ def build_setup_dossier(row: Mapping[str, Any] | pd.Series) -> str:
         f"- Top10 holder proxy: {_fmt_pct(_first_float(row, 'top10_holder_pct'))}",
         f"- FDV/market cap: {_fmt_num(_first_float(row, 'fdv_to_market_cap'))}",
         f"- ATH runway: {_fmt_num(_first_float(row, 'ath_multiple'))}x",
+        f"- Opaque supply score: {_fmt_num(_first_float(row, 'terminal_opaque_supply_score'))}/100",
+        f"- Exchange-flow score: {_fmt_num(_first_float(row, 'terminal_exchange_flow_score'))}/100",
+        f"- Private unlock/OTC score: {_fmt_num(_first_float(row, 'terminal_private_unlock_score'))}/100",
         "",
         "## Research Notes",
         "",

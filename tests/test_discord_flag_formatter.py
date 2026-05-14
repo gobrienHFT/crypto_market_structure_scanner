@@ -144,3 +144,27 @@ def test_language_sanitizer_rewrites_trade_call_terms() -> None:
     assert "worth holding longer" not in clean.lower()
     assert "buyers" not in clean.lower()
     assert "market-structure flag" in clean
+
+
+def test_opaque_supply_pattern_uses_neutral_structural_language() -> None:
+    row = pd.Series(
+        {
+            "symbol": "LABUSDT",
+            "trade_bucket_score": 91,
+            "short_account_pct": 54,
+            "long_account_pct": 46,
+            "terminal_hidden_float_reflexivity_score": 84,
+            "terminal_exchange_flow_score": 76,
+            "terminal_private_unlock_score": 88,
+            "terminal_structural_opacity_note": "opaque public float; private supply paths require review",
+        }
+    )
+
+    card = build_discord_flag_card(row)
+    lowered = card.lower()
+
+    assert "opaque supply/unlock risk" in card
+    assert "issuer-linked CEX-flow signal" in card
+    assert "reported float may not capture private unlock/OTC supply" in card
+    for forbidden in ("crime", "scam", "fraud", "illegal", "manipulation"):
+        assert forbidden not in lowered
