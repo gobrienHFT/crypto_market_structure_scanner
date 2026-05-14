@@ -23,6 +23,8 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/coin") == ""
     assert bot._normalize_symbol_query("/timing") == ""
     assert bot._normalize_symbol_query("/dossier") == ""
+    assert bot._normalize_symbol_query("/cexflow") == ""
+    assert bot._normalize_symbol_query("/cex_flow") == ""
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
@@ -206,6 +208,58 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
     assert "BBBUSDT" in output
     assert "timing" in output
     assert output.index("BBBUSDT") < output.index("AAAUSDT")
+
+
+def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "old_latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "OLDUSDT",
+                "cex_deposit_flow_score": 99,
+                "cex_deposit_flow_flag": True,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "old",
+            }
+        ]
+    ).to_csv(cache, index=False)
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "PLAYUSDT",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 3,
+                "cex_deposit_24h_token_amount": 2_500_000,
+                "cex_deposit_24h_max_amount": 1_200_000,
+                "cex_deposit_24h_total_pct_supply": 2.5,
+                "cex_deposit_24h_target_exchanges": "Bitget, Kraken",
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "cex_deposit_flow_note": "concentration-gated CEX deposit flow",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "LOWUSDT",
+                "cex_deposit_flow_score": 0,
+                "cex_deposit_flow_flag": False,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_cex_flow_list(10)
+    output = "\n".join(chunks)
+
+    assert title == "Large CEX token-transfer flow"
+    assert "Source: fresh Deep scan" in output
+    assert "PLAYUSDT" in output
+    assert "Bitget" in output
+    assert "LOWUSDT" not in output
+    assert "OLDUSDT" not in output
 
 
 def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monkeypatch) -> None:

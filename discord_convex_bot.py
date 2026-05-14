@@ -69,6 +69,16 @@ def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
     return parsed
 
 
+def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+    try:
+        parsed = float(str(_env_value(name, str(default))).strip())
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    return parsed
+
+
 def _env_csv_ints(name: str) -> set[int]:
     values: set[int] = set()
     for chunk in re.split(r"[,;\s]+", _env_value(name, "")):
@@ -86,6 +96,42 @@ def _safe_float(value: Any) -> float | None:
     if pd.isna(parsed):
         return None
     return parsed
+
+
+def _boolish_series(series: Any, *, index: pd.Index | None = None) -> pd.Series:
+    if not isinstance(series, pd.Series):
+        if series is None and index is not None:
+            series = pd.Series(False, index=index)
+        else:
+            series = pd.Series(series if series is not None else [])
+            if index is not None and len(series) == len(index):
+                series.index = index
+    return series.fillna(False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
+
+
+def _fmt_compact_number(value: Any) -> str:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return "n/a"
+    for suffix, divisor in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+        if abs(parsed) >= divisor:
+            return f"{parsed / divisor:.2f}{suffix}"
+    return f"{parsed:.2f}".rstrip("0").rstrip(".")
+
+
+def _chunk_text_lines(lines: list[str], *, max_chars: int = 1850) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        candidate = "\n".join([*current, line]).strip()
+        if current and len(candidate) > max_chars:
+            chunks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        chunks.append("\n".join(current).strip())
+    return chunks
 
 
 def _normalize_tier(raw_tier: str) -> str:
@@ -143,6 +189,7 @@ def _feature_required_tier(feature: str) -> str:
         "terminal": "paid",
         "dossier": "paid",
         "timing": "paid",
+        "cexflow": "paid",
         "startbot": "pro",
         "stopbot": "pro",
         "tradebot_status": "pro",
@@ -207,7 +254,19 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
     if not match:
         return ""
     symbol = match.group(1).upper()
-    if symbol in {"CONVEX", "CONVEX_STATUS", "CONVEX_SCOREBOARD", "CONVEX_ARCHIVE", "COIN", "SHORTS", "TERMINAL", "TIMING", "DOSSIER"}:
+    if symbol in {
+        "CONVEX",
+        "CONVEX_STATUS",
+        "CONVEX_SCOREBOARD",
+        "CONVEX_ARCHIVE",
+        "COIN",
+        "SHORTS",
+        "TERMINAL",
+        "TIMING",
+        "DOSSIER",
+        "CEXFLOW",
+        "CEX_FLOW",
+    }:
         return ""
     if not symbol.endswith("USDT"):
         symbol = f"{symbol}USDT"
@@ -537,6 +596,61 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
 
+def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
+    scan_mode = _env_value("DISCORD_CEX_FLOW_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    frame, source = _fresh_scanner_frame(scan_mode)
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty and _source_is_unavailable(source):
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+
+    lookback_hours = _env_float("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", 24.0, minimum=1.0)
+    min_transfer = _env_float("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", 500_000.0, minimum=0.0)
+    min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
+    min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
+    header = (
+        f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
+        f"Min transfer: {_fmt_compact_number(min_transfer)} tokens | Lookback: {lookback_hours:.0f}h"
+    )
+    if frame.empty:
+        return "Large CEX token-transfer flow", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+
+    score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
+    flow = frame[flag | score.gt(0.0)].copy()
+    if flow.empty:
+        return (
+            "Large CEX token-transfer flow",
+            [header + "\n\nNo concentration-gated large CEX token-transfer flow is currently scored in the latest scan."],
+        )
+
+    flow["_cex_flow_score"] = pd.to_numeric(flow.get("cex_deposit_flow_score"), errors="coerce").fillna(0.0)
+    flow["_cex_total_pct"] = pd.to_numeric(flow.get("cex_deposit_24h_total_pct_supply"), errors="coerce").fillna(0.0)
+    flow["_cex_count"] = pd.to_numeric(flow.get("cex_deposit_24h_count"), errors="coerce").fillna(0.0)
+    flow = flow.sort_values(
+        ["_cex_flow_score", "_cex_total_pct", "_cex_count", "symbol"],
+        ascending=[False, False, False, True],
+    ).head(min(max(int(limit), 1), 100))
+
+    lines = [header, ""]
+    for _, row in flow.iterrows():
+        symbol = str(row.get("symbol", "")).upper().strip()
+        exchanges = str(row.get("cex_deposit_24h_target_exchanges", "") or "unknown CEX").strip()
+        gate = str(row.get("cex_deposit_concentration_gate", "") or "concentration gate passed").strip()
+        total_amount = _fmt_compact_number(row.get("cex_deposit_24h_token_amount"))
+        max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+        total_pct = _safe_float(row.get("cex_deposit_24h_total_pct_supply"))
+        pct_text = f" | supply {total_pct:.2f}%" if total_pct is not None and total_pct > 0 else ""
+        count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+        lines.append(
+            f"{symbol} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.1f} | "
+            f"{count} deposit(s) | {exchanges} | total {total_amount} | max {max_amount}{pct_text} | {gate}"
+        )
+    return "Large CEX token-transfer flow", _chunk_text_lines(lines)
+
+
 def _trade_bot_client() -> BinanceFuturesPublic:
     return BinanceFuturesPublic(
         timeout=_env_int("TRADE_BOT_HTTP_TIMEOUT_SECONDS", 12, minimum=3),
@@ -825,6 +939,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     guild_id_raw = _env_value("DISCORD_GUILD_ID")
     allowed_channel_raw = _env_value("DISCORD_ALLOWED_CHANNEL_ID")
     default_top_n = max(1, int(_env_value("DISCORD_CONVEX_COMMAND_TOP_N", "10")))
+    default_cexflow_top_n = _env_int("DISCORD_CEX_FLOW_TOP_N", 25, minimum=1)
     announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "0").strip().lower() in {"1", "true", "yes", "on"}
     message_content_intent_enabled = _env_bool("DISCORD_MESSAGE_CONTENT_INTENT_ENABLED", False)
     symbol_shortcuts_enabled = _env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", False) and message_content_intent_enabled
@@ -922,6 +1037,28 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed = discord.Embed(title=title, description=description, color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
+
+    cexflow_kwargs = {"name": "cexflow", "description": "Show concentration-gated large CEX token-transfer flow."}
+    if guild is not None:
+        cexflow_kwargs["guild"] = guild
+
+    @tree.command(**cexflow_kwargs)
+    async def cexflow(interaction: discord.Interaction, limit: int = default_cexflow_top_n) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("cexflow")):
+            await interaction.response.send_message(_access_denied_message("cexflow"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(_load_cex_flow_list, min(max(int(limit), 1), 100))
+        if not chunks:
+            chunks = ["No concentration-gated large CEX token-transfer flow found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
 
     startbot_kwargs = {"name": "startbot", "description": "Start the gated trade setup bot. Defaults to paper mode."}
     if guild is not None:

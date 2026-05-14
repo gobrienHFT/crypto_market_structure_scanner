@@ -127,6 +127,17 @@ def _safe_float(value: Any) -> float | None:
     return parsed
 
 
+def _boolish_series(series: Any, *, index: pd.Index | None = None) -> pd.Series:
+    if not isinstance(series, pd.Series):
+        if series is None and index is not None:
+            series = pd.Series(False, index=index)
+        else:
+            series = pd.Series(series if series is not None else [])
+            if index is not None and len(series) == len(index):
+                series.index = index
+    return series.fillna(False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
+
+
 def _holder_contract_hints_path() -> Path:
     return Path(_env_value("DISCORD_HOLDER_CONTRACTS_FILE", str(APP_DIR / "data" / "discord_holder_contracts.csv")))
 
@@ -206,6 +217,30 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         candidates = candidates[~state_text.isin(excluded_states)]
         return candidates.sort_values(["timing_score", "terminal_edge_score", "symbol"], ascending=[False, False, True]).head(top_n)
 
+    if source in {"cex_flow", "cexflow", "cex_deposit_flow"}:
+        min_flow = _env_float("DISCORD_WATCHER_MIN_CEX_FLOW_SCORE", 35.0, minimum=0.0)
+        flow_score = pd.to_numeric(
+            scored.get("cex_deposit_flow_score", pd.Series(0.0, index=scored.index)),
+            errors="coerce",
+        ).fillna(0.0)
+        flow_flag = _boolish_series(scored.get("cex_deposit_flow_flag", pd.Series(False, index=scored.index)), index=scored.index)
+        candidates = scored[flow_flag | flow_score.ge(min_flow)].copy()
+        if candidates.empty:
+            return candidates
+        candidates["watcher_alert_score"] = flow_score.loc[candidates.index]
+        candidates["_cex_total_pct"] = pd.to_numeric(
+            candidates.get("cex_deposit_24h_total_pct_supply", pd.Series(0.0, index=candidates.index)),
+            errors="coerce",
+        ).fillna(0.0)
+        candidates["_cex_count"] = pd.to_numeric(
+            candidates.get("cex_deposit_24h_count", pd.Series(0.0, index=candidates.index)),
+            errors="coerce",
+        ).fillna(0.0)
+        return candidates.sort_values(
+            ["watcher_alert_score", "_cex_total_pct", "_cex_count", "symbol"],
+            ascending=[False, False, False, True],
+        ).head(top_n)
+
     min_terminal = _env_float("DISCORD_WATCHER_MIN_TERMINAL_SCORE", 60.0, minimum=0.0)
     min_timing = _env_float("DISCORD_WATCHER_MIN_TIMING_SCORE", 55.0, minimum=0.0)
     allowed_states = {state.lower() for state in _env_csv("DISCORD_WATCHER_ALLOWED_TIMING_STATES", "Coiling,Triggering,Confirmed")}
@@ -275,8 +310,16 @@ def _update_state(state: pd.DataFrame, candidates: pd.DataFrame, alerted: pd.Dat
     new_rows: list[dict[str, Any]] = []
     existing_symbols = set(state["symbol"].astype(str).str.upper())
     for symbol, row in by_symbol.items():
-        score = _safe_float(row.get("watcher_alert_score")) or _safe_float(row.get("timing_score")) or _safe_float(row.get("terminal_edge_score")) or _safe_float(row.get("trade_bucket_score"))
-        note = str(row.get("trade_bucket_note", "")).strip()[:300]
+        score = (
+            _safe_float(row.get("watcher_alert_score"))
+            or _safe_float(row.get("cex_deposit_flow_score"))
+            or _safe_float(row.get("timing_score"))
+            or _safe_float(row.get("terminal_edge_score"))
+            or _safe_float(row.get("trade_bucket_score"))
+        )
+        note = str(row.get("cex_deposit_flow_note", "")).strip()[:300]
+        if not note:
+            note = str(row.get("trade_bucket_note", "")).strip()[:300]
         if not note:
             note = str(row.get("timing_state", "") or row.get("terminal_setup_archetype", "")).strip()[:300]
         if symbol in existing_symbols:

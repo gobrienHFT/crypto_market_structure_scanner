@@ -151,3 +151,37 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
     selected = watcher._select_alert_candidates(frame, alert_source="terminal", top_n=10)
 
     assert selected["symbol"].tolist() == ["HIGHUSDT", "LOWUSDT"]
+
+
+def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_WATCHER_MIN_CEX_FLOW_SCORE", "50")
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "LOWUSDT",
+                "cex_deposit_flow_score": 20,
+                "cex_deposit_flow_flag": False,
+                "cex_deposit_24h_total_pct_supply": 9,
+                "cex_deposit_24h_count": 10,
+            },
+            {
+                "symbol": "PLAYUSDT",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_total_pct_supply": 2.5,
+                "cex_deposit_24h_count": 3,
+            },
+            {
+                "symbol": "WATCHUSDT",
+                "cex_deposit_flow_score": 60,
+                "cex_deposit_flow_flag": False,
+                "cex_deposit_24h_total_pct_supply": 1.2,
+                "cex_deposit_24h_count": 1,
+            },
+        ]
+    )
+
+    selected = watcher._select_alert_candidates(frame, alert_source="cex_flow", top_n=10)
+
+    assert selected["symbol"].tolist() == ["PLAYUSDT", "WATCHUSDT"]
+    assert float(selected.iloc[0]["watcher_alert_score"]) == 88.0

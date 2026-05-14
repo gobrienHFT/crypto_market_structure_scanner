@@ -91,3 +91,47 @@ def test_enrich_cex_deposit_flows_adds_columns_when_disabled() -> None:
 
     for column in cex.CEX_DEPOSIT_FLOW_COLUMNS:
         assert column in output.columns
+
+
+def test_build_advanced_filter_url_supports_basescan_example() -> None:
+    url = cex.build_advanced_filter_url(
+        "base",
+        "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+        min_amount=500_000,
+    )
+
+    assert url.startswith("https://basescan.org/advanced-filter?")
+    assert "tkn=0x853a7c99227499dba9db8c3a02aa691afdebf841" in url
+    assert "txntype=2" in url
+    assert "amt=500000~999999999999" in url
+
+
+def test_enrich_cex_deposit_flows_with_zero_limit_scans_all_contract_rows(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_scan(row, **_kwargs):
+        calls.append(str(row["symbol"]))
+        result = cex._default_result()
+        result.update({"cex_deposit_flow_score": 1.0, "cex_deposit_flow_flag": True})
+        return result
+
+    monkeypatch.setattr(cex, "scan_cex_deposit_flow", fake_scan)
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "PLAYUSDT",
+                "token_platform": "base",
+                "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+            },
+            {
+                "symbol": "LABUSDT",
+                "token_platform": "bsc",
+                "token_contract": "0x7ec43cf65f1663f820427c62a5780b8f2e25593a",
+            },
+        ]
+    )
+
+    output = cex.enrich_cex_deposit_flows(frame, max_symbols=0)
+
+    assert set(calls) == {"PLAYUSDT", "LABUSDT"}
+    assert output["cex_deposit_flow_flag"].astype(bool).all()

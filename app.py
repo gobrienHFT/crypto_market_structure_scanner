@@ -6101,6 +6101,7 @@ def render_breakout_dashboard() -> None:
                 "20x ATH Runway",
                 "Structure Radar",
                 "Terminal Evidence",
+                "CEX Flow",
                 "Timing",
                 "Short Account Moves",
                 "RAVE/LAB Radar",
@@ -7272,6 +7273,123 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[9]:
             st.caption(
+                "Concentration-gated exchange-flow scan: for mapped perp tokens, the scanner checks Etherscan-style "
+                "Advanced Filter transfer pages for large token transfers into labelled CEX wallets over the last "
+                f"{CEX_DEPOSIT_FLOW_LOOKBACK_HOURS}h. Rows are only scored when holder concentration already meets the "
+                f"gate: top 10 >= {CEX_DEPOSIT_FLOW_MIN_TOP10_PCT:.0f}% or top 100 >= {CEX_DEPOSIT_FLOW_MIN_TOP100_PCT:.0f}%. "
+                "This is structural-risk research tooling, not trade instruction."
+            )
+            flow_score = pd.to_numeric(
+                all_df.get("cex_deposit_flow_score", pd.Series(0.0, index=all_df.index)),
+                errors="coerce",
+            ).fillna(0.0)
+            flow_flag_raw = all_df.get("cex_deposit_flow_flag", pd.Series(False, index=all_df.index))
+            flow_flag = flow_flag_raw.astype(str).str.lower().isin({"1", "true", "yes", "y", "on"})
+            cex_flow_df = all_df[flow_flag | flow_score.gt(0.0)].copy()
+            if not cex_flow_df.empty:
+                cex_flow_df["_cex_flow_score_sort"] = pd.to_numeric(
+                    cex_flow_df.get("cex_deposit_flow_score"), errors="coerce"
+                ).fillna(0.0)
+                cex_flow_df["_cex_total_pct_sort"] = pd.to_numeric(
+                    cex_flow_df.get("cex_deposit_24h_total_pct_supply"), errors="coerce"
+                ).fillna(0.0)
+                cex_flow_df["_cex_count_sort"] = pd.to_numeric(
+                    cex_flow_df.get("cex_deposit_24h_count"), errors="coerce"
+                ).fillna(0.0)
+                cex_flow_df = cex_flow_df.sort_values(
+                    ["_cex_flow_score_sort", "_cex_total_pct_sort", "_cex_count_sort", "symbol"],
+                    ascending=[False, False, False, True],
+                )
+            cex_flow_cols = [
+                "symbol",
+                "base_asset",
+                "terminal_edge_score",
+                "trade_bucket_score",
+                "cex_deposit_flow_score",
+                "cex_deposit_flow_flag",
+                "cex_deposit_24h_count",
+                "cex_deposit_24h_token_amount",
+                "cex_deposit_24h_max_amount",
+                "cex_deposit_24h_total_pct_supply",
+                "cex_deposit_24h_max_pct_supply",
+                "cex_deposit_24h_target_exchanges",
+                "cex_deposit_concentration_gate",
+                "cex_deposit_flow_note",
+                "cex_deposit_flow_error",
+                "cex_deposit_24h_source_url",
+                "top10_holder_pct",
+                "top100_holder_pct",
+                "centralized_ownership_score",
+                "low_float_score",
+                "short_account_pct",
+                "long_account_pct",
+                "oi_delta_pct",
+                "daily_quote_volume_multiple",
+                "day_return_pct",
+                "broke_high_20d",
+                "broke_high_90d",
+                "broke_high_180d",
+            ]
+            f1, f2, f3, f4 = st.columns(4)
+            f1.metric("Flow flags", int(len(cex_flow_df)))
+            f2.metric(
+                "Top flow score",
+                f"{float(pd.to_numeric(cex_flow_df.get('cex_deposit_flow_score', pd.Series(dtype='float')), errors='coerce').max()):.1f}"
+                if not cex_flow_df.empty
+                else "n/a",
+            )
+            f3.metric(
+                "Max 24h CEX flow % supply",
+                f"{float(pd.to_numeric(cex_flow_df.get('cex_deposit_24h_total_pct_supply', pd.Series(dtype='float')), errors='coerce').max()):.2f}%"
+                if not cex_flow_df.empty
+                else "n/a",
+            )
+            gated = all_df.get("cex_deposit_concentration_gate", pd.Series("", index=all_df.index)).astype(str).str.strip().ne("")
+            f4.metric("Concentration-gated rows", int(gated.sum()))
+
+            st.subheader("Large CEX Token-Transfer Flow")
+            if cex_flow_df.empty:
+                st.info(
+                    "No concentration-gated large CEX token-transfer flow is currently scored. "
+                    "Rows may also be blank where no contract hint exists yet for that perp symbol."
+                )
+            else:
+                st.dataframe(
+                    _display_frame(cex_flow_df.head(80), cex_flow_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show CEX-flow scan diagnostics"):
+                diagnostic_cols = [
+                    "symbol",
+                    "base_asset",
+                    "cex_deposit_concentration_gate",
+                    "cex_deposit_flow_note",
+                    "cex_deposit_flow_error",
+                    "cex_deposit_24h_source_url",
+                    "top10_holder_pct",
+                    "top100_holder_pct",
+                    "token_platform",
+                    "token_contract",
+                ]
+                diag_df = all_df[
+                    gated
+                    | all_df.get("cex_deposit_flow_error", pd.Series("", index=all_df.index)).astype(str).str.strip().ne("")
+                ].copy()
+                if diag_df.empty:
+                    st.info("No CEX-flow diagnostics are available yet.")
+                else:
+                    st.dataframe(
+                        _display_frame(diag_df, diagnostic_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[10]:
+            st.caption(
                 "Timing view: separates structural selection from the current moment. "
                 "It looks for triggering/reclaiming setups and penalizes late, wick-heavy, or fading flow."
             )
@@ -7354,7 +7472,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[10]:
+        with screener_tabs[11]:
             st.caption(
                 "Ranks the biggest changes in Binance global short-account share by symbol. "
                 f"Period: {LONG_SHORT_RATIO_PERIOD}; windows: {', '.join(f'{window}p' for window in SHORT_ACCOUNT_CHANGE_WINDOWS)}; "
@@ -7506,7 +7624,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[11]:
+        with screener_tabs[12]:
             st.caption(
                 "Ranks RAVE/LAB-style controlled-float upside structures by combining centralized holder/insider proxies, "
                 "low-float and FDV gap, rising short-account share, target CEX-flow proxies for Binance/Bitget/Gate/OKX, "
