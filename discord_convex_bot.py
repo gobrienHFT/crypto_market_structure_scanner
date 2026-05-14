@@ -266,9 +266,14 @@ def _latest_snapshot_frame() -> pd.DataFrame:
 
 
 def _fresh_scanner_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, str]:
-    if not _env_bool("DISCORD_TIMING_LIVE_SCAN_ENABLED", True):
+    live_default = _env_bool("DISCORD_TIMING_LIVE_SCAN_ENABLED", True)
+    if not _env_bool("DISCORD_COMMAND_LIVE_SCAN_ENABLED", live_default):
         return pd.DataFrame(), "live scan disabled"
-    mode = (scan_mode or _env_value("DISCORD_TIMING_SCAN_MODE", "Deep")).strip() or "Deep"
+    mode = (
+        scan_mode
+        or _env_value("DISCORD_COMMAND_SCAN_MODE", _env_value("DISCORD_TIMING_SCAN_MODE", "Deep"))
+    ).strip() or "Deep"
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
         os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
         import app as scanner_app
@@ -276,10 +281,57 @@ def _fresh_scanner_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, st
         scan_fn = getattr(scanner_app.run_scan, "__wrapped__", scanner_app.run_scan)
         _, all_df = scan_fn(int(time.time()), mode)
         if all_df.empty:
-            return pd.DataFrame(), f"fresh {mode} scan returned no rows"
-        return all_df.copy(), f"fresh {mode} scan"
+            return pd.DataFrame(), f"fresh {mode} scan returned no rows at {started_at}"
+        frame = all_df.copy()
+        if "scanned_at_utc" not in frame.columns:
+            frame.insert(0, "scanned_at_utc", started_at)
+        if "scan_mode" not in frame.columns:
+            frame.insert(1, "scan_mode", mode)
+        try:
+            scanner_app._write_latest_convex_longs_cache(frame, scan_mode=mode)
+        except Exception:
+            pass
+        return frame, f"fresh {mode} scan at {started_at}"
     except Exception as exc:
         return pd.DataFrame(), f"fresh scan unavailable: {exc}"
+
+
+def _source_is_unavailable(source: str) -> bool:
+    lowered = str(source or "").lower()
+    return "unavailable" in lowered or "disabled" in lowered
+
+
+def _first_nonempty(frame: pd.DataFrame, columns: tuple[str, ...], default: str = "unknown") -> str:
+    for column in columns:
+        if column not in frame.columns or frame.empty:
+            continue
+        values = frame[column].dropna().astype(str).str.strip()
+        values = values[values.ne("") & ~values.str.lower().isin({"nan", "none", "null"})]
+        if not values.empty:
+            return str(values.iloc[0])
+    return default
+
+
+def _cache_age_header(frame: pd.DataFrame, source: str) -> str:
+    scanned_at = _first_nonempty(frame, ("scanned_at_utc", "snapshot_ts"), "unknown")
+    scan_mode = _first_nonempty(frame, ("scan_mode",), "unknown")
+    return f"Source: {source} | Scan mode: {scan_mode} | Updated: {scanned_at}"
+
+
+def _convex_candidates_from_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "trade_bucket" not in frame.columns:
+        return pd.DataFrame()
+    source = frame.loc[:, ~frame.columns.duplicated()].copy()
+    score = pd.to_numeric(source.get("trade_bucket_score"), errors="coerce").fillna(0.0)
+    try:
+        min_score = float(_env_value("DISCORD_CONVEX_ALERT_MIN_SCORE", "0") or 0)
+    except (TypeError, ValueError):
+        min_score = 0.0
+    candidates = source[source["trade_bucket"].astype(str).eq("Convex Long") & (score >= min_score)].copy()
+    if candidates.empty:
+        return candidates
+    candidates["_discord_bucket_score"] = pd.to_numeric(candidates.get("trade_bucket_score"), errors="coerce").fillna(0.0)
+    return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
 
 
 def _row_for_symbol(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
@@ -292,6 +344,14 @@ def _row_for_symbol(frame: pd.DataFrame, symbol: str) -> pd.Series | None:
 
 
 def _load_coin_scan_row(symbol: str) -> tuple[pd.Series | None, str]:
+    fresh_frame, fresh_source = _fresh_scanner_frame()
+    if not fresh_frame.empty:
+        fresh_row = _row_for_symbol(fresh_frame, symbol)
+        if fresh_row is not None:
+            return fresh_row, fresh_source
+        return None, fresh_source
+    if not _source_is_unavailable(fresh_source):
+        return None, fresh_source
     cache_row = _row_for_symbol(_read_csv_if_exists(_cache_path()), symbol)
     if cache_row is not None:
         return cache_row, "latest Convex cache"
@@ -362,16 +422,30 @@ def _load_coin_stats(symbol_query: str) -> tuple[str, str]:
 
 
 def _load_candidates(limit: int) -> tuple[str, str]:
+    frame, source = _fresh_scanner_frame()
+    if not frame.empty:
+        frame = _convex_candidates_from_frame(frame)
+        if frame.empty:
+            description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n\nNo current market-structure candidates met the Convex filter."
+            return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+    elif not _source_is_unavailable(source):
+        description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n\nNo current market-structure candidates met the Convex filter."
+        return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+    else:
+        frame = pd.DataFrame()
+
     path = _cache_path()
-    if not path.exists():
+    if frame.empty and not path.exists():
         return (
             "No market-structure scan cache yet",
-            "Run the Streamlit dashboard and click **Scan now** once. The bot reads the latest scanner sample cache.",
+            f"`{source}`\n\nNo fallback cache exists yet.",
         )
-    try:
-        frame = pd.read_csv(path)
-    except Exception as exc:
-        return ("Could not read scanner sample cache", f"`{exc}`")
+    if frame.empty:
+        try:
+            frame = pd.read_csv(path)
+            source = f"cached fallback from {path.name}"
+        except Exception as exc:
+            return ("Could not read scanner sample cache", f"`{source}`\n\n`{exc}`")
     if frame.empty:
         return ("No market-structure candidates in the latest scan", f"Cache: `{path}`")
 
@@ -388,20 +462,28 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     frame = apply_timing_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
-    title = f"Latest scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
+    header = _cache_age_header(frame, source)
+    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{header}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
+    title = f"Fresh scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
+    if source.startswith("cached fallback"):
+        title = f"Cached scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     return title, description
 
 
 def _load_terminal_list(limit: int) -> tuple[str, str]:
-    frame = _read_csv_if_exists(_cache_path())
-    if frame.empty:
+    frame, source = _fresh_scanner_frame()
+    if frame.empty and _source_is_unavailable(source):
         frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+        if frame.empty:
+            frame = _read_csv_if_exists(_cache_path())
+            source = "latest Convex cache fallback"
     if frame.empty:
-        return "Market-structure evidence terminal", "No scanner cache exists yet. Run a dashboard scan first."
+        return "Market-structure evidence terminal", f"No live scan, scanner snapshot, or cache exists yet. `{source}`"
     frame = apply_terminal_model(frame)
     frame = apply_timing_model(frame)
     frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
+    header = _cache_age_header(frame, source)
     lines = [
         (
             f"{str(row.get('symbol', '')).upper()} | terminal {(_safe_float(row.get('terminal_edge_score')) or 0.0):.1f} | "
@@ -411,7 +493,7 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
         )
         for _, row in frame.iterrows()
     ]
-    return "Market-structure evidence terminal", "```text\n" + "\n".join(lines)[:1850] + "\n```"
+    return "Market-structure evidence terminal", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
 
 def _load_dossier(symbol_query: str) -> tuple[str, str]:

@@ -1,6 +1,12 @@
 import pandas as pd
+import pytest
 
 import discord_convex_bot as bot
+
+
+@pytest.fixture(autouse=True)
+def disable_live_command_scans(monkeypatch):
+    monkeypatch.setenv("DISCORD_COMMAND_LIVE_SCAN_ENABLED", "0")
 
 
 def test_normalize_symbol_query_accepts_fast_coin_forms() -> None:
@@ -137,6 +143,7 @@ def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch)
         ]
     ).to_csv(cache, index=False)
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_latest_snapshot_frame", lambda: pd.DataFrame())
     monkeypatch.setattr(bot, "_load_live_shorts_frame", lambda: (pd.DataFrame(), "live unavailable"))
 
     title, chunks = bot._load_shorts_list()
@@ -191,6 +198,7 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
         ]
     ).to_csv(cache, index=False)
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_latest_snapshot_frame", lambda: pd.DataFrame())
 
     title, output = bot._load_timing_list(2)
 
@@ -198,6 +206,132 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
     assert "BBBUSDT" in output
     assert "timing" in output
     assert output.index("BBBUSDT") < output.index("AAAUSDT")
+
+
+def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "old_latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "OLDUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 99,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-01-01T00:00:00Z",
+            }
+        ]
+    ).to_csv(cache, index=False)
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "NEWUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 82,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-05-14 18:00:00 UTC",
+            }
+        ]
+    )
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+
+    title, description = bot._load_candidates(5)
+
+    assert title.startswith("Fresh scanner sample")
+    assert "NEWUSDT" in description
+    assert "OLDUSDT" not in description
+    assert "Source: fresh Deep scan" in description
+
+
+def test_load_candidates_no_current_candidates_does_not_show_old_cache(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "old_latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "CHIPUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 99,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-01-01T00:00:00Z",
+            }
+        ]
+    ).to_csv(cache, index=False)
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "PLAINUSDT",
+                "trade_bucket": "Watch",
+                "trade_bucket_score": 10,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-05-14 18:00:00 UTC",
+            }
+        ]
+    )
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+
+    title, description = bot._load_candidates(5)
+
+    assert "no current Convex candidates" in title
+    assert "No current market-structure candidates" in description
+    assert "CHIPUSDT" not in description
+
+
+def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "old_latest.csv"
+    pd.DataFrame(
+        [
+            {"symbol": "OLDUSDT", "terminal_edge_score": 99, "short_account_pct": 99, "scan_mode": "Deep", "scanned_at_utc": "old"},
+        ]
+    ).to_csv(cache, index=False)
+    fresh = pd.DataFrame(
+        [
+            {"symbol": "AAAUSDT", "terminal_edge_score": 10, "short_account_pct": 51, "scan_mode": "Deep", "scanned_at_utc": "now"},
+            {"symbol": "BBBUSDT", "terminal_edge_score": 80, "short_account_pct": 61, "scan_mode": "Deep", "scanned_at_utc": "now"},
+        ]
+    )
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at now"))
+
+    title, output = bot._load_terminal_list(2)
+
+    assert title == "Market-structure evidence terminal"
+    assert "Source: fresh Deep scan" in output
+    assert "AAAUSDT" in output
+    assert "BBBUSDT" in output
+    assert "OLDUSDT" not in output
+
+
+def test_load_coin_scan_row_does_not_resurrect_cache_when_fresh_scan_misses_symbol(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "old_latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "PLAYUSDT",
+                "trade_bucket_score": 99,
+                "short_account_pct": 70,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-01-01T00:00:00Z",
+            }
+        ]
+    ).to_csv(cache, index=False)
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "OTHERUSDT",
+                "trade_bucket_score": 20,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-05-14 18:00:00 UTC",
+            }
+        ]
+    )
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+
+    row, source = bot._load_coin_scan_row("PLAYUSDT")
+
+    assert row is None
+    assert "fresh Deep scan" in source
 
 
 def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypatch) -> None:
