@@ -114,3 +114,26 @@ def test_terminal_model_scores_opaque_supply_and_private_unlock_pattern() -> Non
     assert "opaque-float" in row["terminal_evidence_summary"]
     assert "private unlock/OTC" in row["terminal_evidence_summary"]
     assert "private supply paths require review" in row["terminal_structural_opacity_note"]
+
+
+def test_terminal_model_uses_concentration_gated_cex_deposit_flow() -> None:
+    scored = apply_terminal_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "PLAYUSDT",
+                    "cex_deposit_flow_score": 82,
+                    "cex_deposit_24h_count": 2,
+                    "cex_deposit_24h_target_exchanges": "Bitget, Kraken",
+                    "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                    "cex_deposit_flow_note": "concentration-gated CEX deposit flow: 2 large transfers into Bitget, Kraken",
+                }
+            ]
+        )
+    )
+    row = scored.iloc[0]
+
+    assert row["terminal_exchange_flow_score"] >= 30
+    assert "CEX-flow" in row["terminal_evidence_summary"]
+    assert "concentration-gated CEX deposit flow" in row["terminal_structural_opacity_note"]
+    assert "Recent concentration-gated CEX flow" in build_setup_dossier(row)

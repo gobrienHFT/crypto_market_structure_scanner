@@ -105,6 +105,7 @@ def _metric_note(row: Mapping[str, Any] | pd.Series) -> str:
     return _first_text(
         row,
         (
+            "cex_deposit_flow_note",
             "terminal_structural_opacity_note",
             "trade_bucket_note",
             "convexity_summary",
@@ -119,6 +120,7 @@ def _has_note(row: Mapping[str, Any] | pd.Series, *needles: str) -> bool:
     haystack = " | ".join(
         _first_text(row, (key,))
         for key in (
+            "cex_deposit_flow_note",
             "terminal_structural_opacity_note",
             "trade_bucket_note",
             "convexity_summary",
@@ -143,7 +145,7 @@ def _opaque_score(row: Mapping[str, Any] | pd.Series) -> float:
 
 
 def _exchange_flow_score(row: Mapping[str, Any] | pd.Series) -> float:
-    return _first_float(row, ("terminal_exchange_flow_score", "insider_cex_flow_score")) or 0.0
+    return _first_float(row, ("cex_deposit_flow_score", "terminal_exchange_flow_score", "insider_cex_flow_score")) or 0.0
 
 
 def _private_unlock_score(row: Mapping[str, Any] | pd.Series) -> float:
@@ -235,7 +237,7 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
     if _opaque_score(row) >= 60.0 or _private_unlock_score(row) >= 60.0:
         bits.append("opaque supply/unlock risk")
     if _exchange_flow_score(row) >= 60.0:
-        bits.append("issuer-linked CEX-flow signal")
+        bits.append("concentration-gated CEX-flow signal")
     if _has_note(row, "controlled float", "float trap", "low float", "opaque public float"):
         bits.append("controlled-float risk")
     if _has_note(row, "MM/sponsor", "DWF", "venue support", "CEX/spot lane"):
@@ -285,7 +287,7 @@ def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str
     if _opaque_score(row) >= 70.0 or _private_unlock_score(row) >= 70.0:
         return "reported float may not capture private unlock/OTC supply; visible liquidity can reprice abruptly."
     if _exchange_flow_score(row) >= 70.0:
-        return "clustered CEX-flow signal; visible depth can change quickly around stress."
+        return "recent concentration-gated CEX-flow signal; visible depth can change quickly around stress."
     if top100 is not None and top100 >= 95.0:
         return f"top 100 holders control {top100:.1f}% observed supply; exits can gap if flow flips."
     if top5 is not None and top5 >= 60.0:
@@ -335,6 +337,38 @@ def infer_perp_positioning(row: Mapping[str, Any] | pd.Series) -> str:
     return " | ".join(parts)
 
 
+def _format_amount(value: float | None) -> str:
+    if value is None:
+        return ""
+    for suffix, divisor in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+        if abs(value) >= divisor:
+            return f"{value / divisor:.2f}{suffix}"
+    return f"{value:.2f}"
+
+
+def infer_recent_cex_flow(row: Mapping[str, Any] | pd.Series) -> str:
+    score = _first_float(row, ("cex_deposit_flow_score",))
+    count = _first_float(row, ("cex_deposit_24h_count",))
+    if (score is None or score <= 0.0) and (count is None or count <= 0.0):
+        return ""
+    parts: list[str] = []
+    if score is not None:
+        parts.append(f"score {score:.0f}/100")
+    if count is not None:
+        parts.append(f"{int(count)} large deposit(s)")
+    targets = _first_text(row, ("cex_deposit_24h_target_exchanges",))
+    if targets:
+        parts.append(targets)
+    gate = _first_text(row, ("cex_deposit_concentration_gate",))
+    if gate:
+        parts.append(gate)
+    amount = _first_float(row, ("cex_deposit_24h_token_amount",))
+    formatted_amount = _format_amount(amount)
+    if formatted_amount:
+        parts.append(f"{formatted_amount} tokens")
+    return _clip_sentence(" | ".join(parts), 260)
+
+
 def build_discord_flag_card(
     row: Mapping[str, Any] | pd.Series,
     *,
@@ -343,12 +377,14 @@ def build_discord_flag_card(
 ) -> str:
     symbol = str(_row_value(row, "symbol") or "UNKNOWN").upper().strip()
     score = _score(row)
+    recent_cex_flow = infer_recent_cex_flow(row)
     lines = [
         f"/{symbol}",
         "",
         f"Convex Score: {score:.0f}/100",
         f"Structure: {infer_structure(row, holder_text)}",
         f"Perp positioning: {infer_perp_positioning(row)}",
+        *( [f"Recent CEX flow: {recent_cex_flow}"] if recent_cex_flow else [] ),
         f"Why flagged: {infer_why_flagged(row, holder_text)}",
         f"Observed trigger: {infer_convex_trigger(row)}",
         f"Invalidation: {infer_invalidation(row)}",

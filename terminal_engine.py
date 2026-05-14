@@ -145,11 +145,16 @@ def infer_liquidity_reality(row: Mapping[str, Any] | pd.Series) -> str:
         "hidden_float_reflexivity_score",
         "terminal_opaque_supply_score",
     )
-    exchange_flow = _first_float(row, "terminal_exchange_flow_score", "insider_cex_flow_score")
+    exchange_flow = _first_float(
+        row,
+        "cex_deposit_flow_score",
+        "terminal_exchange_flow_score",
+        "insider_cex_flow_score",
+    )
     if hidden_float is not None and hidden_float >= 70:
         return "opaque float; reported supply may be incomplete"
     if exchange_flow is not None and exchange_flow >= 70:
-        return "clustered CEX-flow; visible liquidity can reprice abruptly"
+        return "recent concentration-gated CEX flow; visible liquidity can reprice abruptly"
     if top100 is not None and top100 >= 95:
         return "cap-table supply; exits can gap"
     if ask_depth is not None and ask_depth < 75_000:
@@ -210,7 +215,12 @@ def terminal_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     hidden_float = _first_float(row, "terminal_hidden_float_reflexivity_score", "hidden_float_reflexivity_score")
     if hidden_float is not None and hidden_float >= 50:
         parts.append(f"opaque-float {hidden_float:.0f}/100")
-    exchange_flow = _first_float(row, "terminal_exchange_flow_score", "insider_cex_flow_score")
+    exchange_flow = _first_float(
+        row,
+        "cex_deposit_flow_score",
+        "terminal_exchange_flow_score",
+        "insider_cex_flow_score",
+    )
     if exchange_flow is not None and exchange_flow >= 50:
         parts.append(f"CEX-flow {exchange_flow:.0f}/100")
     private_unlock = _first_float(row, "terminal_private_unlock_score", "private_unlock_overhang_score")
@@ -229,14 +239,20 @@ def terminal_structural_opacity_note(row: Mapping[str, Any] | pd.Series) -> str:
     hidden_float = _first_float(row, "terminal_hidden_float_reflexivity_score", "hidden_float_reflexivity_score") or 0.0
     opaque_supply = _first_float(row, "terminal_opaque_supply_score", "opaque_supply_score") or 0.0
     private_unlock = _first_float(row, "terminal_private_unlock_score", "private_unlock_overhang_score") or 0.0
-    exchange_flow = _first_float(row, "terminal_exchange_flow_score", "insider_cex_flow_score") or 0.0
+    exchange_flow = _first_float(
+        row,
+        "cex_deposit_flow_score",
+        "terminal_exchange_flow_score",
+        "insider_cex_flow_score",
+    ) or 0.0
     info_asymmetry = _first_float(row, "terminal_information_asymmetry_score", "private_info_asymmetry_score") or 0.0
     if hidden_float >= 70 or opaque_supply >= 70:
         notes.append("opaque public float; private supply paths require review")
     if private_unlock >= 60:
         notes.append("private unlock/OTC overhang signal")
     if exchange_flow >= 60:
-        notes.append("issuer-linked or insider-linked CEX-flow cluster signal")
+        note = _first_text(row, "cex_deposit_flow_note")
+        notes.append(note or "concentration-gated CEX-flow signal requires review")
     if info_asymmetry >= 60:
         notes.append("public token distribution data appears incomplete")
     return " | ".join(notes) if notes else "no additional opaque-supply markers in current scan"
@@ -280,6 +296,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
     insider_control_pct = _clip(_num(output, "insider_supply_control_estimate_pct"))
     cex_deposit_pct = _clip(_num(output, "insider_cex_deposit_pct"))
     cex_withdrawal_pct = _clip(_num(output, "cex_withdrawal_recent_pct"))
+    cex_deposit_flow_score = _clip(_num(output, "cex_deposit_flow_score"))
     otc_discount_pct = _clip(_num(output, "hidden_otc_discount_pct"))
     distribution_transparency_risk = _clip(100.0 - _num(output, "distribution_transparency_score", default=100.0))
 
@@ -297,6 +314,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _clip(cex_withdrawal_pct * 1.4) * 0.28
         + _clip(_num(output, "exchange_withdrawal_cluster_count") * 10.0) * 0.14
         + _clip(_num(output, "exchange_withdrawal_cluster_pct") * 1.15) * 0.14
+        + cex_deposit_flow_score * 0.38
         + _bool(output, "borrower_wallet_matches_buybacks_flag").astype(float) * 5.0
         + _bool(output, "signer_linked_cluster_flag").astype(float) * 5.0
     )
@@ -441,6 +459,8 @@ def build_setup_dossier(row: Mapping[str, Any] | pd.Series) -> str:
         f"- ATH runway: {_fmt_num(_first_float(row, 'ath_multiple'))}x",
         f"- Opaque supply score: {_fmt_num(_first_float(row, 'terminal_opaque_supply_score'))}/100",
         f"- Exchange-flow score: {_fmt_num(_first_float(row, 'terminal_exchange_flow_score'))}/100",
+        f"- Recent concentration-gated CEX flow: {_fmt_num(_first_float(row, 'cex_deposit_flow_score'))}/100",
+        f"- Recent CEX-flow note: {_first_text(row, 'cex_deposit_flow_note') or 'No concentration-gated CEX-flow evidence in current scan.'}",
         f"- Private unlock/OTC score: {_fmt_num(_first_float(row, 'terminal_private_unlock_score'))}/100",
         "",
         "## Research Notes",

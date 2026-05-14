@@ -164,7 +164,28 @@ def test_opaque_supply_pattern_uses_neutral_structural_language() -> None:
     lowered = card.lower()
 
     assert "opaque supply/unlock risk" in card
-    assert "issuer-linked CEX-flow signal" in card
+    assert "concentration-gated CEX-flow signal" in card
     assert "reported float may not capture private unlock/OTC supply" in card
     for forbidden in ("crime", "scam", "fraud", "illegal", "manipulation"):
         assert forbidden not in lowered
+
+
+def test_recent_cex_flow_line_is_included_when_concentration_gate_triggers() -> None:
+    row = pd.Series(
+        {
+            "symbol": "PLAYUSDT",
+            "trade_bucket_score": 80,
+            "cex_deposit_flow_score": 88,
+            "cex_deposit_24h_count": 2,
+            "cex_deposit_24h_target_exchanges": "Bitget, Kraken",
+            "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+            "cex_deposit_24h_token_amount": 2_500_000,
+        }
+    )
+
+    card = build_discord_flag_card(row)
+
+    assert "Recent CEX flow:" in card
+    assert "Bitget, Kraken" in card
+    assert "top10 91.0%" in card
+    assert "2.50M tokens" in card

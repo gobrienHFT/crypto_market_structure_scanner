@@ -19,6 +19,7 @@ from concentration_scanner.fixtures import acceptance_fixture_results
 from concentration_scanner.perp_universe import DEFAULT_SEED_PATH, BinancePerpUniverseBuilder, PerpUniverseCandidate
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
+from cex_flow_scanner import CEX_DEPOSIT_FLOW_COLUMNS, enrich_cex_deposit_flows
 from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
@@ -3030,6 +3031,42 @@ DISCORD_HOLDER_COMPOSITION_MAX_CHARS = _parse_env_int(
     default=520,
     minimum=200,
 )
+CEX_DEPOSIT_FLOW_ENABLED = _env_value("CEX_DEPOSIT_FLOW_ENABLED", default="1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CEX_DEPOSIT_FLOW_MAX_SYMBOLS = _parse_env_int(
+    _env_value("CEX_DEPOSIT_FLOW_MAX_SYMBOLS", default="0"),
+    default=0,
+    minimum=0,
+)
+CEX_DEPOSIT_FLOW_LOOKBACK_HOURS = _parse_env_int(
+    _env_value("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", default="24"),
+    default=24,
+    minimum=1,
+)
+CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS = _parse_env_float(
+    _env_value("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", default="500000"),
+    default=500_000.0,
+    minimum=0.0,
+)
+CEX_DEPOSIT_FLOW_MIN_TOP10_PCT = _parse_env_float(
+    _env_value("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", default="80"),
+    default=80.0,
+    minimum=0.0,
+)
+CEX_DEPOSIT_FLOW_MIN_TOP100_PCT = _parse_env_float(
+    _env_value("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", default="90"),
+    default=90.0,
+    minimum=0.0,
+)
+CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS = _parse_env_int(
+    _env_value("CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS", default="12"),
+    default=12,
+    minimum=3,
+)
 
 if not IMPORT_ONLY:
     st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
@@ -3167,6 +3204,7 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "rave_lab_setup_note",
         "dormant_short_fuse_note",
         "pre_pump_precision_note",
+        *CEX_DEPOSIT_FLOW_COLUMNS,
         *TERMINAL_SCORE_COLUMNS,
         *TIMING_SCORE_COLUMNS,
     ]
@@ -4596,6 +4634,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 *CONVEXITY_SCORE_COLUMNS,
                 *SHORT_SQUEEZE_SCORE_COLUMNS,
                 *RAVE_LAB_SETUP_COLUMNS,
+                *CEX_DEPOSIT_FLOW_COLUMNS,
                 "trade_bucket",
                 "trade_bucket_score",
                 "trade_bucket_note",
@@ -4634,6 +4673,18 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = apply_convexity_model(all_df)
     all_df = _apply_rave_lab_setup_scores(all_df)
     all_df = _apply_pre_pump_scan_memory(all_df)
+    all_df = enrich_cex_deposit_flows(
+        all_df,
+        enabled=deep_scan and CEX_DEPOSIT_FLOW_ENABLED,
+        hints_path=DISCORD_HOLDER_CONTRACTS_FILE,
+        max_symbols=CEX_DEPOSIT_FLOW_MAX_SYMBOLS,
+        timeout=CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS,
+        max_holders=DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS,
+        lookback_hours=CEX_DEPOSIT_FLOW_LOOKBACK_HOURS,
+        min_transfer_tokens=CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS,
+        min_top10_pct=CEX_DEPOSIT_FLOW_MIN_TOP10_PCT,
+        min_top100_pct=CEX_DEPOSIT_FLOW_MIN_TOP100_PCT,
+    )
     all_df = apply_terminal_model(all_df)
     all_df = apply_timing_model(all_df)
     all_df = _score_trade_buckets(all_df)
@@ -5714,8 +5765,23 @@ def render_breakout_dashboard() -> None:
             "terminal_exchange_flow_score": st.column_config.NumberColumn(
                 "CEX Flow",
                 format="%.1f",
-                help="Clustered exchange-flow evidence from issuer-linked, insider-linked, or large-wallet transfer patterns when available.",
+                help="Concentration-gated CEX-flow evidence from large recent token transfers into labelled exchange wallets when available.",
             ),
+            "cex_deposit_flow_score": st.column_config.NumberColumn(
+                "Recent CEX Flow",
+                format="%.1f",
+                help="Large labelled CEX deposits found only after the holder concentration gate is met.",
+            ),
+            "cex_deposit_flow_flag": st.column_config.CheckboxColumn("Recent CEX Flow Flag"),
+            "cex_deposit_24h_count": st.column_config.NumberColumn("CEX Deposits 24h", format="%d"),
+            "cex_deposit_24h_token_amount": st.column_config.NumberColumn("CEX Deposit Tokens 24h", format="%.2f"),
+            "cex_deposit_24h_total_pct_supply": st.column_config.NumberColumn("CEX Deposits % Supply", format="%.2f%%"),
+            "cex_deposit_24h_max_pct_supply": st.column_config.NumberColumn("Largest CEX Deposit % Supply", format="%.2f%%"),
+            "cex_deposit_24h_target_exchanges": st.column_config.TextColumn("CEX Deposit Targets"),
+            "cex_deposit_concentration_gate": st.column_config.TextColumn("CEX Flow Gate"),
+            "cex_deposit_flow_note": st.column_config.TextColumn("CEX Flow Note"),
+            "cex_deposit_flow_error": st.column_config.TextColumn("CEX Flow Error"),
+            "cex_deposit_24h_source_url": st.column_config.LinkColumn("CEX Flow Source"),
             "terminal_private_unlock_score": st.column_config.NumberColumn(
                 "Private Unlock",
                 format="%.1f",
@@ -7108,6 +7174,16 @@ def render_breakout_dashboard() -> None:
                 "terminal_runway_score",
                 "terminal_opaque_supply_score",
                 "terminal_exchange_flow_score",
+                "cex_deposit_flow_score",
+                "cex_deposit_flow_flag",
+                "cex_deposit_24h_count",
+                "cex_deposit_24h_token_amount",
+                "cex_deposit_24h_max_pct_supply",
+                "cex_deposit_24h_total_pct_supply",
+                "cex_deposit_24h_target_exchanges",
+                "cex_deposit_concentration_gate",
+                "cex_deposit_flow_note",
+                "cex_deposit_24h_source_url",
                 "terminal_private_unlock_score",
                 "terminal_information_asymmetry_score",
                 "terminal_hidden_float_reflexivity_score",
