@@ -190,6 +190,7 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
                 "symbol": "BBBUSDT",
                 "terminal_edge_score": 72,
                 "short_account_pct": 62,
+                "bitget_volume_share_pct": 7.5,
                 "oi_delta_pct": 3.0,
                 "hour_return_pct": 2.0,
                 "hour_volume_multiple": 2.0,
@@ -206,8 +207,8 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
 
     assert title == "Timing watchlist"
     assert "BBBUSDT" in output
+    assert "AAAUSDT" not in output
     assert "timing" in output
-    assert output.index("BBBUSDT") < output.index("AAAUSDT")
 
 
 def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, monkeypatch) -> None:
@@ -281,6 +282,7 @@ def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monk
                 "symbol": "NEWUSDT",
                 "trade_bucket": "Convex Long",
                 "trade_bucket_score": 82,
+                "gate_volume_share_pct": 4.2,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "2026-05-14 18:00:00 UTC",
             }
@@ -341,7 +343,14 @@ def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -
     fresh = pd.DataFrame(
         [
             {"symbol": "AAAUSDT", "terminal_edge_score": 10, "short_account_pct": 51, "scan_mode": "Deep", "scanned_at_utc": "now"},
-            {"symbol": "BBBUSDT", "terminal_edge_score": 80, "short_account_pct": 61, "scan_mode": "Deep", "scanned_at_utc": "now"},
+            {
+                "symbol": "BBBUSDT",
+                "terminal_edge_score": 80,
+                "short_account_pct": 61,
+                "bitget_volume_share_pct": 5.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
@@ -351,7 +360,7 @@ def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -
 
     assert title == "Market-structure evidence terminal"
     assert "Source: fresh Deep scan" in output
-    assert "AAAUSDT" in output
+    assert "AAAUSDT" not in output
     assert "BBBUSDT" in output
     assert "OLDUSDT" not in output
 
@@ -416,3 +425,27 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
     assert "Observed trigger:" in description
     assert "Risk level: High" in description
     assert "Research constraint: entries, sizing, stops, and execution are your own responsibility" in description
+
+
+def test_convex_candidates_require_bitget_or_gate_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
+    frame = pd.DataFrame(
+        [
+            {"symbol": "NOGATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 99},
+            {"symbol": "BITGETUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 90, "bitget_volume_share_pct": 0.1},
+            {"symbol": "GATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 88, "gate_volume_share_pct": 2.0},
+        ]
+    )
+
+    selected = bot._convex_candidates_from_frame(frame)
+
+    assert selected["symbol"].tolist() == ["BITGETUSDT", "GATEUSDT"]
+
+
+def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
+    frame = pd.DataFrame([{"symbol": "NOGATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 99}])
+
+    selected = bot._convex_candidates_from_frame(frame)
+
+    assert selected["symbol"].tolist() == ["NOGATEUSDT"]

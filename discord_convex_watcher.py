@@ -21,6 +21,7 @@ from holder_composition import fetch_holder_composition, format_holder_compositi
 from proof_engine import archive_alerts, refresh_outcomes
 from terminal_engine import apply_terminal_model
 from timing_engine import apply_timing_model
+from venue_gate import apply_bitget_gate_venue_gate, bitget_gate_venue_header
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -197,6 +198,9 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         return all_df.copy()
     scored = _ensure_alert_scores(all_df)
     source = alert_source.strip().lower().replace("-", "_")
+    scored = apply_bitget_gate_venue_gate(scored, allow_cex_flow_targets=source in {"cex_flow", "cexflow", "cex_deposit_flow"})
+    if scored.empty:
+        return scored
 
     if source in {"convex", "legacy_convex"}:
         candidates = scored[scored.get("trade_bucket", pd.Series("", index=scored.index)).astype(str).eq("Convex Long")].copy()
@@ -269,6 +273,7 @@ def _scan_alert_candidates(scan_mode: str, *, alert_source: str, top_n: int) -> 
     scanner_app._write_latest_convex_longs_cache(all_df, scan_mode=scan_mode)
     if alert_source.strip().lower().replace("-", "_") in {"convex", "legacy_convex"}:
         candidates = scanner_app._discord_convex_candidates(all_df).copy().head(top_n)
+        candidates = apply_bitget_gate_venue_gate(candidates, allow_cex_flow_targets=False).head(top_n)
     else:
         candidates = _select_alert_candidates(all_df, alert_source=alert_source, top_n=top_n)
     if candidates.empty:
@@ -360,7 +365,14 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, alert_source: str
 
     lines, archive_rows = _candidate_cards_and_archive_rows(candidates)
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
+    normalized_source = alert_source.strip().lower().replace("-", "_")
+    allow_cex_targets = normalized_source in {"cex_flow", "cexflow", "cex_deposit_flow"}
+    venue_header = bitget_gate_venue_header(allow_cex_flow_targets=allow_cex_targets)
+    description = (
+        f"{DISCORD_PRODUCT_IDENTITY}\n\n"
+        f"{venue_header}\n\n"
+        f"{join_discord_flag_cards(lines, max_chars=card_budget)}"
+    )
     payload = {
         "username": "Convex Scanner",
         "embeds": [

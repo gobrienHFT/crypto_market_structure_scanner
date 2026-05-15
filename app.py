@@ -41,6 +41,7 @@ from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squee
 from screener import ScreenerData, build_screener_data
 from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
 from timing_engine import TIMING_SCORE_COLUMNS, apply_timing_model, build_timing_card
+from venue_gate import apply_bitget_gate_venue_gate
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
@@ -3161,6 +3162,9 @@ def _discord_convex_candidates(all_df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
     if candidates.empty:
         return candidates
+    candidates = apply_bitget_gate_venue_gate(candidates, allow_cex_flow_targets=False)
+    if candidates.empty:
+        return candidates
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
 
 
@@ -3190,6 +3194,13 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "price_change_24h_pct",
         "change_24h_pct",
         "day_change_pct",
+        "bitget_or_gate_venue_flag",
+        "binance_volume_share_pct",
+        "bitget_volume_share_pct",
+        "gate_volume_share_pct",
+        "binance_bitget_gate_share_pct",
+        "binance_bitget_gate_share_score",
+        "top_venue",
         "short_account_pct",
         "long_account_pct",
         "long_short_account_ratio",
@@ -3897,6 +3908,15 @@ def _apply_external_crime_metrics(all_df: pd.DataFrame, crime_symbols: set[str])
         low=20.0,
         high=85.0,
     )
+    bitget_share = pd.to_numeric(
+        all_df.get("bitget_volume_share_pct", pd.Series(0.0, index=all_df.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    gate_share = pd.to_numeric(
+        all_df.get("gate_volume_share_pct", pd.Series(0.0, index=all_df.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    all_df["bitget_or_gate_venue_flag"] = bitget_share.gt(0.0) | gate_share.gt(0.0)
     all_df["emfx_lane_score"] = (
         _linear_score(all_df["emfx_volume_share_pct"], low=4.0, high=40.0) * 0.62
         + _linear_score(all_df["krw_volume_share_pct"], low=3.0, high=35.0) * 0.23

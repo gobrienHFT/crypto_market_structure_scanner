@@ -24,6 +24,7 @@ from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
 from trade_setup_pipeline import TradeBotConfig, TradeBotRuntime
+from venue_gate import apply_bitget_gate_venue_gate, bitget_gate_venue_header
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -389,6 +390,9 @@ def _convex_candidates_from_frame(frame: pd.DataFrame) -> pd.DataFrame:
     candidates = source[source["trade_bucket"].astype(str).eq("Convex Long") & (score >= min_score)].copy()
     if candidates.empty:
         return candidates
+    candidates = apply_bitget_gate_venue_gate(candidates, allow_cex_flow_targets=False)
+    if candidates.empty:
+        return candidates
     candidates["_discord_bucket_score"] = pd.to_numeric(candidates.get("trade_bucket_score"), errors="coerce").fillna(0.0)
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
 
@@ -485,10 +489,16 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     if not frame.empty:
         frame = _convex_candidates_from_frame(frame)
         if frame.empty:
-            description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n\nNo current market-structure candidates met the Convex filter."
+            description = (
+                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{bitget_gate_venue_header()}\n\n"
+                "No current market-structure candidates met the Convex + Bitget/Gate venue filter."
+            )
             return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     elif not _source_is_unavailable(source):
-        description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n\nNo current market-structure candidates met the Convex filter."
+        description = (
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{bitget_gate_venue_header()}\n\n"
+            "No current market-structure candidates met the Convex + Bitget/Gate venue filter."
+        )
         return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     else:
         frame = pd.DataFrame()
@@ -508,6 +518,15 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     if frame.empty:
         return ("No market-structure candidates in the latest scan", f"Cache: `{path}`")
 
+    cache_header = _cache_age_header(frame, source)
+    frame = apply_bitget_gate_venue_gate(frame, allow_cex_flow_targets=False)
+    if frame.empty:
+        return (
+            "No market-structure candidates met the Bitget/Gate venue gate",
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{bitget_gate_venue_header()}\n\n"
+            "No cached candidates currently show Bitget or Gate venue support.",
+        )
+
     score_col = "trade_bucket_score" if "trade_bucket_score" in frame.columns else None
     if score_col:
         frame[score_col] = pd.to_numeric(frame[score_col], errors="coerce").fillna(0.0)
@@ -521,7 +540,7 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     frame = apply_timing_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    header = _cache_age_header(frame, source)
+    header = _cache_age_header(frame, source) + "\n" + bitget_gate_venue_header()
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{header}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     title = f"Fresh scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     if source.startswith("cached fallback"):
@@ -541,8 +560,11 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
         return "Market-structure evidence terminal", f"No live scan, scanner snapshot, or cache exists yet. `{source}`"
     frame = apply_terminal_model(frame)
     frame = apply_timing_model(frame)
+    frame = apply_bitget_gate_venue_gate(frame, allow_cex_flow_targets=False)
+    if frame.empty:
+        return "Market-structure evidence terminal", "```text\n" + bitget_gate_venue_header() + "\n\nNo current rows met the Bitget/Gate venue gate.\n```"
     frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
-    header = _cache_age_header(frame, source)
+    header = _cache_age_header(frame, source) + "\n" + bitget_gate_venue_header()
     lines = [
         (
             f"{str(row.get('symbol', '')).upper()} | terminal {(_safe_float(row.get('terminal_edge_score')) or 0.0):.1f} | "
@@ -580,6 +602,9 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     if frame.empty:
         return "Timing watchlist", "No live scan, scanner snapshot, or cache exists yet."
     frame = apply_timing_model(apply_terminal_model(frame))
+    frame = apply_bitget_gate_venue_gate(frame, allow_cex_flow_targets=False)
+    if frame.empty:
+        return "Timing watchlist", "```text\n" + bitget_gate_venue_header() + "\n\nNo current timing rows met the Bitget/Gate venue gate.\n```"
     frame = frame.sort_values(
         ["timing_score", "timing_trigger_score", "timing_too_late_score", "symbol"],
         ascending=[False, False, True, True],
@@ -592,7 +617,10 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
         )
         for _, row in frame.iterrows()
     ]
-    header = f"Source: {source} | Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    header = (
+        f"Source: {source} | Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        f"{bitget_gate_venue_header()}"
+    )
     return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
 
@@ -612,7 +640,8 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
     min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
     header = (
         f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
-        f"Min transfer: {_fmt_compact_number(min_transfer)} tokens | Lookback: {lookback_hours:.0f}h"
+        f"Min transfer: {_fmt_compact_number(min_transfer)} tokens | Lookback: {lookback_hours:.0f}h | "
+        f"{bitget_gate_venue_header(allow_cex_flow_targets=True)}"
     )
     if frame.empty:
         return "Large CEX token-transfer flow", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -620,10 +649,11 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
     score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
     flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
     flow = frame[flag | score.gt(0.0)].copy()
+    flow = apply_bitget_gate_venue_gate(flow, allow_cex_flow_targets=True)
     if flow.empty:
         return (
             "Large CEX token-transfer flow",
-            [header + "\n\nNo concentration-gated large CEX token-transfer flow is currently scored in the latest scan."],
+            [header + "\n\nNo concentration-gated large CEX token-transfer flow currently met the Bitget/Gate venue gate."],
         )
 
     flow["_cex_flow_score"] = pd.to_numeric(flow.get("cex_deposit_flow_score"), errors="coerce").fillna(0.0)
