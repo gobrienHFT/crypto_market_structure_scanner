@@ -41,6 +41,18 @@ def _score_band(series: pd.Series, low: float, sweet_low: float, sweet_high: flo
     return score.clip(lower=0.0, upper=100.0)
 
 
+def _row_bool(row: Mapping[str, Any] | pd.Series, key: str) -> bool:
+    value = row.get(key) if hasattr(row, "get") else False
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    try:
+        if value is None or pd.isna(value):
+            return False
+    except Exception:
+        pass
+    return bool(value)
+
+
 def infer_timing_state(row: Mapping[str, Any] | pd.Series) -> str:
     score = _first_float(row, "timing_score") or 0.0
     trigger = _first_float(row, "timing_trigger_score") or 0.0
@@ -68,6 +80,9 @@ def infer_timing_state(row: Mapping[str, Any] | pd.Series) -> str:
 
 def infer_observed_trigger(row: Mapping[str, Any] | pd.Series) -> str:
     triggers: list[str] = []
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
+        triggers.append("aggressive taker demand absorbed with muted price response")
     if (_first_float(row, "oi_delta_pct") or 0.0) >= 1.0:
         triggers.append("OI expanding")
     if (_first_float(row, "hour_volume_multiple", "daily_quote_volume_multiple") or 0.0) >= 1.25:
@@ -85,10 +100,14 @@ def infer_observed_trigger(row: Mapping[str, Any] | pd.Series) -> str:
 
 def infer_timing_confirmation(row: Mapping[str, Any] | pd.Series) -> str:
     needs: list[str] = []
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
     if (_first_float(row, "oi_delta_pct") or 0.0) < 1.0:
         needs.append("OI expansion")
     if (_first_float(row, "hour_volume_multiple", "daily_quote_volume_multiple") or 0.0) < 1.25:
-        needs.append("volume lift")
+        if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
+            needs.append("continued absorption/volume confirmation")
+        else:
+            needs.append("volume lift")
     if (_first_float(row, "hour_trade_count_multiple") or 0.0) < 1.15:
         needs.append("trade-count lift")
     close_loc = _first_float(row, "hour_close_location_pct")
@@ -112,12 +131,18 @@ def infer_failure_condition(row: Mapping[str, Any] | pd.Series) -> str:
 
 
 def infer_hold_condition(row: Mapping[str, Any] | pd.Series) -> str:
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
+        return "structure remains relevant while absorption persists, OI does not flush, and price avoids chase extension"
     if infer_timing_state(row) in {"Confirmed", "Triggering"}:
         return "structure remains relevant while OI/volume expand and closes keep reclaiming local highs"
     return "structure remains watchable only if OI/volume begin confirming without a chase candle"
 
 
 def infer_timing_liquidity_warning(row: Mapping[str, Any] | pd.Series) -> str:
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
+        return "accumulation-like absorption can release into gaps if liquidity thins; verify visible depth"
     top100 = _first_float(row, "top100_holder_pct")
     ask_depth = _first_float(row, "ask_depth_1pct_usdt")
     spread = _first_float(row, "coinbase_bid_ask_spread_pct")
@@ -156,6 +181,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
     terminal = _num(output, "terminal_edge_score")
     ask_depth_to_vol = _num(output, "ask_depth_to_24h_volume_pct", 0.15)
     range_event_score = _num(output, "range_breakout_score")
+    accumulation = _num(output, "accumulation_absorption_score")
 
     trigger_score = _clip(
         _score_linear(oi, 0.25, 5.0) * 0.28
@@ -164,6 +190,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _score_linear(volume_signal, 1.05, 4.0) * 0.17
         + _score_linear(trade_count, 1.05, 3.0) * 0.14
         + range_event_score * 0.06
+        + accumulation * 0.10
     )
     reclaim_score = _clip(
         _score_linear(dist_5d.abs(), 0.0, 12.0, invert=True) * 0.55
@@ -175,6 +202,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _score_linear(oi, 0.25, 6.0) * 0.28
         + _score_linear(volume_signal, 1.0, 5.0) * 0.20
         + _score_linear(trade_count, 1.0, 3.5) * 0.16
+        + accumulation * 0.12
     )
     too_late = _clip(
         _score_linear(hour_return, 10.0, 32.0) * 0.26
@@ -189,6 +217,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _score_band(hour_return.abs(), 0.0, 0.4, 6.0, 18.0) * 0.18
         + _score_band(daily_vol, 0.75, 1.05, 3.0, 9.0) * 0.14
         + _score_linear(ask_depth_to_vol, 0.02, 0.20) * 0.13
+        + accumulation * 0.08
     )
     timing_score = _clip(
         terminal * 0.22
@@ -197,6 +226,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + flow_score * 0.15
         + early_score * 0.15
         + _num(output, "terminal_liquidity_score", 50.0) * 0.05
+        + accumulation * 0.08
         - too_late * 0.12
         + _bool(output, "setup_ready_flag").astype(float) * 6.0
         + _bool(output, "clean_convex_setup_flag").astype(float) * 4.0

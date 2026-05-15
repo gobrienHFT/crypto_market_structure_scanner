@@ -137,3 +137,21 @@ def test_terminal_model_uses_concentration_gated_cex_deposit_flow() -> None:
     assert "CEX-flow" in row["terminal_evidence_summary"]
     assert "concentration-gated CEX deposit flow" in row["terminal_structural_opacity_note"]
     assert "Recent concentration-gated CEX flow" in build_setup_dossier(row)
+
+
+def test_accumulation_absorption_surfaces_in_terminal_archetype_and_evidence() -> None:
+    scored = apply_terminal_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "ABSORB",
+                    "accumulation_absorption_score": 76,
+                    "accumulation_absorption_flag": True,
+                }
+            ]
+        )
+    )
+    row = scored.iloc[0]
+
+    assert row["terminal_setup_archetype"] == "accumulation-like absorption"
+    assert "absorption 76/100" in row["terminal_evidence_summary"]

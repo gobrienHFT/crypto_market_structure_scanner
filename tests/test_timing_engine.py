@@ -84,3 +84,28 @@ def test_timing_card_uses_research_language() -> None:
     assert "Timing Score:" in card
     assert "Research constraint:" in card
     assert "buy" not in card.lower()
+
+
+def test_accumulation_absorption_surfaces_in_timing_card() -> None:
+    scored = apply_timing_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "ABSORB",
+                    "terminal_edge_score": 60,
+                    "accumulation_absorption_score": 75,
+                    "accumulation_absorption_flag": True,
+                    "hour_return_pct": 0.5,
+                    "day_return_pct": 8,
+                    "oi_delta_pct": 0.5,
+                    "hour_volume_multiple": 1.0,
+                    "hour_trade_count_multiple": 1.0,
+                    "short_account_pct": 52,
+                }
+            ]
+        )
+    )
+    row = scored.iloc[0]
+
+    assert "aggressive taker demand absorbed" in row["timing_observed_trigger"]
+    assert "absorption persists" in row["timing_hold_condition"]

@@ -106,6 +106,7 @@ def _metric_note(row: Mapping[str, Any] | pd.Series) -> str:
         row,
         (
             "cex_deposit_flow_note",
+            "accumulation_absorption_note",
             "terminal_structural_opacity_note",
             "trade_bucket_note",
             "convexity_summary",
@@ -121,6 +122,7 @@ def _has_note(row: Mapping[str, Any] | pd.Series, *needles: str) -> bool:
         _first_text(row, (key,))
         for key in (
             "cex_deposit_flow_note",
+            "accumulation_absorption_note",
             "terminal_structural_opacity_note",
             "trade_bucket_note",
             "convexity_summary",
@@ -150,6 +152,39 @@ def _exchange_flow_score(row: Mapping[str, Any] | pd.Series) -> float:
 
 def _private_unlock_score(row: Mapping[str, Any] | pd.Series) -> float:
     return _first_float(row, ("terminal_private_unlock_score", "private_unlock_overhang_score")) or 0.0
+
+
+def _row_boolish(row: Mapping[str, Any] | pd.Series, key: str) -> bool:
+    value = _row_value(row, key)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    try:
+        if value is None or pd.isna(value):
+            return False
+    except Exception:
+        pass
+    return bool(value)
+
+
+def _accumulation_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("accumulation_absorption_score", "accumulation_cvd_proxy_score")) or 0.0
+
+
+def infer_accumulation_read(row: Mapping[str, Any] | pd.Series) -> str:
+    score = _accumulation_score(row)
+    if score < 45.0 and not _row_boolish(row, "accumulation_absorption_flag"):
+        return ""
+    note = _first_text(row, ("accumulation_absorption_note",))
+    if note:
+        return _clip_sentence(note, 260)
+    taker_share = _pct_value(_first_float(row, ("taker_buy_share_pct",)))
+    hour_return = _first_float(row, ("hour_return_pct",))
+    parts = [f"score {score:.0f}/100"]
+    if taker_share is not None:
+        parts.append(f"taker demand {taker_share:.1f}%")
+    if hour_return is not None:
+        parts.append(f"1h response {hour_return:.1f}%")
+    return "aggressive taker demand absorbed with muted price response; " + " | ".join(parts) + "; requires source/holder review"
 
 
 def infer_risk_level(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
@@ -189,6 +224,7 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
     top5 = _holder_pct(holder_text, "Top5")
     top10 = _first_float(row, ("top10_holder_pct",)) or _holder_pct(holder_text, "Top10")
     low_float = _first_float(row, ("low_float_score",)) or 0.0
+    accumulation = _accumulation_score(row)
 
     if short_pct is not None and short_pct >= 60.0:
         pressure = "High short pressure"
@@ -199,7 +235,9 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
     else:
         pressure = "Mixed account skew"
 
-    if oi_delta is not None and oi_delta >= 2.0:
+    if accumulation >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        flow = "aggressive taker demand absorbed"
+    elif oi_delta is not None and oi_delta >= 2.0:
         flow = "rising OI"
     elif oi_delta is not None and oi_delta < -2.0:
         flow = "OI already flushing"
@@ -238,6 +276,8 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
         bits.append("opaque supply/unlock risk")
     if _exchange_flow_score(row) >= 60.0:
         bits.append("concentration-gated CEX-flow signal")
+    if _accumulation_score(row) >= 60.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        bits.append("accumulation-like absorption")
     if _has_note(row, "controlled float", "float trap", "low float", "opaque public float"):
         bits.append("controlled-float risk")
     if _has_note(row, "MM/sponsor", "DWF", "venue support", "CEX/spot lane"):
@@ -256,6 +296,8 @@ def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
     volume_multiple = _first_float(row, ("hour_volume_multiple", "daily_quote_volume_multiple"))
     range_event = _first_text(row, ("range_breakout_event",))
 
+    if _accumulation_score(row) >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        return "aggressive taker demand is being absorbed while price response remains muted; OI/volume confirmation keeps the setup under review."
     if range_event and (oi_delta is None or oi_delta >= 0.0):
         return f"{range_event} while flow conditions remain under review."
     if short_pct is not None and short_pct >= 60.0 and (oi_delta is None or oi_delta >= 0.0):
@@ -288,6 +330,8 @@ def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str
         return "reported float may not capture private unlock/OTC supply; visible liquidity can reprice abruptly."
     if _exchange_flow_score(row) >= 70.0:
         return "recent concentration-gated CEX-flow signal; visible depth can change quickly around stress."
+    if _accumulation_score(row) >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        return "absorption-like tape can release into gaps if displayed liquidity thins; verify depth before acting."
     if top100 is not None and top100 >= 95.0:
         return f"top 100 holders control {top100:.1f}% observed supply; exits can gap if flow flips."
     if top5 is not None and top5 >= 60.0:
@@ -311,6 +355,8 @@ def infer_dead_setup(row: Mapping[str, Any] | pd.Series) -> str:
 
 def infer_hold_longer_condition(row: Mapping[str, Any] | pd.Series) -> str:
     short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
+    if _accumulation_score(row) >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        return "absorption persists, OI does not flush, and price avoids chase extension"
     if short_pct is not None and short_pct >= 60.0:
         return "higher lows continue while short pressure stays elevated and OI/volume expand without a liquidation flush."
     if _opaque_score(row) >= 70.0 or _has_note(row, "controlled float", "float trap", "opaque public float"):
@@ -378,6 +424,7 @@ def build_discord_flag_card(
     symbol = str(_row_value(row, "symbol") or "UNKNOWN").upper().strip()
     score = _score(row)
     recent_cex_flow = infer_recent_cex_flow(row)
+    accumulation_read = infer_accumulation_read(row)
     lines = [
         f"/{symbol}",
         "",
@@ -385,6 +432,7 @@ def build_discord_flag_card(
         f"Structure: {infer_structure(row, holder_text)}",
         f"Perp positioning: {infer_perp_positioning(row)}",
         *( [f"Recent CEX flow: {recent_cex_flow}"] if recent_cex_flow else [] ),
+        *( [f"Accumulation read: {accumulation_read}"] if accumulation_read else [] ),
         f"Why flagged: {infer_why_flagged(row, holder_text)}",
         f"Observed trigger: {infer_convex_trigger(row)}",
         f"Invalidation: {infer_invalidation(row)}",

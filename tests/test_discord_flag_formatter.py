@@ -189,3 +189,29 @@ def test_recent_cex_flow_line_is_included_when_concentration_gate_triggers() -> 
     assert "Bitget, Kraken" in card
     assert "top10 91.0%" in card
     assert "2.50M tokens" in card
+
+
+def test_accumulation_absorption_line_uses_neutral_language() -> None:
+    row = pd.Series(
+        {
+            "symbol": "PLAYUSDT",
+            "trade_bucket_score": 82,
+            "short_account_pct": 52.3,
+            "long_account_pct": 47.7,
+            "long_short_account_ratio": 0.91,
+            "accumulation_absorption_score": 74,
+            "accumulation_absorption_flag": True,
+            "accumulation_absorption_note": (
+                "aggressive taker demand absorbed with muted price response; "
+                "absorption 74/100; requires source/holder review"
+            ),
+        }
+    )
+
+    card = build_discord_flag_card(row)
+    lowered = card.lower()
+
+    assert "Accumulation read:" in card
+    assert "aggressive taker demand absorbed" in card
+    assert "insider" not in lowered
+    assert "pump call" not in lowered

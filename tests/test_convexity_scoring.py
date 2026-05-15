@@ -158,6 +158,70 @@ class ConvexityScoringTests(unittest.TestCase):
         self.assertTrue(bool(scored.loc[1, "convexity_too_late_flag"]))
         self.assertIn("DWF Labs Portfolio", scored.loc[0, "convexity_summary"])
 
+    def test_accumulation_absorption_requires_float_control_gate(self) -> None:
+        base = {
+            "symbol": "ABSORB1USDT",
+            "crime_excluded_major": False,
+            "top10_holder_pct": 88.0,
+            "top100_holder_pct": 97.0,
+            "centralized_ownership_score": 82.0,
+            "low_float_score": 76.0,
+            "float_trap_score": 80.0,
+            "crime_owner_circle_score": 72.0,
+            "taker_buy_sell_ratio": 1.75,
+            "taker_buy_share_pct": 63.5,
+            "hour_return_pct": 0.8,
+            "day_return_pct": 9.0,
+            "hour_volume_multiple": 2.6,
+            "hour_trade_count_multiple": 2.0,
+            "oi_delta_pct": 1.4,
+        }
+        weak_gate = {
+            **base,
+            "symbol": "NORMALUSDT",
+            "top10_holder_pct": 22.0,
+            "top100_holder_pct": 40.0,
+            "centralized_ownership_score": 0.0,
+            "low_float_score": 0.0,
+            "float_trap_score": 0.0,
+            "crime_owner_circle_score": 0.0,
+        }
+
+        scored = apply_convexity_model(pd.DataFrame([base, weak_gate]))
+
+        self.assertTrue(bool(scored.loc[0, "accumulation_absorption_flag"]))
+        self.assertGreaterEqual(scored.loc[0, "accumulation_absorption_score"], 62.0)
+        self.assertIn("aggressive taker demand absorbed", scored.loc[0, "accumulation_absorption_note"])
+        self.assertFalse(bool(scored.loc[1, "accumulation_absorption_flag"]))
+        self.assertEqual(float(scored.loc[1, "accumulation_absorption_score"]), 0.0)
+
+    def test_accumulation_absorption_rejects_chase_move(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "symbol": "CHASEUSDT",
+                    "crime_excluded_major": False,
+                    "top10_holder_pct": 88.0,
+                    "top100_holder_pct": 97.0,
+                    "centralized_ownership_score": 82.0,
+                    "low_float_score": 76.0,
+                    "float_trap_score": 80.0,
+                    "crime_owner_circle_score": 72.0,
+                    "taker_buy_sell_ratio": 1.9,
+                    "taker_buy_share_pct": 66.0,
+                    "hour_return_pct": 12.0,
+                    "day_return_pct": 40.0,
+                    "hour_volume_multiple": 3.0,
+                    "hour_trade_count_multiple": 2.5,
+                    "oi_delta_pct": 2.0,
+                }
+            ]
+        )
+
+        scored = apply_convexity_model(frame)
+
+        self.assertFalse(bool(scored.loc[0, "accumulation_absorption_flag"]))
+
 
 if __name__ == "__main__":
     unittest.main()

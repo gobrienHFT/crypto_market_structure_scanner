@@ -151,10 +151,13 @@ def infer_liquidity_reality(row: Mapping[str, Any] | pd.Series) -> str:
         "terminal_exchange_flow_score",
         "insider_cex_flow_score",
     )
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score")
     if hidden_float is not None and hidden_float >= 70:
         return "opaque float; reported supply may be incomplete"
     if exchange_flow is not None and exchange_flow >= 70:
         return "recent concentration-gated CEX flow; visible liquidity can reprice abruptly"
+    if accumulation is not None and accumulation >= 70:
+        return "aggressive taker demand absorbed; verify depth and source"
     if top100 is not None and top100 >= 95:
         return "cap-table supply; exits can gap"
     if ask_depth is not None and ask_depth < 75_000:
@@ -179,6 +182,9 @@ def infer_setup_archetype(row: Mapping[str, Any] | pd.Series) -> str:
         "hidden_float_reflexivity_score",
         "terminal_opaque_supply_score",
     )
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    if _row_bool(row, "accumulation_absorption_flag") or accumulation >= 70:
+        return "accumulation-like absorption"
     if hidden_float is not None and hidden_float >= 70:
         return "opaque-float reflexivity"
     if _row_bool(row, "rave_lab_extreme_flag"):
@@ -223,6 +229,9 @@ def terminal_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     )
     if exchange_flow is not None and exchange_flow >= 50:
         parts.append(f"CEX-flow {exchange_flow:.0f}/100")
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score")
+    if accumulation is not None and accumulation >= 50:
+        parts.append(f"absorption {accumulation:.0f}/100")
     private_unlock = _first_float(row, "terminal_private_unlock_score", "private_unlock_overhang_score")
     if private_unlock is not None and private_unlock >= 50:
         parts.append(f"private unlock/OTC {private_unlock:.0f}/100")
@@ -264,10 +273,14 @@ def terminal_confirmation_needed(row: Mapping[str, Any] | pd.Series) -> str:
     vol_x = _first_float(row, "daily_quote_volume_multiple", "hour_volume_multiple")
     close_loc = _first_float(row, "hour_close_location_pct")
     short_pct = _pct_value(_first_float(row, "short_account_pct"))
+    accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
     if oi is None or oi < 1.0:
         needs.append("OI expansion")
     if vol_x is None or vol_x < 1.3:
-        needs.append("volume confirmation")
+        if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
+            needs.append("continued absorption/volume confirmation")
+        else:
+            needs.append("volume confirmation")
     if close_loc is None or close_loc < 65.0:
         needs.append("strong close quality")
     if short_pct is None or short_pct < 50.0:
@@ -341,6 +354,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + private_unlock_score * 0.23
         + information_asymmetry_score * 0.20
     )
+    accumulation = _clip(_num(output, "accumulation_absorption_score"))
     float_score = _clip(
         _num(output, "centralized_ownership_score") * 0.26
         + _num(output, "low_float_score") * 0.22
@@ -363,6 +377,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _num(output, "spot_flow_confluence_score") * 0.16
         + _num(output, "perp_squeeze_confluence_score") * 0.14
         + _num(output, "range_breakout_score") * 0.06
+        + accumulation * 0.12
     )
     liquidity_score = _clip(
         100.0
@@ -388,6 +403,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         50.0
         + _num(output, "convexity_confluence_score") * 0.15
         + _num(output, "silent_oi_accumulation_score") * 0.12
+        + accumulation * 0.10
         - _num(output, "crime_largecap_penalty_score") * 0.16
     )
     edge = _clip(
@@ -398,6 +414,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + regime_score * 0.10
         + liquidity_score * 0.09
         + hidden_float_reflexivity_score * 0.06
+        + accumulation * 0.08
         - late_risk * 0.10
         + _bool(output, "pre_pump_precision_flag").astype(float) * 12.0
         + _bool(output, "dormant_short_fuse_flag").astype(float) * 8.0
@@ -462,6 +479,8 @@ def build_setup_dossier(row: Mapping[str, Any] | pd.Series) -> str:
         f"- Recent concentration-gated CEX flow: {_fmt_num(_first_float(row, 'cex_deposit_flow_score'))}/100",
         f"- Recent CEX-flow note: {_first_text(row, 'cex_deposit_flow_note') or 'No concentration-gated CEX-flow evidence in current scan.'}",
         f"- Private unlock/OTC score: {_fmt_num(_first_float(row, 'terminal_private_unlock_score'))}/100",
+        f"- Accumulation absorption score: {_fmt_num(_first_float(row, 'accumulation_absorption_score'))}/100",
+        f"- Accumulation read: {_first_text(row, 'accumulation_absorption_note') or 'No accumulation-like absorption signal in current scan.'}",
         "",
         "## Research Notes",
         "",
