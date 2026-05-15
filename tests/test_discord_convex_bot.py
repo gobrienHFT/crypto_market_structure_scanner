@@ -255,9 +255,14 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     title, chunks = bot._load_cex_flow_list(10)
     output = "\n".join(chunks)
 
-    assert title == "Large CEX token-transfer flow"
+    assert title == "Wallet-to-CEX flow monitor"
+    assert "Wallet-to-CEX flow monitor" in output
+    assert "Candidates: /PLAYUSDT" in output
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
+    assert "CEX Flow Score: 88/100" in output
+    assert "Venue-flow read:" in output
+    assert "Next check:" in output
     assert "Bitget" in output
     assert "LOWUSDT" not in output
     assert "OLDUSDT" not in output

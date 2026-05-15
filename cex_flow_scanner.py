@@ -22,6 +22,7 @@ from holder_composition import (
 CEX_DEPOSIT_FLOW_COLUMNS = [
     "cex_deposit_flow_score",
     "cex_deposit_flow_flag",
+    "cex_deposit_flow_risk_level",
     "cex_deposit_24h_count",
     "cex_deposit_24h_token_amount",
     "cex_deposit_24h_max_amount",
@@ -32,6 +33,10 @@ CEX_DEPOSIT_FLOW_COLUMNS = [
     "cex_deposit_24h_source_url",
     "cex_deposit_concentration_gate",
     "cex_deposit_flow_note",
+    "cex_deposit_flow_evidence_summary",
+    "cex_deposit_flow_interpretation",
+    "cex_deposit_flow_next_check",
+    "cex_deposit_flow_alert_line",
     "cex_deposit_flow_error",
 ]
 
@@ -64,6 +69,7 @@ def _default_result(note: str = "", error: str = "") -> dict[str, Any]:
     return {
         "cex_deposit_flow_score": 0.0,
         "cex_deposit_flow_flag": False,
+        "cex_deposit_flow_risk_level": "",
         "cex_deposit_24h_count": 0,
         "cex_deposit_24h_token_amount": 0.0,
         "cex_deposit_24h_max_amount": 0.0,
@@ -74,6 +80,10 @@ def _default_result(note: str = "", error: str = "") -> dict[str, Any]:
         "cex_deposit_24h_source_url": "",
         "cex_deposit_concentration_gate": "",
         "cex_deposit_flow_note": note,
+        "cex_deposit_flow_evidence_summary": note,
+        "cex_deposit_flow_interpretation": "",
+        "cex_deposit_flow_next_check": "",
+        "cex_deposit_flow_alert_line": "",
         "cex_deposit_flow_error": error,
     }
 
@@ -110,6 +120,21 @@ def _fmt_amount(value: Any) -> str:
         if abs(parsed) >= divisor:
             return f"{parsed / divisor:.2f}{suffix}"
     return f"{parsed:.2f}"
+
+
+def _row_value(row: Mapping[str, Any] | pd.Series, key: str, default: Any = "") -> Any:
+    try:
+        value = row.get(key, default)  # type: ignore[attr-defined]
+    except Exception:
+        value = default
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    return value
 
 
 def _clean_text(value: Any) -> str:
@@ -301,6 +326,105 @@ def _flow_score(
     return max(0.0, min(100.0, score))
 
 
+def infer_cex_flow_risk_level(row: Mapping[str, Any] | pd.Series) -> str:
+    score = _safe_float(_row_value(row, "cex_deposit_flow_score", 0.0)) or 0.0
+    count = _safe_float(_row_value(row, "cex_deposit_24h_count", 0.0)) or 0.0
+    total_pct = _pct_value(_row_value(row, "cex_deposit_24h_total_pct_supply", math.nan))
+    max_pct = _pct_value(_row_value(row, "cex_deposit_24h_max_pct_supply", math.nan))
+    total_pct = total_pct or 0.0
+    max_pct = max_pct or 0.0
+    if score >= 90.0 or total_pct >= 5.0 or max_pct >= 3.0 or count >= 8:
+        return "Extreme"
+    if score >= 75.0 or total_pct >= 1.0 or max_pct >= 1.0 or count >= 3:
+        return "High"
+    if score >= 50.0 or count >= 1:
+        return "Elevated"
+    return "Watch only"
+
+
+def build_cex_flow_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
+    count = int(_safe_float(_row_value(row, "cex_deposit_24h_count", 0)) or 0)
+    targets = _clean_text(_row_value(row, "cex_deposit_24h_target_exchanges", "")) or "labelled CEX wallets"
+    total_amount = _fmt_amount(_row_value(row, "cex_deposit_24h_token_amount", math.nan))
+    max_amount = _fmt_amount(_row_value(row, "cex_deposit_24h_max_amount", math.nan))
+    gate = _clean_text(_row_value(row, "cex_deposit_concentration_gate", "")) or "concentration gate met"
+    total_pct = _pct_value(_row_value(row, "cex_deposit_24h_total_pct_supply", math.nan))
+    max_pct = _pct_value(_row_value(row, "cex_deposit_24h_max_pct_supply", math.nan))
+    pct_parts: list[str] = []
+    if total_pct is not None:
+        pct_parts.append(f"total {total_pct:.2f}% of supply")
+    if max_pct is not None:
+        pct_parts.append(f"largest {max_pct:.2f}% of supply")
+    pct_text = f"; {'; '.join(pct_parts)}" if pct_parts else ""
+    if count <= 0:
+        return f"{gate}; no large labelled CEX transfer flow found in the active lookback."
+    return (
+        f"Concentration-gated wallet-to-CEX flow: {count} large transfer(s) into {targets}; "
+        f"total {total_amount} tokens; largest {max_amount}{pct_text}; {gate}."
+    )
+
+
+def build_cex_flow_interpretation(row: Mapping[str, Any] | pd.Series) -> str:
+    count = int(_safe_float(_row_value(row, "cex_deposit_24h_count", 0)) or 0)
+    if count <= 0:
+        return "No venue-flow pressure was detected after the holder concentration gate."
+    return (
+        "Token inventory moved from non-CEX wallets into labelled exchange wallets after the concentration gate was met. "
+        "Treat this as venue-flow and distribution-risk evidence, not a conclusion about intent."
+    )
+
+
+def build_cex_flow_next_check(row: Mapping[str, Any] | pd.Series) -> str:
+    count = int(_safe_float(_row_value(row, "cex_deposit_24h_count", 0)) or 0)
+    if count <= 0:
+        return "Recheck after the next scan window, especially if OI or volume starts expanding."
+    return "Watch whether CEX balances keep rising, OI/volume expands, and price absorbs or rejects the added venue inventory."
+
+
+def build_cex_flow_alert_line(row: Mapping[str, Any] | pd.Series) -> str:
+    symbol = str(_row_value(row, "symbol", "")).upper().strip() or "UNKNOWN"
+    score = _safe_float(_row_value(row, "cex_deposit_flow_score", 0.0)) or 0.0
+    risk = _clean_text(_row_value(row, "cex_deposit_flow_risk_level", "")) or infer_cex_flow_risk_level(row)
+    count = int(_safe_float(_row_value(row, "cex_deposit_24h_count", 0.0)) or 0)
+    targets = _clean_text(_row_value(row, "cex_deposit_24h_target_exchanges", "")) or "labelled CEX"
+    total_amount = _fmt_amount(_row_value(row, "cex_deposit_24h_token_amount", math.nan))
+    total_pct = _pct_value(_row_value(row, "cex_deposit_24h_total_pct_supply", math.nan))
+    pct_text = f" | {total_pct:.2f}% supply" if total_pct is not None else ""
+    return f"{symbol} | flow {score:.0f}/100 | {risk} | {count} tx | {targets} | total {total_amount}{pct_text}"
+
+
+def build_cex_flow_discord_block(row: Mapping[str, Any] | pd.Series, *, max_chars: int = 900) -> str:
+    symbol = str(_row_value(row, "symbol", "")).upper().strip() or "UNKNOWN"
+    score = _safe_float(_row_value(row, "cex_deposit_flow_score", 0.0)) or 0.0
+    risk = _clean_text(_row_value(row, "cex_deposit_flow_risk_level", "")) or infer_cex_flow_risk_level(row)
+    evidence = _clean_text(_row_value(row, "cex_deposit_flow_evidence_summary", "")) or build_cex_flow_evidence_summary(row)
+    interpretation = _clean_text(_row_value(row, "cex_deposit_flow_interpretation", "")) or build_cex_flow_interpretation(row)
+    next_check = _clean_text(_row_value(row, "cex_deposit_flow_next_check", "")) or build_cex_flow_next_check(row)
+    source_url = _clean_text(_row_value(row, "cex_deposit_24h_source_url", ""))
+    lines = [
+        f"/{symbol}",
+        f"CEX Flow Score: {score:.0f}/100 | Risk: {risk}",
+        f"Evidence: {evidence}",
+        f"Venue-flow read: {interpretation}",
+        f"Next check: {next_check}",
+    ]
+    if source_url:
+        lines.append(f"Source: {source_url}")
+    text = "\n".join(lines)
+    if len(text) <= max_chars:
+        return text
+    trimmed: list[str] = []
+    budget = max_chars
+    for line in lines:
+        if len(line) + 1 <= budget:
+            trimmed.append(line)
+            budget -= len(line) + 1
+        elif budget > 40:
+            trimmed.append(line[: max(0, budget - 2)].rstrip() + "..")
+            break
+    return "\n".join(trimmed)
+
+
 def scan_cex_deposit_flow(
     row: Mapping[str, Any],
     *,
@@ -327,6 +451,11 @@ def scan_cex_deposit_flow(
             result = _default_result()
             result["cex_deposit_concentration_gate"] = gate_text
             result["cex_deposit_flow_note"] = f"concentration gate not met ({gate_text}); recent CEX deposits not scored."
+            result["cex_deposit_flow_risk_level"] = infer_cex_flow_risk_level(result)
+            result["cex_deposit_flow_evidence_summary"] = build_cex_flow_evidence_summary(result)
+            result["cex_deposit_flow_interpretation"] = build_cex_flow_interpretation(result)
+            result["cex_deposit_flow_next_check"] = build_cex_flow_next_check(result)
+            result["cex_deposit_flow_alert_line"] = build_cex_flow_alert_line({"symbol": _row_value(row, "symbol", ""), **result})
             return result
 
     try:
@@ -346,6 +475,11 @@ def scan_cex_deposit_flow(
     result["cex_deposit_concentration_gate"] = gate_text
     if not gate:
         result["cex_deposit_flow_note"] = f"concentration gate not met ({gate_text}); recent CEX deposits not scored."
+        result["cex_deposit_flow_risk_level"] = infer_cex_flow_risk_level(result)
+        result["cex_deposit_flow_evidence_summary"] = build_cex_flow_evidence_summary(result)
+        result["cex_deposit_flow_interpretation"] = build_cex_flow_interpretation(result)
+        result["cex_deposit_flow_next_check"] = build_cex_flow_next_check(result)
+        result["cex_deposit_flow_alert_line"] = build_cex_flow_alert_line({"symbol": _row_value(row, "symbol", ""), **result})
         return result
 
     source_url = build_advanced_filter_url(chain, hint.contract_address, min_amount=min_transfer_tokens)
@@ -365,6 +499,11 @@ def scan_cex_deposit_flow(
         result["cex_deposit_flow_note"] = (
             f"concentration gate met ({gate_text}); no large labelled CEX deposits found in last {lookback_hours}h."
         )
+        result["cex_deposit_flow_evidence_summary"] = build_cex_flow_evidence_summary(result)
+        result["cex_deposit_flow_interpretation"] = build_cex_flow_interpretation(result)
+        result["cex_deposit_flow_next_check"] = build_cex_flow_next_check(result)
+        result["cex_deposit_flow_risk_level"] = infer_cex_flow_risk_level(result)
+        result["cex_deposit_flow_alert_line"] = build_cex_flow_alert_line({"symbol": _row_value(row, "symbol", ""), **result})
         return result
 
     total_amount = sum(float(item["amount"]) for item in rows)
@@ -398,6 +537,11 @@ def scan_cex_deposit_flow(
             ),
         }
     )
+    result["cex_deposit_flow_risk_level"] = infer_cex_flow_risk_level(result)
+    result["cex_deposit_flow_evidence_summary"] = build_cex_flow_evidence_summary(result)
+    result["cex_deposit_flow_interpretation"] = build_cex_flow_interpretation(result)
+    result["cex_deposit_flow_next_check"] = build_cex_flow_next_check(result)
+    result["cex_deposit_flow_alert_line"] = build_cex_flow_alert_line({"symbol": _row_value(row, "symbol", ""), **result})
     return result
 
 

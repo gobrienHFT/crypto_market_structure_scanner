@@ -12,6 +12,7 @@ import pandas as pd
 import requests
 
 from binance_futures import BinanceFuturesPublic
+from cex_flow_scanner import build_cex_flow_discord_block
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
     DISCORD_FOOTER,
@@ -639,12 +640,14 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
     min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
     min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
     header = (
+        "Wallet-to-CEX flow monitor\n"
+        "The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.\n"
         f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
         f"Min transfer: {_fmt_compact_number(min_transfer)} tokens | Lookback: {lookback_hours:.0f}h | "
         f"{bitget_gate_venue_header(allow_cex_flow_targets=True)}"
     )
     if frame.empty:
-        return "Large CEX token-transfer flow", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+        return "Wallet-to-CEX flow monitor", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
 
     score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
     flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
@@ -652,7 +655,7 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
     flow = apply_bitget_gate_venue_gate(flow, allow_cex_flow_targets=True)
     if flow.empty:
         return (
-            "Large CEX token-transfer flow",
+            "Wallet-to-CEX flow monitor",
             [header + "\n\nNo concentration-gated large CEX token-transfer flow currently met the Bitget/Gate venue gate."],
         )
 
@@ -664,21 +667,12 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
         ascending=[False, False, False, True],
     ).head(min(max(int(limit), 1), 100))
 
-    lines = [header, ""]
+    summary = "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in flow.get("symbol", pd.Series(dtype="object")).tolist())
+    lines = [header, "", summary, ""]
     for _, row in flow.iterrows():
-        symbol = str(row.get("symbol", "")).upper().strip()
-        exchanges = str(row.get("cex_deposit_24h_target_exchanges", "") or "unknown CEX").strip()
-        gate = str(row.get("cex_deposit_concentration_gate", "") or "concentration gate passed").strip()
-        total_amount = _fmt_compact_number(row.get("cex_deposit_24h_token_amount"))
-        max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
-        total_pct = _safe_float(row.get("cex_deposit_24h_total_pct_supply"))
-        pct_text = f" | supply {total_pct:.2f}%" if total_pct is not None and total_pct > 0 else ""
-        count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
-        lines.append(
-            f"{symbol} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.1f} | "
-            f"{count} deposit(s) | {exchanges} | total {total_amount} | max {max_amount}{pct_text} | {gate}"
-        )
-    return "Large CEX token-transfer flow", _chunk_text_lines(lines)
+        lines.append(build_cex_flow_discord_block(row, max_chars=900))
+        lines.append("")
+    return "Wallet-to-CEX flow monitor", _chunk_text_lines(lines)
 
 
 def _trade_bot_client() -> BinanceFuturesPublic:

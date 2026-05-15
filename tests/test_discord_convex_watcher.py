@@ -193,6 +193,35 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
     assert float(selected.iloc[0]["watcher_alert_score"]) == 88.0
 
 
+def test_cex_flow_watcher_cards_use_flow_format(monkeypatch) -> None:
+    monkeypatch.setattr(watcher, "_holder_composition_text", lambda row: "")
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "PLAYUSDT",
+                "watcher_alert_source": "cex_flow",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_flow_risk_level": "High",
+                "cex_deposit_24h_count": 3,
+                "cex_deposit_24h_token_amount": 2_500_000,
+                "cex_deposit_24h_max_amount": 1_200_000,
+                "cex_deposit_24h_total_pct_supply": 2.5,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+            }
+        ]
+    )
+
+    cards, archive = watcher._candidate_cards_and_archive_rows(frame)
+
+    assert len(cards) == 1
+    assert "CEX Flow Score: 88/100 | Risk: High" in cards[0]
+    assert "Venue-flow read:" in cards[0]
+    assert "Next check:" in cards[0]
+    assert archive.iloc[0]["_raw_bot_output"] == cards[0]
+
+
 def test_terminal_alert_source_requires_bitget_or_gate_by_default(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     monkeypatch.setenv("DISCORD_WATCHER_MIN_TERMINAL_SCORE", "50")

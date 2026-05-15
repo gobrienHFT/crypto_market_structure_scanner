@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 import requests
 
+from cex_flow_scanner import build_cex_flow_discord_block
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
     DISCORD_FOOTER,
@@ -184,7 +185,13 @@ def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[st
     archive_rows: list[dict[str, Any]] = []
     for _, row in candidates.iterrows():
         holder_text = _holder_composition_text(row)
-        card = build_discord_flag_card(row, holder_text=holder_text)
+        alert_source = str(row.get("watcher_alert_source", "")).strip().lower().replace("-", "_")
+        if alert_source in {"cex_flow", "cexflow", "cex_deposit_flow"}:
+            card = build_cex_flow_discord_block(row, max_chars=900)
+            if holder_text:
+                card = f"{card}\n{holder_text[:360]}"
+        else:
+            card = build_discord_flag_card(row, holder_text=holder_text)
         cards.append(card)
         record = row.to_dict()
         record["_holder_text"] = holder_text

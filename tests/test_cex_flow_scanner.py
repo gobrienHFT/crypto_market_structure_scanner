@@ -61,6 +61,13 @@ def test_scan_cex_deposit_flow_scores_only_recent_deposits_after_concentration_g
     assert result["cex_deposit_24h_token_amount"] == 1_200_000
     assert "top10 91.0%" in result["cex_deposit_concentration_gate"]
     assert "basescan.org/advanced-filter" in result["cex_deposit_24h_source_url"]
+    assert result["cex_deposit_flow_risk_level"] in {"Elevated", "High", "Extreme"}
+    assert "wallet-to-CEX flow" in result["cex_deposit_flow_evidence_summary"]
+    assert "not a conclusion about intent" in result["cex_deposit_flow_interpretation"]
+    assert "OI/volume" in result["cex_deposit_flow_next_check"]
+    assert "PLAYUSDT | flow" in result["cex_deposit_flow_alert_line"]
+    assert "crime" not in result["cex_deposit_flow_evidence_summary"].lower()
+    assert "scam" not in result["cex_deposit_flow_evidence_summary"].lower()
 
 
 def test_scan_cex_deposit_flow_does_not_fetch_when_concentration_gate_fails(monkeypatch) -> None:
@@ -82,6 +89,35 @@ def test_scan_cex_deposit_flow_does_not_fetch_when_concentration_gate_fails(monk
     assert result["cex_deposit_flow_flag"] is False
     assert result["cex_deposit_flow_score"] == 0.0
     assert "concentration gate not met" in result["cex_deposit_flow_note"]
+    assert result["cex_deposit_flow_risk_level"] == "Watch only"
+    assert "no large labelled CEX transfer flow" in result["cex_deposit_flow_evidence_summary"]
+
+
+def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
+    row = {
+        "symbol": "PLAYUSDT",
+        "cex_deposit_flow_score": 88,
+        "cex_deposit_flow_risk_level": "High",
+        "cex_deposit_24h_count": 3,
+        "cex_deposit_24h_token_amount": 2_500_000,
+        "cex_deposit_24h_max_amount": 1_200_000,
+        "cex_deposit_24h_total_pct_supply": 2.5,
+        "cex_deposit_24h_max_pct_supply": 1.2,
+        "cex_deposit_24h_target_exchanges": "Bitget, Gate",
+        "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+        "cex_deposit_24h_source_url": "https://basescan.org/advanced-filter?tkn=0xabc",
+    }
+
+    output = cex.build_cex_flow_discord_block(row, max_chars=900)
+
+    assert "/PLAYUSDT" in output
+    assert "CEX Flow Score: 88/100 | Risk: High" in output
+    assert "Evidence:" in output
+    assert "Venue-flow read:" in output
+    assert "Next check:" in output
+    assert "Source: https://basescan.org/advanced-filter?tkn=0xabc" in output
+    assert "pump call" not in output.lower()
+    assert len(output) <= 900
 
 
 def test_enrich_cex_deposit_flows_adds_columns_when_disabled() -> None:

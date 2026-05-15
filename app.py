@@ -19,7 +19,7 @@ from concentration_scanner.fixtures import acceptance_fixture_results
 from concentration_scanner.perp_universe import DEFAULT_SEED_PATH, BinancePerpUniverseBuilder, PerpUniverseCandidate
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
-from cex_flow_scanner import CEX_DEPOSIT_FLOW_COLUMNS, enrich_cex_deposit_flows
+from cex_flow_scanner import CEX_DEPOSIT_FLOW_COLUMNS, build_cex_flow_discord_block, enrich_cex_deposit_flows
 from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
@@ -5815,6 +5815,7 @@ def render_breakout_dashboard() -> None:
                 help="Large labelled CEX deposits found only after the holder concentration gate is met.",
             ),
             "cex_deposit_flow_flag": st.column_config.CheckboxColumn("Recent CEX Flow Flag"),
+            "cex_deposit_flow_risk_level": st.column_config.TextColumn("Flow Risk"),
             "cex_deposit_24h_count": st.column_config.NumberColumn("CEX Deposits 24h", format="%d"),
             "cex_deposit_24h_token_amount": st.column_config.NumberColumn("CEX Deposit Tokens 24h", format="%.2f"),
             "cex_deposit_24h_total_pct_supply": st.column_config.NumberColumn("CEX Deposits % Supply", format="%.2f%%"),
@@ -5822,6 +5823,10 @@ def render_breakout_dashboard() -> None:
             "cex_deposit_24h_target_exchanges": st.column_config.TextColumn("CEX Deposit Targets"),
             "cex_deposit_concentration_gate": st.column_config.TextColumn("CEX Flow Gate"),
             "cex_deposit_flow_note": st.column_config.TextColumn("CEX Flow Note"),
+            "cex_deposit_flow_evidence_summary": st.column_config.TextColumn("Flow Evidence"),
+            "cex_deposit_flow_interpretation": st.column_config.TextColumn("Venue-Flow Read"),
+            "cex_deposit_flow_next_check": st.column_config.TextColumn("Next Check"),
+            "cex_deposit_flow_alert_line": st.column_config.TextColumn("Discord Alert Line"),
             "cex_deposit_flow_error": st.column_config.TextColumn("CEX Flow Error"),
             "cex_deposit_24h_source_url": st.column_config.LinkColumn("CEX Flow Source"),
             "terminal_private_unlock_score": st.column_config.NumberColumn(
@@ -7321,11 +7326,11 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[9]:
             st.caption(
-                "Concentration-gated exchange-flow scan: for mapped perp tokens, the scanner checks Etherscan-style "
+                "Wallet-to-CEX flow monitor: for mapped perp tokens, the scanner checks Etherscan-style "
                 "Advanced Filter transfer pages for large token transfers into labelled CEX wallets over the last "
                 f"{CEX_DEPOSIT_FLOW_LOOKBACK_HOURS}h. Rows are only scored when holder concentration already meets the "
                 f"gate: top 10 >= {CEX_DEPOSIT_FLOW_MIN_TOP10_PCT:.0f}% or top 100 >= {CEX_DEPOSIT_FLOW_MIN_TOP100_PCT:.0f}%. "
-                "This is structural-risk research tooling, not trade instruction."
+                "This is venue-flow evidence for structural-risk research, not trade instruction or an intent conclusion."
             )
             flow_score = pd.to_numeric(
                 all_df.get("cex_deposit_flow_score", pd.Series(0.0, index=all_df.index)),
@@ -7354,6 +7359,7 @@ def render_breakout_dashboard() -> None:
                 "terminal_edge_score",
                 "trade_bucket_score",
                 "cex_deposit_flow_score",
+                "cex_deposit_flow_risk_level",
                 "cex_deposit_flow_flag",
                 "cex_deposit_24h_count",
                 "cex_deposit_24h_token_amount",
@@ -7362,7 +7368,11 @@ def render_breakout_dashboard() -> None:
                 "cex_deposit_24h_max_pct_supply",
                 "cex_deposit_24h_target_exchanges",
                 "cex_deposit_concentration_gate",
+                "cex_deposit_flow_evidence_summary",
+                "cex_deposit_flow_interpretation",
+                "cex_deposit_flow_next_check",
                 "cex_deposit_flow_note",
+                "cex_deposit_flow_alert_line",
                 "cex_deposit_flow_error",
                 "cex_deposit_24h_source_url",
                 "top10_holder_pct",
@@ -7395,13 +7405,16 @@ def render_breakout_dashboard() -> None:
             gated = all_df.get("cex_deposit_concentration_gate", pd.Series("", index=all_df.index)).astype(str).str.strip().ne("")
             f4.metric("Concentration-gated rows", int(gated.sum()))
 
-            st.subheader("Large CEX Token-Transfer Flow")
+            st.subheader("Wallet-to-CEX Flow Monitor")
             if cex_flow_df.empty:
                 st.info(
-                    "No concentration-gated large CEX token-transfer flow is currently scored. "
+                    "No concentration-gated wallet-to-CEX token-transfer flow is currently scored. "
                     "Rows may also be blank where no contract hint exists yet for that perp symbol."
                 )
             else:
+                preview_row = cex_flow_df.head(1).iloc[0]
+                st.markdown("**Top alert preview**")
+                st.code(build_cex_flow_discord_block(preview_row, max_chars=1400))
                 st.dataframe(
                     _display_frame(cex_flow_df.head(80), cex_flow_cols),
                     use_container_width=True,
@@ -7414,6 +7427,9 @@ def render_breakout_dashboard() -> None:
                     "symbol",
                     "base_asset",
                     "cex_deposit_concentration_gate",
+                    "cex_deposit_flow_risk_level",
+                    "cex_deposit_flow_evidence_summary",
+                    "cex_deposit_flow_next_check",
                     "cex_deposit_flow_note",
                     "cex_deposit_flow_error",
                     "cex_deposit_24h_source_url",
