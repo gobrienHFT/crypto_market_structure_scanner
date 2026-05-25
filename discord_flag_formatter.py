@@ -135,7 +135,7 @@ def _has_note(row: Mapping[str, Any] | pd.Series, *needles: str) -> bool:
 
 
 def _opaque_score(row: Mapping[str, Any] | pd.Series) -> float:
-    return _first_float(
+    return _max_float(
         row,
         (
             "terminal_hidden_float_reflexivity_score",
@@ -147,11 +147,35 @@ def _opaque_score(row: Mapping[str, Any] | pd.Series) -> float:
 
 
 def _exchange_flow_score(row: Mapping[str, Any] | pd.Series) -> float:
-    return _first_float(row, ("cex_deposit_flow_score", "terminal_exchange_flow_score", "insider_cex_flow_score")) or 0.0
+    return _max_float(row, ("cex_deposit_flow_score", "terminal_exchange_flow_score", "insider_cex_flow_score")) or 0.0
 
 
 def _private_unlock_score(row: Mapping[str, Any] | pd.Series) -> float:
-    return _first_float(row, ("terminal_private_unlock_score", "private_unlock_overhang_score")) or 0.0
+    return _max_float(row, ("terminal_private_unlock_score", "private_unlock_overhang_score")) or 0.0
+
+
+def _structure_edge_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("terminal_structure_edge_score",)) or 0.0
+
+
+def _control_plane_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("terminal_control_plane_score",)) or 0.0
+
+
+def _distribution_pressure_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("terminal_distribution_pressure_score",)) or 0.0
+
+
+def _pre_ignition_quality_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("terminal_pre_ignition_quality_score",)) or 0.0
+
+
+def _inventory_stress_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("cex_deposit_inventory_stress_score",)) or 0.0
+
+
+def _archetype_match_score(row: Mapping[str, Any] | pd.Series) -> float:
+    return _first_float(row, ("archetype_match_score",)) or 0.0
 
 
 def _row_boolish(row: Mapping[str, Any] | pd.Series, key: str) -> bool:
@@ -187,6 +211,17 @@ def infer_accumulation_read(row: Mapping[str, Any] | pd.Series) -> str:
     return "aggressive taker demand absorbed with muted price response; " + " | ".join(parts) + "; requires source/holder review"
 
 
+def infer_case_study_analogue(row: Mapping[str, Any] | pd.Series) -> str:
+    score = _archetype_match_score(row)
+    if score < 35.0:
+        return ""
+    note = _first_text(row, ("archetype_match_note",))
+    if note:
+        return _clip_sentence(note, 220)
+    label = _first_text(row, ("archetype_best_match",)) or "case-study analogue"
+    return f"{label} {score:.0f}/100"
+
+
 def infer_risk_level(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
     score = _score(row)
     levels = ["Watch only", "Elevated", "High", "Extreme"]
@@ -205,6 +240,9 @@ def infer_risk_level(row: Mapping[str, Any] | pd.Series, holder_text: str = "") 
     centralized = _first_float(row, ("centralized_ownership_score", "owner_holder_pct", "creator_holder_pct")) or 0.0
     low_float = _first_float(row, ("low_float_score", "rave_lab_float_control_score")) or 0.0
     short_fuse = _first_float(row, ("dormant_short_fuse_score", "pre_pump_short_fuse_score")) or 0.0
+    structure_edge = _structure_edge_score(row)
+    distribution_pressure = _distribution_pressure_score(row)
+    inventory_stress = _inventory_stress_score(row)
     if (
         (top1 is not None and top1 >= 50.0)
         or (top5 is not None and top5 >= 80.0)
@@ -212,6 +250,9 @@ def infer_risk_level(row: Mapping[str, Any] | pd.Series, holder_text: str = "") 
         or centralized >= 75.0
         or low_float >= 75.0
         or short_fuse >= 70.0
+        or structure_edge >= 78.0
+        or distribution_pressure >= 72.0
+        or inventory_stress >= 65.0
     ):
         index = min(3, index + 1)
     return levels[index]
@@ -225,6 +266,8 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
     top10 = _first_float(row, ("top10_holder_pct",)) or _holder_pct(holder_text, "Top10")
     low_float = _first_float(row, ("low_float_score",)) or 0.0
     accumulation = _accumulation_score(row)
+    structure_edge = _structure_edge_score(row)
+    distribution_pressure = _distribution_pressure_score(row)
 
     if short_pct is not None and short_pct >= 60.0:
         pressure = "High short pressure"
@@ -237,6 +280,8 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
 
     if accumulation >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
         flow = "aggressive taker demand absorbed"
+    elif distribution_pressure >= 65.0:
+        flow = "venue-inventory pressure"
     elif oi_delta is not None and oi_delta >= 2.0:
         flow = "rising OI"
     elif oi_delta is not None and oi_delta < -2.0:
@@ -247,7 +292,9 @@ def infer_structure(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -
         flow = "flow confirmation pending"
 
     opaque_score = _opaque_score(row)
-    if opaque_score >= 70.0:
+    if structure_edge >= 70.0:
+        float_text = "structural edge confirmed"
+    elif opaque_score >= 70.0:
         float_text = "opaque-float / hidden-unlock risk"
     elif (top5 is not None and top5 >= 60.0) or (top10 is not None and top10 >= 70.0) or low_float >= 60.0:
         float_text = "thin upside liquidity"
@@ -264,8 +311,11 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
     short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
     bits: list[str] = []
     range_event = _first_text(row, ("range_breakout_event",))
+    archetype = infer_case_study_analogue(row)
     if score:
         bits.append(f"scanner score {score:.0f}/100")
+    if archetype:
+        bits.append(archetype)
     if short_pct is not None and short_pct >= 50.0:
         bits.append(f"{short_pct:.1f}% short-account pressure")
     if range_event:
@@ -276,6 +326,12 @@ def infer_why_flagged(row: Mapping[str, Any] | pd.Series, holder_text: str = "")
         bits.append("opaque supply/unlock risk")
     if _exchange_flow_score(row) >= 60.0:
         bits.append("concentration-gated CEX-flow signal")
+    if _inventory_stress_score(row) >= 45.0:
+        bits.append("CEX inventory stress versus visible liquidity")
+    if _structure_edge_score(row) >= 65.0:
+        bits.append("structure-edge confluence")
+    if _pre_ignition_quality_score(row) >= 65.0:
+        bits.append("pre-ignition quality still intact")
     if _accumulation_score(row) >= 60.0 or _row_boolish(row, "accumulation_absorption_flag"):
         bits.append("accumulation-like absorption")
     if _has_note(row, "controlled float", "float trap", "low float", "opaque public float"):
@@ -298,6 +354,8 @@ def infer_convex_trigger(row: Mapping[str, Any] | pd.Series) -> str:
 
     if _accumulation_score(row) >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
         return "aggressive taker demand is being absorbed while price response remains muted; OI/volume confirmation keeps the setup under review."
+    if _inventory_stress_score(row) >= 55.0:
+        return "recent venue inventory is large versus visible liquidity; constructive absorption plus stable OI keeps the setup under review."
     if range_event and (oi_delta is None or oi_delta >= 0.0):
         return f"{range_event} while flow conditions remain under review."
     if short_pct is not None and short_pct >= 60.0 and (oi_delta is None or oi_delta >= 0.0):
@@ -330,6 +388,11 @@ def infer_liquidity_warning(row: Mapping[str, Any] | pd.Series, holder_text: str
         return "reported float may not capture private unlock/OTC supply; visible liquidity can reprice abruptly."
     if _exchange_flow_score(row) >= 70.0:
         return "recent concentration-gated CEX-flow signal; visible depth can change quickly around stress."
+    if _inventory_stress_score(row) >= 55.0:
+        note = _first_text(row, ("cex_deposit_inventory_stress_note",))
+        if note:
+            return _clip_sentence(note + "; visible depth can change quickly around stress.", 260)
+        return "recent venue inventory is large versus visible liquidity; verify whether the book absorbs it."
     if _accumulation_score(row) >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
         return "absorption-like tape can release into gaps if displayed liquidity thins; verify depth before acting."
     if top100 is not None and top100 >= 95.0:
@@ -392,6 +455,185 @@ def _format_amount(value: float | None) -> str:
     return f"{value:.2f}"
 
 
+def _max_float(row: Mapping[str, Any] | pd.Series, keys: tuple[str, ...]) -> float | None:
+    values = [_first_float(row, (key,)) for key in keys]
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def infer_evidence_stack(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
+    components: list[tuple[str, float]] = []
+
+    def add(label: str, value: float | None) -> None:
+        if value is not None and value > 0.0:
+            components.append((label, max(0.0, min(100.0, value))))
+
+    add("terminal", _first_float(row, ("terminal_edge_score",)))
+    add("early radar", _first_float(row, ("early_pump_radar_score",)))
+    add("timing", _first_float(row, ("timing_score",)))
+    add("structure edge", _first_float(row, ("terminal_structure_edge_score",)))
+    add("archetype", _first_float(row, ("archetype_match_score",)))
+    add(
+        "perp fuel",
+        _max_float(
+            row,
+            (
+                "short_liquidation_fuel_score",
+                "short_dominance_score",
+                "short_account_build_score",
+                "perp_pressure_score",
+                "convexity_squeeze_score",
+            ),
+        ),
+    )
+    top5 = _holder_pct(holder_text, "Top5")
+    top10 = _first_float(row, ("top10_holder_pct",)) or _holder_pct(holder_text, "Top10")
+    holder_float_score = max(value for value in (top5, top10) if value is not None) if any(value is not None for value in (top5, top10)) else None
+    model_float_score = _max_float(
+        row,
+        (
+            "terminal_float_score",
+            "centralized_ownership_score",
+            "low_float_score",
+            "float_trap_score",
+            "terminal_opaque_supply_score",
+            "terminal_hidden_float_reflexivity_score",
+        ),
+    )
+    float_scores = [value for value in (model_float_score, holder_float_score) if value is not None]
+    add(
+        "float control",
+        max(float_scores) if float_scores else None,
+    )
+    add(
+        "CEX flow",
+        _max_float(
+            row,
+            (
+                "cex_deposit_flow_score",
+                "terminal_exchange_flow_score",
+                "target_cex_flow_score",
+                "insider_cex_flow_score",
+            ),
+        ),
+    )
+    add("inventory stress", _first_float(row, ("cex_deposit_inventory_stress_score",)))
+    add("pre-ignition", _first_float(row, ("terminal_pre_ignition_quality_score",)))
+    add("distribution pressure", _first_float(row, ("terminal_distribution_pressure_score",)))
+    add(
+        "venue support",
+        _max_float(row, ("venue_support_score", "binance_bitget_gate_share_score", "mm_sponsor_confluence_score")),
+    )
+    add("runway", _first_float(row, ("convexity_runway_score",)))
+    if not components:
+        score = _score(row)
+        return f"scanner {score:.0f}/100; component evidence pending" if score else "component evidence pending"
+
+    components = sorted(components, key=lambda item: (-item[1], item[0]))
+    return " | ".join(f"{label} {value:.0f}" for label, value in components[:6])
+
+
+def infer_early_radar(row: Mapping[str, Any] | pd.Series) -> str:
+    score = _first_float(row, ("early_pump_radar_score",))
+    if score is None or score < 35.0:
+        return ""
+    state = _first_text(row, ("early_pump_state",)) or "watch"
+    signal = _first_text(row, ("early_pump_primary_signal",))
+    next_check = _first_text(row, ("early_pump_next_check",))
+    parts = [f"{state} {score:.0f}/100"]
+    if signal:
+        parts.append(signal)
+    if next_check:
+        parts.append(f"next: {_clip_sentence(next_check, 120)}")
+    return " | ".join(parts)
+
+
+def infer_convex_thesis(row: Mapping[str, Any] | pd.Series, holder_text: str = "") -> str:
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
+    oi_delta = _first_float(row, ("oi_delta_pct", "oi_value_change_since_scan_pct"))
+    cex_flow = _exchange_flow_score(row)
+    opaque = _opaque_score(row)
+    private_unlock = _private_unlock_score(row)
+    accumulation = _accumulation_score(row)
+    structure_edge = _structure_edge_score(row)
+    control_plane = _control_plane_score(row)
+    pre_ignition = _pre_ignition_quality_score(row)
+    distribution_pressure = _distribution_pressure_score(row)
+    top10 = _first_float(row, ("top10_holder_pct",)) or _holder_pct(holder_text, "Top10")
+    low_float = _first_float(row, ("low_float_score", "float_trap_score", "centralized_ownership_score")) or 0.0
+    constrained_float = (top10 is not None and top10 >= 75.0) or low_float >= 65.0 or opaque >= 65.0
+
+    if cex_flow >= 70.0 and constrained_float:
+        return "concentrated holder structure plus fresh CEX-flow creates a venue-inventory stress window; validate against OI and price absorption."
+    if structure_edge >= 75.0 and pre_ignition >= 60.0:
+        return "control-plane, pre-ignition, and flow evidence line up before full chase extension; timing decides whether the edge survives."
+    if distribution_pressure >= 70.0 and control_plane >= 60.0:
+        return "controlled float plus venue-inventory pressure creates a stress window; validate whether added supply is absorbed or rejected."
+    if short_pct is not None and short_pct >= 60.0 and constrained_float:
+        return "crowded shorts are leaning into constrained or opaque float; payoff turns convex only if OI expands and reclaim levels hold."
+    if accumulation >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        return "absorption-like tape suggests patient demand under the surface; needs OI and volume confirmation before it graduates."
+    if cex_flow >= 60.0:
+        return "fresh wallet-to-CEX flow raises venue-inventory risk; strongest read comes from the next balance, OI, and price response."
+    if opaque >= 70.0 or private_unlock >= 70.0:
+        return "reported float may be thinner than common screens imply; reflexivity improves only when market flow confirms."
+    if short_pct is not None and short_pct >= 60.0 and (oi_delta is None or oi_delta >= 0.0):
+        return "short accounts are crowded while OI is stable or rising; monitor for forced-flow pressure after reclaim."
+    if _score(row) >= 75.0:
+        return "multi-factor market-structure evidence is present; timing and liquidity decide whether the setup is actionable."
+    return "watchlist candidate until structural evidence, timing, and venue flow line up."
+
+
+def infer_next_check(row: Mapping[str, Any] | pd.Series) -> str:
+    timing_state = _first_text(row, ("timing_state",))
+    if _inventory_stress_score(row) >= 45.0:
+        return "recheck whether recent venue inventory is absorbed by price, OI, volume, and visible depth."
+    if _exchange_flow_score(row) >= 60.0 or infer_recent_cex_flow(row):
+        return "recheck target-exchange balances, OI expansion, and whether price absorbs or rejects added venue inventory."
+    if _accumulation_score(row) >= 65.0 or _row_boolish(row, "accumulation_absorption_flag"):
+        return "recheck whether absorption persists with higher volume, stable OI, and no chase extension."
+    short_pct = _pct_value(_first_float(row, ("short_account_pct",)))
+    if short_pct is not None and short_pct >= 60.0:
+        return "recheck short-account pressure, OI, funding, and reclaim or failed-reclaim behavior on the next scan."
+    if timing_state:
+        return f"recheck that timing remains {timing_state} while volume, OI, and liquidity do not deteriorate."
+    return "recheck after the next scan window for volume, OI, holder, and venue-flow confirmation."
+
+
+def _fit_labeled_lines(lines: list[str], max_chars: int) -> str:
+    candidate = "\n".join(lines)
+    if len(candidate) <= max_chars:
+        return candidate
+
+    protected_prefixes = ("Convex Score:", "Risk level:", "Research constraint:", "Principle:")
+    variable: list[tuple[int, str, str]] = []
+    fixed_len = 0
+    prefix_len = 0
+    for index, line in enumerate(lines):
+        if ": " in line and not line.startswith(protected_prefixes):
+            label, text = line.split(": ", 1)
+            prefix = f"{label}: "
+            variable.append((index, prefix, text))
+            prefix_len += len(prefix)
+        else:
+            fixed_len += len(line)
+
+    if not variable:
+        return candidate[: max_chars - 3].rstrip() + "..."
+
+    newline_len = max(0, len(lines) - 1)
+    remaining_text_budget = max_chars - fixed_len - prefix_len - newline_len
+    per_line_budget = max(14, remaining_text_budget // len(variable))
+    for budget in (per_line_budget, 90, 75, 60, 48, 36, 28, 20, 14):
+        compact = list(lines)
+        for index, prefix, text in variable:
+            compact[index] = f"{prefix}{_clip_sentence(text, budget)}"
+        candidate = "\n".join(compact)
+        if len(candidate) <= max_chars:
+            return candidate
+    return candidate[: max_chars - 3].rstrip() + "..."
+
+
 def infer_recent_cex_flow(row: Mapping[str, Any] | pd.Series) -> str:
     score = _first_float(row, ("cex_deposit_flow_score",))
     count = _first_float(row, ("cex_deposit_24h_count",))
@@ -412,6 +654,13 @@ def infer_recent_cex_flow(row: Mapping[str, Any] | pd.Series) -> str:
     formatted_amount = _format_amount(amount)
     if formatted_amount:
         parts.append(f"{formatted_amount} tokens")
+    notional = _first_float(row, ("cex_deposit_24h_notional_usd",))
+    formatted_notional = _format_amount(notional)
+    if formatted_notional:
+        parts.append(f"{formatted_notional} notional")
+    inventory_stress = _inventory_stress_score(row)
+    if inventory_stress > 0.0:
+        parts.append(f"inventory stress {inventory_stress:.0f}/100")
     return _clip_sentence(" | ".join(parts), 260)
 
 
@@ -425,23 +674,30 @@ def build_discord_flag_card(
     score = _score(row)
     recent_cex_flow = infer_recent_cex_flow(row)
     accumulation_read = infer_accumulation_read(row)
+    case_study_analogue = infer_case_study_analogue(row)
+    early_radar = infer_early_radar(row)
     lines = [
         f"/{symbol}",
         "",
         f"Convex Score: {score:.0f}/100",
         f"Structure: {infer_structure(row, holder_text)}",
+        f"Convex thesis: {_clip_sentence(infer_convex_thesis(row, holder_text), 190)}",
+        f"Evidence stack: {infer_evidence_stack(row, holder_text)}",
+        *( [f"Case-study analogue: {case_study_analogue}"] if case_study_analogue else [] ),
+        *( [f"Early radar: {early_radar}"] if early_radar else [] ),
         f"Perp positioning: {infer_perp_positioning(row)}",
         *( [f"Recent CEX flow: {recent_cex_flow}"] if recent_cex_flow else [] ),
         *( [f"Accumulation read: {accumulation_read}"] if accumulation_read else [] ),
         f"Why flagged: {infer_why_flagged(row, holder_text)}",
         f"Observed trigger: {infer_convex_trigger(row)}",
+        f"Next check: {_clip_sentence(infer_next_check(row), 180)}",
         f"Invalidation: {infer_invalidation(row)}",
         f"Liquidity warning: {infer_liquidity_warning(row, holder_text)}",
         f"Risk level: {infer_risk_level(row, holder_text)}",
         f"Failure condition: {infer_dead_setup(row)}",
         f"Structure remains relevant while: {infer_hold_longer_condition(row)}",
-        "Research constraint: entries, sizing, stops, and execution are your own responsibility",
-        "Principle: losses must stay small; only stay exposed while structure remains intact",
+        "Research constraint: user owns entries, sizing, stops, and execution",
+        "Principle: small losses; stay exposed only while structure remains intact",
     ]
     base = "\n".join(lines)
     if holder_text:
@@ -452,7 +708,7 @@ def build_discord_flag_card(
     candidate = sanitize_discord_language(candidate)
     if len(candidate) <= max_chars:
         return candidate
-    return sanitize_discord_language(f"{base[: max_chars - 3].rstrip()}...")
+    return sanitize_discord_language(_fit_labeled_lines(lines, max_chars))
 
 
 def _symbol_from_card(card: str) -> str:

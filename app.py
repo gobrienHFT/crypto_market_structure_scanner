@@ -11,6 +11,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from archetype_scoring import ARCHETYPE_SCORE_COLUMNS, apply_archetype_model
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic
 from breakouts import BreakoutRow, levels_from_klines
 from cmc_movers import fetch_cmc_movers
@@ -20,7 +21,6 @@ from concentration_scanner.perp_universe import DEFAULT_SEED_PATH, BinancePerpUn
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
 from cex_flow_scanner import CEX_DEPOSIT_FLOW_COLUMNS, build_cex_flow_discord_block, enrich_cex_deposit_flows
-from crime_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
     DISCORD_FOOTER,
@@ -28,6 +28,7 @@ from discord_flag_formatter import (
     build_discord_flag_card,
     join_discord_flag_cards,
 )
+from early_pump_radar import EARLY_PUMP_RADAR_COLUMNS, apply_early_pump_radar
 from external_markets import (
     fetch_coinbase_spot_bases,
     fetch_dwf_labs_portfolio_members,
@@ -35,6 +36,7 @@ from external_markets import (
     normalize_base_asset,
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
+from market_structure_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
 from proof_engine import archive_alerts
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
@@ -2885,7 +2887,7 @@ RETRIES = int(_env_value("HTTP_RETRIES", "RETRIES", default="2"))
 MAX_SYMBOLS_TO_SCAN = int(_env_value("MAX_SYMBOLS_TO_SCAN", "LEVELS_MAX_SYMBOLS", default="18"))
 FAST_MAX_SYMBOLS = int(_env_value("FAST_MAX_SYMBOLS", default="12"))
 DEEP_MAX_TOTAL_SYMBOLS_TO_SCAN = int(_env_value("DEEP_MAX_TOTAL_SYMBOLS_TO_SCAN", default="28"))
-CRIME_SYMBOLS_TO_SCAN = int(_env_value("CRIME_SYMBOLS_TO_SCAN", default="10"))
+CRIME_SYMBOLS_TO_SCAN = int(_env_value("MARKET_STRUCTURE_SYMBOLS_TO_SCAN", "CRIME_SYMBOLS_TO_SCAN", default="10"))
 DAILY_KLINE_LIMIT = int(_env_value("DAILY_KLINE_LIMIT", default="1500"))
 INCLUDE_TRADFI_BREAKOUTS = _env_value("INCLUDE_TRADFI_BREAKOUTS", default="0").strip().lower() in {
     "1",
@@ -2932,11 +2934,15 @@ LONG_SHORT_RATIO_HISTORY_LIMIT = max(
     max(SHORT_ACCOUNT_CHANGE_WINDOWS, default=1) + 1,
     2,
 )
-CRIME_PUMP_PERIOD = _env_value("CRIME_PUMP_PERIOD", default="1h")
-CRIME_DEPTH_LIMIT = int(_env_value("CRIME_DEPTH_LIMIT", default="50"))
-CRIME_HOURLY_LOOKBACK = int(_env_value("CRIME_HOURLY_LOOKBACK", default="50"))
-CRIME_MIN_QUOTE_VOLUME = float(_env_value("CRIME_MIN_QUOTE_VOLUME", default="2500000"))
-CRIME_EXTERNAL_SYMBOLS_TO_SCAN = int(_env_value("CRIME_EXTERNAL_SYMBOLS_TO_SCAN", default="6"))
+CRIME_PUMP_PERIOD = _env_value("MARKET_STRUCTURE_PERIOD", "CRIME_PUMP_PERIOD", default="1h")
+CRIME_DEPTH_LIMIT = int(_env_value("MARKET_STRUCTURE_DEPTH_LIMIT", "CRIME_DEPTH_LIMIT", default="50"))
+CRIME_HOURLY_LOOKBACK = int(_env_value("MARKET_STRUCTURE_HOURLY_LOOKBACK", "CRIME_HOURLY_LOOKBACK", default="50"))
+CRIME_MIN_QUOTE_VOLUME = float(
+    _env_value("MARKET_STRUCTURE_MIN_QUOTE_VOLUME", "CRIME_MIN_QUOTE_VOLUME", default="2500000")
+)
+CRIME_EXTERNAL_SYMBOLS_TO_SCAN = int(
+    _env_value("MARKET_STRUCTURE_EXTERNAL_SYMBOLS_TO_SCAN", "CRIME_EXTERNAL_SYMBOLS_TO_SCAN", default="6")
+)
 DEEP_EXTERNAL_SYMBOLS_TO_SCAN = int(_env_value("DEEP_EXTERNAL_SYMBOLS_TO_SCAN", default="4"))
 PRECONVEX_SYMBOLS_TO_SCAN = int(_env_value("PRECONVEX_SYMBOLS_TO_SCAN", default="8"))
 ATH_RUNWAY_SYMBOLS_TO_SCAN = int(_env_value("ATH_RUNWAY_SYMBOLS_TO_SCAN", default="25"))
@@ -2945,19 +2951,24 @@ FULL_ATH_MAX_SYMBOLS_TO_SCAN = int(_env_value("FULL_ATH_MAX_SYMBOLS_TO_SCAN", de
 FULL_ATH_EXTERNAL_SYMBOLS_TO_SCAN = int(_env_value("FULL_ATH_EXTERNAL_SYMBOLS_TO_SCAN", default="4"))
 CRIME_EXCLUDED_BASE_ASSETS = {
     item.strip().upper()
-    for item in _env_value("CRIME_EXCLUDED_BASE_ASSETS", default=DEFAULT_CRIME_EXCLUDED_BASES).split(",")
+    for item in _env_value(
+        "MARKET_STRUCTURE_EXCLUDED_BASE_ASSETS",
+        "CRIME_EXCLUDED_BASE_ASSETS",
+        default=DEFAULT_CRIME_EXCLUDED_BASES,
+    ).split(",")
     if item.strip()
 }
 CRIME_FORCE_SYMBOLS = tuple(
     symbol.strip().upper()
-    for symbol in _env_value("CRIME_FORCE_SYMBOLS", default=DEFAULT_CRIME_FORCE_SYMBOLS).split(",")
+    for symbol in _env_value("MARKET_STRUCTURE_FORCE_SYMBOLS", "CRIME_FORCE_SYMBOLS", default=DEFAULT_CRIME_FORCE_SYMBOLS).split(",")
     if symbol.strip()
 )
 CRIME_MM_PROXIMITY_PATH = _env_value(
+    "MARKET_MAKER_PROXIMITY_PATH",
     "CRIME_MM_PROXIMITY_PATH",
     default=str(APP_DIR / "crime_mm_proximity.csv"),
 )
-CRIME_MM_PROXIMITY_SIGNALS = _env_value("CRIME_MM_PROXIMITY_SIGNALS", default="")
+CRIME_MM_PROXIMITY_SIGNALS = _env_value("MARKET_MAKER_PROXIMITY_SIGNALS", "CRIME_MM_PROXIMITY_SIGNALS", default="")
 COINMARKETCAP_API_KEY = _env_value("COINMARKETCAP_API_KEY", "CMC_API_KEY", default="")
 CMC_MOVERS_LIMIT = int(_env_value("CMC_MOVERS_LIMIT", default="200"))
 CMC_MOVER_SYMBOLS_TO_SCAN = int(_env_value("CMC_MOVER_SYMBOLS_TO_SCAN", default="8"))
@@ -4659,6 +4670,8 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 *SHORT_SQUEEZE_SCORE_COLUMNS,
                 *RAVE_LAB_SETUP_COLUMNS,
                 *CEX_DEPOSIT_FLOW_COLUMNS,
+                *ARCHETYPE_SCORE_COLUMNS,
+                *EARLY_PUMP_RADAR_COLUMNS,
                 "trade_bucket",
                 "trade_bucket_score",
                 "trade_bucket_note",
@@ -4710,8 +4723,10 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         min_top100_pct=CEX_DEPOSIT_FLOW_MIN_TOP100_PCT,
     )
     all_df = apply_terminal_model(all_df)
+    all_df = apply_archetype_model(all_df)
     all_df = apply_timing_model(all_df)
     all_df = _score_trade_buckets(all_df)
+    all_df = apply_early_pump_radar(all_df)
     range_events_df = all_df[pd.to_numeric(all_df["range_breakout_score"], errors="coerce").fillna(0.0) > 0.0].copy()
     range_events_df = range_events_df.sort_values(
         ["range_breakout_score", "range_high_break_count", "range_low_break_count", "carry_funding_pct", "symbol"],
@@ -5452,7 +5467,7 @@ def render_breakout_dashboard() -> None:
             "cex_dex_volume_ratio_score": st.column_config.NumberColumn(
                 "CEX/DEX Score",
                 format="%.1f",
-                help="Log-scaled CEX/DEX dominance score. It is a pump-risk / squeeze-risk anomaly signal, not proof of misconduct.",
+                help="Log-scaled CEX/DEX dominance score. It is a market-structure / squeeze-risk anomaly signal, not proof of misconduct.",
             ),
             "kraken_volume_share_pct": st.column_config.NumberColumn("Kraken Share", format="%.1f%%"),
             "upbit_volume_share_pct": st.column_config.NumberColumn("Upbit Share", format="%.1f%%"),
@@ -5793,6 +5808,46 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Evidence score combining float, shorts, ignition, runway, regime, liquidity reality, and late-stage risk.",
             ),
+            "terminal_structure_edge_score": st.column_config.NumberColumn(
+                "Structure Edge",
+                format="%.1f",
+                help="Control-plane, pre-ignition, distribution pressure, short-fuel, and liquidity confluence before late-stage decay.",
+            ),
+            "terminal_control_plane_score": st.column_config.NumberColumn("Control Plane", format="%.1f"),
+            "terminal_distribution_pressure_score": st.column_config.NumberColumn("Distribution Pressure", format="%.1f"),
+            "terminal_pre_ignition_quality_score": st.column_config.NumberColumn("Pre-Ignition Quality", format="%.1f"),
+            "archetype_match_score": st.column_config.NumberColumn("Archetype Match", format="%.1f"),
+            "archetype_best_match": st.column_config.TextColumn("Best Case-Study Analogue"),
+            "archetype_match_note": st.column_config.TextColumn("Archetype Note"),
+            "archetype_rave_score": st.column_config.NumberColumn("RAVE-Style", format="%.1f"),
+            "archetype_lab_score": st.column_config.NumberColumn("LAB-Style", format="%.1f"),
+            "archetype_siren_score": st.column_config.NumberColumn("SIREN-Style", format="%.1f"),
+            "archetype_river_score": st.column_config.NumberColumn("RIVER-Style", format="%.1f"),
+            "archetype_sto_score": st.column_config.NumberColumn("STO-Style", format="%.1f"),
+            "early_pump_radar_score": st.column_config.NumberColumn(
+                "Pump Radar",
+                format="%.1f",
+                help="Composite early-structure score for target CEX flow, whale/control, low float, squeeze fuel, timing, venue support, and not-late risk.",
+            ),
+            "early_pump_flow_score": st.column_config.NumberColumn("Pump Flow", format="%.1f"),
+            "early_pump_whale_score": st.column_config.NumberColumn("Pump Whale", format="%.1f"),
+            "early_pump_float_score": st.column_config.NumberColumn("Pump Float", format="%.1f"),
+            "early_pump_short_squeeze_score": st.column_config.NumberColumn("Pump Squeeze", format="%.1f"),
+            "early_pump_timing_score": st.column_config.NumberColumn("Pump Timing", format="%.1f"),
+            "early_pump_venue_score": st.column_config.NumberColumn("Pump Venue", format="%.1f"),
+            "early_pump_archetype_score": st.column_config.NumberColumn("Pump Analogue", format="%.1f"),
+            "early_pump_not_late_score": st.column_config.NumberColumn("Pump Not Late", format="%.1f"),
+            "early_pump_confirmed_target_flow": st.column_config.CheckboxColumn("Target Flow"),
+            "early_pump_whale_gate": st.column_config.CheckboxColumn("Whale Gate"),
+            "early_pump_short_gate": st.column_config.CheckboxColumn("Short Gate"),
+            "early_pump_float_gate": st.column_config.CheckboxColumn("Float Gate"),
+            "early_pump_venue_gate": st.column_config.CheckboxColumn("Venue Gate"),
+            "early_pump_not_late_gate": st.column_config.CheckboxColumn("Not-Late Gate"),
+            "early_pump_alert_flag": st.column_config.CheckboxColumn("Pump Watch"),
+            "early_pump_state": st.column_config.TextColumn("Pump State"),
+            "early_pump_primary_signal": st.column_config.TextColumn("Pump Signal"),
+            "early_pump_next_check": st.column_config.TextColumn("Pump Next Check"),
+            "early_pump_note": st.column_config.TextColumn("Pump Note"),
             "terminal_regime_score": st.column_config.NumberColumn("Regime", format="%.1f"),
             "terminal_liquidity_score": st.column_config.NumberColumn("Liquidity Reality", format="%.1f"),
             "terminal_float_score": st.column_config.NumberColumn("Float Evidence", format="%.1f"),
@@ -5818,8 +5873,26 @@ def render_breakout_dashboard() -> None:
             "cex_deposit_flow_risk_level": st.column_config.TextColumn("Flow Risk"),
             "cex_deposit_24h_count": st.column_config.NumberColumn("CEX Deposits 24h", format="%d"),
             "cex_deposit_24h_token_amount": st.column_config.NumberColumn("CEX Deposit Tokens 24h", format="%.2f"),
+            "cex_deposit_24h_notional_usd": st.column_config.NumberColumn("CEX Deposit Notional", format="$%.0f"),
+            "cex_deposit_24h_max_notional_usd": st.column_config.NumberColumn("Largest Deposit Notional", format="$%.0f"),
             "cex_deposit_24h_total_pct_supply": st.column_config.NumberColumn("CEX Deposits % Supply", format="%.2f%%"),
             "cex_deposit_24h_max_pct_supply": st.column_config.NumberColumn("Largest CEX Deposit % Supply", format="%.2f%%"),
+            "cex_deposit_24h_notional_to_ask_depth_pct": st.column_config.NumberColumn(
+                "Deposits / 1% Ask Depth",
+                format="%.1f%%",
+                help="Recent labelled CEX deposit notional divided by visible 1% ask depth.",
+            ),
+            "cex_deposit_24h_notional_to_volume_pct": st.column_config.NumberColumn(
+                "Deposits / 24H Volume",
+                format="%.2f%%",
+                help="Recent labelled CEX deposit notional divided by 24-hour quote volume.",
+            ),
+            "cex_deposit_inventory_stress_score": st.column_config.NumberColumn(
+                "Inventory Stress",
+                format="%.1f",
+                help="Venue-inventory stress from recent CEX deposit notional versus visible liquidity and turnover.",
+            ),
+            "cex_deposit_inventory_stress_note": st.column_config.TextColumn("Inventory Stress Note"),
             "cex_deposit_24h_target_exchanges": st.column_config.TextColumn("CEX Deposit Targets"),
             "cex_deposit_concentration_gate": st.column_config.TextColumn("CEX Flow Gate"),
             "cex_deposit_flow_note": st.column_config.TextColumn("CEX Flow Note"),
@@ -5828,6 +5901,10 @@ def render_breakout_dashboard() -> None:
             "cex_deposit_flow_next_check": st.column_config.TextColumn("Next Check"),
             "cex_deposit_flow_alert_line": st.column_config.TextColumn("Discord Alert Line"),
             "cex_deposit_flow_error": st.column_config.TextColumn("CEX Flow Error"),
+            "cex_deposit_flow_source": st.column_config.TextColumn(
+                "CEX Flow Path",
+                help="Data path used for the wallet-to-CEX read, such as explorer Advanced Filter or token-transfer API fallback.",
+            ),
             "cex_deposit_24h_source_url": st.column_config.LinkColumn("CEX Flow Source"),
             "terminal_private_unlock_score": st.column_config.NumberColumn(
                 "Private Unlock",
@@ -5841,6 +5918,7 @@ def render_breakout_dashboard() -> None:
             "terminal_liquidity_reality": st.column_config.TextColumn("Liquidity Reality"),
             "terminal_setup_archetype": st.column_config.TextColumn("Archetype"),
             "terminal_structural_opacity_note": st.column_config.TextColumn("Structural Opacity"),
+            "terminal_structure_edge_note": st.column_config.TextColumn("Structure Edge Note"),
             "terminal_evidence_summary": st.column_config.TextColumn("Evidence Summary"),
             "terminal_confirmation_needed": st.column_config.TextColumn("Confirmation Needed"),
             "terminal_invalidation_map": st.column_config.TextColumn("Invalidation Map"),
@@ -5883,7 +5961,7 @@ def render_breakout_dashboard() -> None:
             f"Universe scanned: {universe_label} | "
             f"Modeled funding: {'enabled' if ENABLE_MODELED_FUNDING and scan_mode_label == 'Deep' else 'off'} | "
             f"L/S ratio period: {LONG_SHORT_RATIO_PERIOD} (global Binance account ratio) | "
-            f"Crime-pump period: {CRIME_PUMP_PERIOD}"
+            f"Market-structure period: {CRIME_PUMP_PERIOD}"
         )
         try:
             _write_latest_convex_longs_cache(all_df, scan_mode=scan_mode_label)
@@ -6152,6 +6230,7 @@ def render_breakout_dashboard() -> None:
                 "Timing",
                 "Short Account Moves",
                 "RAVE/LAB Radar",
+                "Pump Radar",
             ]
         )
 
@@ -7212,11 +7291,19 @@ def render_breakout_dashboard() -> None:
                 "trade_bucket",
                 "trade_bucket_score",
                 "terminal_edge_score",
+                "terminal_structure_edge_score",
+                "terminal_control_plane_score",
+                "terminal_distribution_pressure_score",
+                "terminal_pre_ignition_quality_score",
+                "archetype_match_score",
+                "archetype_best_match",
+                "archetype_match_note",
                 "terminal_setup_archetype",
                 "terminal_market_regime",
                 "terminal_liquidity_reality",
                 "terminal_evidence_summary",
                 "terminal_structural_opacity_note",
+                "terminal_structure_edge_note",
                 "terminal_confirmation_needed",
                 "terminal_invalidation_map",
                 "accumulation_absorption_score",
@@ -7229,9 +7316,14 @@ def render_breakout_dashboard() -> None:
                 "terminal_opaque_supply_score",
                 "terminal_exchange_flow_score",
                 "cex_deposit_flow_score",
+                "cex_deposit_inventory_stress_score",
+                "cex_deposit_inventory_stress_note",
                 "cex_deposit_flow_flag",
                 "cex_deposit_24h_count",
                 "cex_deposit_24h_token_amount",
+                "cex_deposit_24h_notional_usd",
+                "cex_deposit_24h_notional_to_ask_depth_pct",
+                "cex_deposit_24h_notional_to_volume_pct",
                 "cex_deposit_24h_max_pct_supply",
                 "cex_deposit_24h_total_pct_supply",
                 "cex_deposit_24h_target_exchanges",
@@ -7244,6 +7336,11 @@ def render_breakout_dashboard() -> None:
                 "terminal_liquidity_score",
                 "terminal_regime_score",
                 "terminal_risk_score",
+                "archetype_rave_score",
+                "archetype_lab_score",
+                "archetype_siren_score",
+                "archetype_river_score",
+                "archetype_sto_score",
                 "pre_pump_precision_score",
                 "dormant_short_fuse_score",
                 "rave_lab_setup_score",
@@ -7278,15 +7375,18 @@ def render_breakout_dashboard() -> None:
             terminal_df = all_df.copy().sort_values(
                 [
                     "terminal_edge_score",
+                    "terminal_structure_edge_score",
+                    "archetype_match_score",
                     "pre_pump_precision_flag",
                     "dormant_short_fuse_flag",
+                    "terminal_control_plane_score",
                     "terminal_short_pressure_score",
                     "terminal_float_score",
                     "terminal_ignition_score",
                     "terminal_risk_score",
                     "symbol",
                 ],
-                ascending=[False, False, False, False, False, False, True, True],
+                ascending=[False, False, False, False, False, False, False, False, False, True, True],
             )
             t1, t2, t3, t4 = st.columns(4)
             t1.metric("Top terminal score", f"{float(pd.to_numeric(terminal_df['terminal_edge_score'], errors='coerce').max()):.1f}" if not terminal_df.empty else "n/a")
@@ -7359,13 +7459,20 @@ def render_breakout_dashboard() -> None:
                 "terminal_edge_score",
                 "trade_bucket_score",
                 "cex_deposit_flow_score",
+                "cex_deposit_inventory_stress_score",
                 "cex_deposit_flow_risk_level",
                 "cex_deposit_flow_flag",
                 "cex_deposit_24h_count",
                 "cex_deposit_24h_token_amount",
                 "cex_deposit_24h_max_amount",
+                "cex_deposit_24h_notional_usd",
+                "cex_deposit_24h_max_notional_usd",
                 "cex_deposit_24h_total_pct_supply",
                 "cex_deposit_24h_max_pct_supply",
+                "cex_deposit_24h_notional_to_ask_depth_pct",
+                "cex_deposit_24h_max_notional_to_ask_depth_pct",
+                "cex_deposit_24h_notional_to_volume_pct",
+                "cex_deposit_inventory_stress_note",
                 "cex_deposit_24h_target_exchanges",
                 "cex_deposit_concentration_gate",
                 "cex_deposit_flow_evidence_summary",
@@ -7374,6 +7481,7 @@ def render_breakout_dashboard() -> None:
                 "cex_deposit_flow_note",
                 "cex_deposit_flow_alert_line",
                 "cex_deposit_flow_error",
+                "cex_deposit_flow_source",
                 "cex_deposit_24h_source_url",
                 "top10_holder_pct",
                 "top100_holder_pct",
@@ -7432,6 +7540,7 @@ def render_breakout_dashboard() -> None:
                     "cex_deposit_flow_next_check",
                     "cex_deposit_flow_note",
                     "cex_deposit_flow_error",
+                    "cex_deposit_flow_source",
                     "cex_deposit_24h_source_url",
                     "top10_holder_pct",
                     "top100_holder_pct",
@@ -7957,6 +8066,132 @@ def render_breakout_dashboard() -> None:
                 else:
                     st.dataframe(
                         _display_frame(radar_ranked_df, rave_lab_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[13]:
+            st.caption(
+                "One-board triage for the exact early move pattern: whale/control pressure, confirmed Binance/Bitget/Gate "
+                "wallet-to-CEX flow when available, short-account squeeze fuel, low-float structure, venue support, and not-late timing."
+            )
+            pump_cols = [
+                "symbol",
+                "base_asset",
+                "early_pump_radar_score",
+                "early_pump_state",
+                "early_pump_alert_flag",
+                "early_pump_primary_signal",
+                "early_pump_next_check",
+                "early_pump_note",
+                "early_pump_confirmed_target_flow",
+                "early_pump_whale_gate",
+                "early_pump_short_gate",
+                "early_pump_float_gate",
+                "early_pump_venue_gate",
+                "early_pump_not_late_gate",
+                "early_pump_flow_score",
+                "early_pump_whale_score",
+                "early_pump_float_score",
+                "early_pump_short_squeeze_score",
+                "early_pump_timing_score",
+                "early_pump_venue_score",
+                "early_pump_archetype_score",
+                "early_pump_not_late_score",
+                "archetype_best_match",
+                "archetype_match_score",
+                "archetype_rave_score",
+                "archetype_lab_score",
+                "archetype_siren_score",
+                "archetype_river_score",
+                "archetype_sto_score",
+                "trade_bucket",
+                "trade_bucket_score",
+                "terminal_edge_score",
+                "timing_score",
+                "timing_state",
+                "timing_observed_trigger",
+                "cex_deposit_flow_score",
+                "cex_deposit_inventory_stress_score",
+                "cex_deposit_24h_count",
+                "cex_deposit_24h_max_amount",
+                "cex_deposit_24h_notional_usd",
+                "cex_deposit_24h_target_exchanges",
+                "cex_deposit_flow_source",
+                "cex_deposit_24h_source_url",
+                "top10_holder_pct",
+                "top100_holder_pct",
+                "centralized_ownership_score",
+                "low_float_score",
+                "float_trap_score",
+                "fdv_to_market_cap",
+                "short_account_pct",
+                "short_account_change_max_pct",
+                "oi_delta_pct",
+                "hour_return_pct",
+                "day_return_pct",
+                "hour_volume_multiple",
+                "hour_trade_count_multiple",
+                "hour_close_location_pct",
+                "hour_upper_wick_pct",
+                "binance_bitget_gate_share_pct",
+                "binance_volume_share_pct",
+                "bitget_volume_share_pct",
+                "gate_volume_share_pct",
+                "ath_multiple",
+                "convexity_late_penalty",
+                "timing_too_late_score",
+            ]
+            pump_df = all_df.copy()
+            if "early_pump_radar_score" in pump_df.columns:
+                pump_df = pump_df.sort_values(
+                    [
+                        "early_pump_alert_flag",
+                        "early_pump_confirmed_target_flow",
+                        "early_pump_radar_score",
+                        "early_pump_flow_score",
+                        "early_pump_short_squeeze_score",
+                        "symbol",
+                    ],
+                    ascending=[False, False, False, False, False, True],
+                )
+
+            watch_mask = (
+                pump_df.get("early_pump_alert_flag", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool)
+                | pd.to_numeric(pump_df.get("early_pump_radar_score", pd.Series(0.0, index=pump_df.index)), errors="coerce").fillna(0.0).ge(55.0)
+            )
+            pump_watch_df = pump_df[watch_mask].copy()
+            prime_count = int((pump_df.get("early_pump_state", pd.Series("", index=pump_df.index)).astype(str) == "Prime early squeeze").sum())
+            flow_count = int(pump_df.get("early_pump_confirmed_target_flow", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool).sum())
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric(
+                "Top pump radar",
+                f"{float(pd.to_numeric(pump_df.get('early_pump_radar_score', pd.Series(dtype='float64')), errors='coerce').max()):.1f}"
+                if not pump_df.empty
+                else "n/a",
+            )
+            p2.metric("Watch rows", int(len(pump_watch_df)))
+            p3.metric("Prime early squeezes", prime_count)
+            p4.metric("Target-flow rows", flow_count)
+
+            st.subheader("Early Pump Catch Board")
+            if pump_watch_df.empty:
+                st.info("No rows currently clear the pump radar watch floor.")
+            else:
+                st.dataframe(
+                    _display_frame(pump_watch_df.head(60), pump_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show full pump radar table"):
+                if pump_df.empty:
+                    st.info("No pump radar rows to show.")
+                else:
+                    st.dataframe(
+                        _display_frame(pump_df, pump_cols),
                         use_container_width=True,
                         hide_index=True,
                         column_config=breakout_column_config,

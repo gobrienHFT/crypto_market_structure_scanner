@@ -2,7 +2,10 @@ import pandas as pd
 
 from discord_flag_formatter import (
     build_discord_flag_card,
+    infer_convex_thesis,
     infer_convex_trigger,
+    infer_evidence_stack,
+    infer_next_check,
     infer_why_flagged,
     infer_liquidity_warning,
     infer_perp_positioning,
@@ -15,9 +18,12 @@ from discord_flag_formatter import (
 REQUIRED_LABELS = [
     "Convex Score:",
     "Structure:",
+    "Convex thesis:",
+    "Evidence stack:",
     "Perp positioning:",
     "Why flagged:",
     "Observed trigger:",
+    "Next check:",
     "Invalidation:",
     "Liquidity warning:",
     "Risk level:",
@@ -54,6 +60,41 @@ def test_range_breakout_event_is_included_in_flag_evidence() -> None:
 
     assert "20D high, 90D high hit" in infer_why_flagged(row)
     assert "20D high, 90D high hit" in infer_convex_trigger(row)
+
+
+def test_convex_thesis_and_next_check_prioritize_cex_flow_plus_float_control() -> None:
+    row = pd.Series(
+        {
+            "symbol": "FLOWUSDT",
+            "trade_bucket_score": 86,
+            "short_account_pct": 63,
+            "oi_delta_pct": 2.1,
+            "cex_deposit_flow_score": 88,
+            "cex_deposit_24h_count": 3,
+            "cex_deposit_24h_target_exchanges": "Bitget",
+            "top10_holder_pct": 91,
+            "terminal_edge_score": 78,
+            "terminal_structure_edge_score": 83,
+            "terminal_control_plane_score": 78,
+            "terminal_distribution_pressure_score": 76,
+            "terminal_pre_ignition_quality_score": 68,
+            "timing_score": 64,
+            "low_float_score": 82,
+            "cex_deposit_inventory_stress_score": 71,
+            "cex_deposit_24h_notional_usd": 650_000,
+        }
+    )
+
+    thesis = infer_convex_thesis(row)
+    stack = infer_evidence_stack(row)
+    next_check = infer_next_check(row)
+
+    assert "fresh CEX-flow" in thesis
+    assert "structure edge 83" in stack
+    assert "CEX flow 88" in stack
+    assert "inventory stress 71" in stack
+    assert "float control 91" in stack
+    assert "venue inventory" in next_check
 
 
 def test_low_holder_data_still_builds_valid_card() -> None:
@@ -180,6 +221,8 @@ def test_recent_cex_flow_line_is_included_when_concentration_gate_triggers() -> 
             "cex_deposit_24h_target_exchanges": "Bitget, Kraken",
             "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
             "cex_deposit_24h_token_amount": 2_500_000,
+            "cex_deposit_24h_notional_usd": 500_000,
+            "cex_deposit_inventory_stress_score": 66,
         }
     )
 
@@ -189,6 +232,8 @@ def test_recent_cex_flow_line_is_included_when_concentration_gate_triggers() -> 
     assert "Bitget, Kraken" in card
     assert "top10 91.0%" in card
     assert "2.50M tokens" in card
+    assert "500.00K notional" in card
+    assert "inventory stress 66/100" in card
 
 
 def test_accumulation_absorption_line_uses_neutral_language() -> None:
@@ -215,3 +260,43 @@ def test_accumulation_absorption_line_uses_neutral_language() -> None:
     assert "aggressive taker demand absorbed" in card
     assert "insider" not in lowered
     assert "pump call" not in lowered
+
+
+def test_case_study_analogue_line_is_included_when_available() -> None:
+    row = pd.Series(
+        {
+            "symbol": "LABUSDT",
+            "trade_bucket_score": 84,
+            "archetype_match_score": 87,
+            "archetype_best_match": "LAB-style venue-inventory stress",
+            "archetype_match_note": (
+                "LAB-style venue-inventory stress 87/100; controlled float, "
+                "concentration-gated CEX flow, and venue-inventory pressure"
+            ),
+        }
+    )
+
+    card = build_discord_flag_card(row)
+
+    assert "Case-study analogue:" in card
+    assert "LAB-style venue-inventory stress 87/100" in card
+    assert "archetype 87" in card
+
+
+def test_early_radar_line_is_included_when_available() -> None:
+    row = pd.Series(
+        {
+            "symbol": "STOUSDT",
+            "trade_bucket_score": 81,
+            "early_pump_radar_score": 88,
+            "early_pump_state": "Prime early squeeze",
+            "early_pump_primary_signal": "target CEX flow 91/100",
+            "early_pump_next_check": "check whether deposited inventory is absorbed while OI expands",
+        }
+    )
+
+    card = build_discord_flag_card(row)
+
+    assert "Early radar: Prime early squeeze 88/100" in card
+    assert "early radar 88" in card
+    assert "target CEX flow 91/100" in card

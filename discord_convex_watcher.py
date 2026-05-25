@@ -20,6 +20,7 @@ from discord_flag_formatter import (
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from proof_engine import archive_alerts, refresh_outcomes
+from scan_orchestrator import run_scanner_scan, select_convex_long_candidates
 from terminal_engine import apply_terminal_model
 from timing_engine import apply_timing_model
 from venue_gate import apply_bitget_gate_venue_gate, bitget_gate_venue_header
@@ -271,16 +272,15 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
 
 
 def _scan_alert_candidates(scan_mode: str, *, alert_source: str, top_n: int) -> pd.DataFrame:
-    os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
     print(f"{_iso_now()} starting {scan_mode} scan...")
-    import app as scanner_app
-
-    scan_fn = getattr(scanner_app.run_scan, "__wrapped__", scanner_app.run_scan)
-    _, all_df = scan_fn(int(time.time()), scan_mode)
-    scanner_app._write_latest_convex_longs_cache(all_df, scan_mode=scan_mode)
+    scan_result = run_scanner_scan(scan_mode, refresh_nonce=int(time.time()), write_discord_cache=True)
+    all_df = scan_result.all_rows
     if alert_source.strip().lower().replace("-", "_") in {"convex", "legacy_convex"}:
-        candidates = scanner_app._discord_convex_candidates(all_df).copy().head(top_n)
-        candidates = apply_bitget_gate_venue_gate(candidates, allow_cex_flow_targets=False).head(top_n)
+        candidates = select_convex_long_candidates(
+            all_df,
+            min_score=_env_float("DISCORD_CONVEX_ALERT_MIN_SCORE", 0.0, minimum=0.0),
+            allow_cex_flow_targets=False,
+        ).head(top_n)
     else:
         candidates = _select_alert_candidates(all_df, alert_source=alert_source, top_n=top_n)
     if candidates.empty:

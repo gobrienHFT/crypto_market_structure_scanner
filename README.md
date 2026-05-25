@@ -1,31 +1,65 @@
 # crypto_market_structure_scanner
 
-Research and monitoring framework for identifying structurally unusual crypto assets using market microstructure, liquidity, derivatives activity, and on-chain concentration analysis.
+[![tests](https://img.shields.io/badge/tests-pytest-green)](.github/workflows/tests.yml)
 
-The repository combines a Streamlit research dashboard, Binance perpetual-market screening, on-chain holder concentration analytics, Discord alerting, and contract-resolution tooling into one practical monitoring workflow.
+Research and monitoring framework for finding asymmetric crypto market structures before they become obvious on price alone.
 
-It is designed for research, screening, and discretionary review. It is not presented as an automated trading system.
+The system combines perpetual-market positioning, Binance/Bitget/Gate venue participation, on-chain holder concentration, wallet-to-CEX flow, timing quality, Discord alerting, and proof-of-signal tracking. The practical goal is to surface low-float or concentrated-holder structures where short crowding, thin liquidity, and exchange inventory movement can create convex payoff conditions.
+
+It is built as research infrastructure, not as an automated trading system. Alerts are designed to accelerate discretionary review, sizing discipline, and post-alert measurement.
 
 ---
 
 ## Overview
 
-`crypto_market_structure_scanner` helps surface crypto assets with unusual structural conditions across market data and on-chain holder data.
+`crypto_market_structure_scanner` helps surface crypto assets with unusual structural conditions across market data, venue flow, derivatives positioning, and holder data.
 
 The project combines:
 
 - Binance perpetual market screening
+- Binance / Bitget / Gate venue gating
 - on-chain holder concentration analytics
 - float and liquidity analysis
 - futures/open-interest monitoring
+- short-account crowding and squeeze-fuel scoring
+- wallet-to-CEX transfer monitoring
 - holder composition analysis
 - Discord webhook alerts
 - Discord bot query commands
+- Discord alpha brief / triage workflow
 - Streamlit dashboards
 - contract-resolution tooling
 - persistent local scan storage and ranking
 
 The goal is to identify assets worth further review by combining observable market behaviour with token-distribution structure.
+
+---
+
+## Research Thesis
+
+The scanner is aimed at a specific class of market structure:
+
+- low tradable float or highly concentrated observed holder distribution
+- visible participation on venues where orderflow hedging and market making can matter
+- crowded short-account positioning on perpetual markets
+- rising open interest, volume, or trade count before price fully extends
+- recent large token movements from concentrated wallets into labelled exchange wallets
+- enough ATH/runway or liquidity asymmetry for payoff to become nonlinear
+
+No single signal is treated as proof. The product value comes from stacking independent evidence into a fast review queue, then archiving outcomes so the rules can be judged empirically.
+
+---
+
+## What This Demonstrates
+
+For engineering review, this repo shows:
+
+- production-style data ingestion from exchange, explorer, and market-data APIs
+- modular scoring engines with focused tests
+- Streamlit product/dashboard work
+- Discord bot and webhook operations
+- local persistence, cache fallbacks, cooldown state, and proof archives
+- careful language boundaries around research signals, risk, and user execution responsibility
 
 ---
 
@@ -43,9 +77,12 @@ It screens for conditions such as:
 - futures-versus-spot activity
 - float-adjusted participation
 - liquidity asymmetry
+- CEX deposit notional versus visible ask depth
+- concentration-gated venue-inventory stress
 - concentration-adjusted turnover
 - abnormal participation relative to recent baseline
 - structural squeeze conditions
+- case-study analogue matching for RAVE/LAB/SIREN/RIVER/STO-style structures
 
 The output is intended to help prioritize markets for further research rather than produce standalone trade instructions.
 
@@ -97,8 +134,8 @@ Optional API keys are read from environment variables:
 
 ```text
 COINGECKO_API_KEY=
+ETHERSCAN_V2_API_KEY=
 ETHERSCAN_API_KEY=
-BSCSCAN_API_KEY=
 ```
 
 The scanner uses structural and probabilistic classification methods only. It does not make legal, regulatory, or compliance assertions from on-chain data alone.
@@ -125,7 +162,7 @@ The dashboard is intended for fast review, filtering, and monitoring of markets 
 Run the dashboard with:
 
 ```powershell
-streamlit run dashboard.py
+streamlit run app.py
 ```
 
 ---
@@ -140,7 +177,12 @@ Webhook alerts support:
 - configurable top-N filtering
 - configurable score thresholds
 - per-symbol cooldowns
+- Bitget/Gate venue gating by default
+- dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
+- venue-inventory stress notes when CEX deposits are large versus visible liquidity
+- case-study analogue lines for fast pattern triage
 - optional holder composition summaries
+- compact thesis, evidence stack, next-check, invalidation, and liquidity-risk lines
 - scheduled monitoring workflows
 
 Example `.env` configuration:
@@ -168,18 +210,59 @@ The repository also includes a lightweight Discord bot interface for querying ca
 Supported commands include:
 
 ```text
+/alpha
 /convex
 /shorts
+/funding [side] [limit] [period] [min_abs_funding_pct]
+/pumpwatch [min_score] [min_tokens] [limit] [require_target_flow]
+/setupscore [min_score] [min_tokens] [limit] [strict]
+/flowproof <symbol> [min_tokens]
+/coincheck <symbol> [min_score] [min_tokens]
+/floattrap [min_score] [limit]
+/squeezeready [min_short_pct] [min_score] [limit]
+/cextargets [min_tokens] [limit]
+/whales [min_pct] [bucket] [limit] [max_symbols] [refresh]
+/terminal
+/timing
+/corr [threshold] [limit]
+/cexflow [min_tokens] [require_venue_gate]
+/cexdiag [min_tokens] [require_venue_gate] [symbol_limit]
+/earlyflow [min_tokens] [require_venue_gate]
+/flowcoin <symbol> [min_tokens]
+/flowstress [min_tokens] [require_venue_gate]
+/flowblocked [min_tokens]
+/flowhealth [min_tokens]
+/sethflow [min_tokens] [min_short_pct] [require_dormant]
+/dossier <symbol>
 /convex_status
 /convex_scoreboard
 /convex_archive
 /coin <symbol>
+/sync_commands
 ```
 
 The bot can retrieve:
 
+- a venue-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
+- live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
+- a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk
+- a strict full-thesis `/setupscore` ranking for target-CEX flow, whale dominance, low float/high FDV, short crowding, and not-late structure
+- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps
+- low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
+- top terminal market-structure evidence rows
+- top timing-quality rows
+- BTC low-correlation rows with the actual correlation window used per symbol
+- concentration-gated wallet-to-CEX flow rows
+- CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, venue-gate filtering, and attempted-symbol review
+- lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt
+- symbol-specific wallet-to-CEX flow checks with a custom transfer floor
+- CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
+- blocked/error rows when explorer HTML or API fallback cannot verify labelled CEX destinations
+- CEX-flow health checks covering API keys and local address-label coverage
+- a full CEX-flow -> holder concentration -> short crowd -> dormant-structure checklist via `/sethflow`
+- whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries
@@ -193,7 +276,11 @@ Example `.env` configuration:
 DISCORD_BOT_TOKEN=
 DISCORD_GUILD_ID=
 DISCORD_ALLOWED_CHANNEL_ID=
+DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 DISCORD_CONVEX_COMMAND_TOP_N=10
+DISCORD_ALPHA_TOP_N=15
+DISCORD_ALPHA_BRIEF_MIN_SCORE=35
+DISCORD_EARLY_FLOW_MIN_TOKENS=20000
 DISCORD_LOGIN_RETRY_SECONDS=90
 DISCORD_DEFAULT_USER_TIER=pro
 DISCORD_FREE_SAMPLE_TOP_N=3
@@ -208,6 +295,8 @@ Run the bot with:
 ```powershell
 run_discord_convex_bot.bat
 ```
+
+See [Discord alpha workflow](docs/discord-alpha-workflow.md) for the alert taxonomy, operator loop, and recommended command sequence.
 
 ---
 
@@ -279,6 +368,7 @@ DISCORD_HOLDER_COMPOSITION_ENABLED=1
 - `terminal_timing` requires both structural evidence and current timing quality.
 - `terminal` alerts from the structural evidence ranking only.
 - `timing` alerts from the timing ranking only.
+- `cex_flow` alerts from concentration-gated wallet-to-CEX token-transfer flow.
 - `convex` keeps the older candidate-selection behavior.
 
 The watcher stores state locally so unchanged candidates are not reposted every scan:
@@ -379,8 +469,8 @@ The project uses:
 - Streamlit
 - SQLite
 - Binance market-data APIs
-- Discord API
-- Etherscan-family explorers
+- Discord.py and Discord webhooks
+- Etherscan-family explorers and Etherscan V2 token-transfer APIs
 - GoPlus token-security data
 - local CSV and SQLite persistence
 
@@ -390,12 +480,21 @@ The project uses:
 
 Install dependencies using the repository's Python environment setup, then configure optional environment variables as needed.
 
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
 Example `.env` template:
 
 ```text
 COINGECKO_API_KEY=
+ETHERSCAN_V2_API_KEY=
 ETHERSCAN_API_KEY=
-BSCSCAN_API_KEY=
+CEX_ADDRESS_BOOK_FILE=data/cex_address_book.csv
+CEX_ADDRESS_LABELS=
 
 DISCORD_WEBHOOK_URL=
 DISCORD_BOT_TOKEN=
@@ -406,7 +505,7 @@ DISCORD_ALLOWED_CHANNEL_ID=
 Run the dashboard:
 
 ```powershell
-streamlit run dashboard.py
+streamlit run app.py
 ```
 
 Run the Discord bot:
@@ -438,6 +537,17 @@ Core design priorities:
 - no unsupported legal or predictive claims
 
 The repository is intended to demonstrate practical crypto market-data engineering, research workflow design, dashboard development, and real-time monitoring infrastructure.
+
+---
+
+## Reviewer Guide
+
+- [Demo walkthrough](docs/demo-walkthrough.md): install, test, dashboard, Discord, proof loop.
+- [Architecture](docs/architecture.md): module map and data flow.
+- [Discord alpha workflow](docs/discord-alpha-workflow.md): operator loop and alert taxonomy.
+- [Sample Discord output](docs/sample-discord-output.md): representative `/alpha`, alert, `/cexflow`, and scoreboard text.
+
+Continuous test coverage is configured in [.github/workflows/tests.yml](.github/workflows/tests.yml).
 
 ---
 

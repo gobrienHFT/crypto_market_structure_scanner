@@ -42,6 +42,17 @@ class _Response:
     """
 
 
+class _ApiResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
 def test_scan_cex_deposit_flow_scores_only_recent_deposits_after_concentration_gate(monkeypatch) -> None:
     monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
     monkeypatch.setattr(cex.requests, "get", lambda *args, **kwargs: _Response())
@@ -51,6 +62,9 @@ def test_scan_cex_deposit_flow_scores_only_recent_deposits_after_concentration_g
             "symbol": "PLAYUSDT",
             "token_platform": "base",
             "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+            "last_price": 0.25,
+            "quote_volume_24h": 1_000_000,
+            "ask_depth_1pct_usdt": 100_000,
         }
     )
 
@@ -59,15 +73,182 @@ def test_scan_cex_deposit_flow_scores_only_recent_deposits_after_concentration_g
     assert result["cex_deposit_24h_count"] == 1
     assert result["cex_deposit_24h_target_exchanges"] == "Bitget"
     assert result["cex_deposit_24h_token_amount"] == 1_200_000
+    assert result["cex_deposit_24h_notional_usd"] == 300_000
+    assert result["cex_deposit_24h_notional_to_ask_depth_pct"] == 300.0
+    assert result["cex_deposit_inventory_stress_score"] >= 80.0
+    assert "venue-inventory stress" in result["cex_deposit_inventory_stress_note"]
     assert "top10 91.0%" in result["cex_deposit_concentration_gate"]
     assert "basescan.org/advanced-filter" in result["cex_deposit_24h_source_url"]
     assert result["cex_deposit_flow_risk_level"] in {"Elevated", "High", "Extreme"}
     assert "wallet-to-CEX flow" in result["cex_deposit_flow_evidence_summary"]
+    assert "notional $300.00K" in result["cex_deposit_flow_evidence_summary"]
     assert "not a conclusion about intent" in result["cex_deposit_flow_interpretation"]
     assert "OI/volume" in result["cex_deposit_flow_next_check"]
     assert "PLAYUSDT | flow" in result["cex_deposit_flow_alert_line"]
     assert "crime" not in result["cex_deposit_flow_evidence_summary"].lower()
     assert "scam" not in result["cex_deposit_flow_evidence_summary"].lower()
+
+
+def test_scan_cex_deposit_flow_falls_back_to_token_transfer_api_after_403(monkeypatch) -> None:
+    deposit_address = "0x9999999999999999999999999999999999999999"
+    monkeypatch.setenv("CEX_ADDRESS_LABELS", f"base:{deposit_address}=Bitget Deposit")
+    monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
+    now = pd.Timestamp.utcnow().timestamp()
+    calls: list[str] = []
+
+    def fake_get(url, **_kwargs):
+        calls.append(str(url))
+        if "advanced-filter" in str(url):
+            response = _ApiResponse({})
+            response.status_code = 403
+            return response
+        return _ApiResponse(
+            {
+                "status": "1",
+                "message": "OK",
+                "result": [
+                    {
+                        "hash": "0xapi",
+                        "timeStamp": str(int(now - 60 * 60)),
+                        "from": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "to": deposit_address,
+                        "value": str(1_500_000 * 10**18),
+                        "tokenDecimal": "18",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(cex.requests, "get", fake_get)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "PLAYUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+            "last_price": 0.20,
+            "quote_volume_24h": 2_000_000,
+            "ask_depth_1pct_usdt": 100_000,
+        },
+        min_transfer_tokens=500_000,
+    )
+
+    assert any("advanced-filter" in call for call in calls)
+    assert any("api.etherscan.io/v2/api" in call and "chainid=8453" in call for call in calls)
+    assert result["cex_deposit_flow_flag"] is True
+    assert result["cex_deposit_flow_source"] == "token_transfer_api"
+    assert result["cex_deposit_flow_error"] == ""
+    assert result["cex_deposit_24h_count"] == 1
+    assert result["cex_deposit_24h_token_amount"] == 1_500_000
+    assert result["cex_deposit_24h_target_exchanges"] == "Bitget"
+    assert result["cex_deposit_24h_top_tx"] == "0xapi"
+    assert "API fallback concentration-gated CEX deposit flow" in result["cex_deposit_flow_note"]
+    assert "api.etherscan.io/v2/api" in result["cex_deposit_24h_source_url"]
+    assert "chainid=8453" in result["cex_deposit_24h_source_url"]
+
+
+def test_scan_cex_deposit_flow_falls_back_when_explorer_returns_bot_check_page(monkeypatch) -> None:
+    deposit_address = "0x8888888888888888888888888888888888888888"
+    monkeypatch.setenv("CEX_ADDRESS_LABELS", f"base:{deposit_address}=Gate Deposit")
+    monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
+    now = pd.Timestamp.utcnow().timestamp()
+
+    def fake_get(url, **_kwargs):
+        if "advanced-filter" in str(url):
+            response = _ApiResponse({})
+            response.status_code = 200
+            response.text = "<html><title>Just a moment...</title><body>Verify you are human</body></html>"
+            return response
+        return _ApiResponse(
+            {
+                "status": "1",
+                "message": "OK",
+                "result": [
+                    {
+                        "hash": "0xbotcheck",
+                        "timeStamp": str(int(now - 15 * 60)),
+                        "from": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "to": deposit_address,
+                        "value": str(800_000 * 10**18),
+                        "tokenDecimal": "18",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(cex.requests, "get", fake_get)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "GATEUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+            "last_price": 0.10,
+            "quote_volume_24h": 1_000_000,
+            "ask_depth_1pct_usdt": 50_000,
+        },
+        min_transfer_tokens=500_000,
+    )
+
+    assert result["cex_deposit_flow_flag"] is True
+    assert result["cex_deposit_flow_source"] == "token_transfer_api"
+    assert result["cex_deposit_flow_error"] == ""
+    assert result["cex_deposit_24h_target_exchanges"] == "Gate"
+    assert result["cex_deposit_24h_top_tx"] == "0xbotcheck"
+
+
+def test_token_transfer_api_fallback_keeps_min_transfer_threshold(monkeypatch) -> None:
+    deposit_address = "0x7777777777777777777777777777777777777777"
+    monkeypatch.setenv("CEX_ADDRESS_LABELS", f"base:{deposit_address}=Binance Deposit")
+    monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
+    now = pd.Timestamp.utcnow().timestamp()
+
+    def fake_get(url, **_kwargs):
+        if "advanced-filter" in str(url):
+            response = _ApiResponse({})
+            response.status_code = 403
+            return response
+        return _ApiResponse(
+            {
+                "status": "1",
+                "message": "OK",
+                "result": [
+                    {
+                        "hash": "0xsmall",
+                        "timeStamp": str(int(now - 10 * 60)),
+                        "from": "0xcccccccccccccccccccccccccccccccccccccccc",
+                        "to": deposit_address,
+                        "value": str(9_999_999 * 10**18),
+                        "tokenDecimal": "18",
+                    },
+                    {
+                        "hash": "0xlarge",
+                        "timeStamp": str(int(now - 20 * 60)),
+                        "from": "0xdddddddddddddddddddddddddddddddddddddddd",
+                        "to": deposit_address,
+                        "value": str(10_000_000 * 10**18),
+                        "tokenDecimal": "18",
+                    },
+                ],
+            }
+        )
+
+    monkeypatch.setattr(cex.requests, "get", fake_get)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "THRESHUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+        },
+        min_transfer_tokens=10_000_000,
+    )
+
+    assert result["cex_deposit_flow_source"] == "token_transfer_api"
+    assert result["cex_deposit_24h_count"] == 1
+    assert result["cex_deposit_24h_token_amount"] == 10_000_000
+    assert result["cex_deposit_24h_top_tx"] == "0xlarge"
+    assert result["cex_deposit_24h_target_exchanges"] == "Binance"
 
 
 def test_scan_cex_deposit_flow_does_not_fetch_when_concentration_gate_fails(monkeypatch) -> None:
@@ -101,6 +282,9 @@ def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
         "cex_deposit_24h_count": 3,
         "cex_deposit_24h_token_amount": 2_500_000,
         "cex_deposit_24h_max_amount": 1_200_000,
+        "cex_deposit_24h_notional_usd": 750_000,
+        "cex_deposit_inventory_stress_score": 72,
+        "cex_deposit_inventory_stress_note": "venue-inventory stress 72/100; total notional $750.00K",
         "cex_deposit_24h_total_pct_supply": 2.5,
         "cex_deposit_24h_max_pct_supply": 1.2,
         "cex_deposit_24h_target_exchanges": "Bitget, Gate",
@@ -114,10 +298,28 @@ def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
     assert "CEX Flow Score: 88/100 | Risk: High" in output
     assert "Evidence:" in output
     assert "Venue-flow read:" in output
+    assert "Inventory stress:" in output
     assert "Next check:" in output
     assert "Source: https://basescan.org/advanced-filter?tkn=0xabc" in output
     assert "pump call" not in output.lower()
     assert len(output) <= 900
+
+
+def test_build_cex_flow_discord_block_shows_transfer_data_errors() -> None:
+    row = {
+        "symbol": "BLOCKEDUSDT",
+        "cex_deposit_flow_score": 0,
+        "cex_deposit_flow_risk_level": "Watch only",
+        "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+        "cex_deposit_flow_error": "advanced filter HTTP 403",
+        "cex_deposit_24h_source_url": "https://basescan.org/advanced-filter?tkn=0xabc",
+    }
+
+    output = cex.build_cex_flow_discord_block(row, max_chars=900)
+
+    assert "/BLOCKEDUSDT" in output
+    assert "Data status: CEX-flow check blocked/error: advanced filter HTTP 403" in output
+    assert "Source: https://basescan.org/advanced-filter?tkn=0xabc" in output
 
 
 def test_enrich_cex_deposit_flows_adds_columns_when_disabled() -> None:
@@ -140,6 +342,21 @@ def test_build_advanced_filter_url_supports_basescan_example() -> None:
     assert "tkn=0x853a7c99227499dba9db8c3a02aa691afdebf841" in url
     assert "txntype=2" in url
     assert "amt=500000~999999999999" in url
+
+
+def test_build_token_transfer_api_url_uses_etherscan_v2_chainid() -> None:
+    url = cex.build_token_transfer_api_url(
+        "base",
+        "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+        api_key="example",
+    )
+
+    assert url.startswith("https://api.etherscan.io/v2/api?")
+    assert "chainid=8453" in url
+    assert "module=account" in url
+    assert "action=tokentx" in url
+    assert "contractaddress=0x853a7c99227499dba9db8c3a02aa691afdebf841" in url
+    assert "apikey=example" in url
 
 
 def test_enrich_cex_deposit_flows_with_zero_limit_scans_all_contract_rows(monkeypatch) -> None:

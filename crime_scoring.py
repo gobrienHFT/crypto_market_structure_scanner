@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Legacy compatibility module for market-structure lifecycle scoring.
+
+New code should import from ``market_structure_scoring``. The historical
+module name is kept so old notebooks, tests, and cached workflows continue to
+run without migration friction.
+"""
+
 import math
 from typing import Iterable
 
@@ -143,7 +150,7 @@ def _factor_notes(row: pd.Series) -> tuple[str, str, str]:
 
 
 def apply_lifecycle_model(df: pd.DataFrame) -> pd.DataFrame:
-    """Apply pump-risk lifecycle scoring.
+    """Apply market-structure lifecycle scoring.
 
     Formula:
     crime_pump_score_v2 =
@@ -154,7 +161,8 @@ def apply_lifecycle_model(df: pd.DataFrame) -> pd.DataFrame:
       + 0.12 * exit_fragility_score
       - 0.20 * large_cap_stabilizer
 
-    This is suspicious-market-structure detection. It is not an assertion of illegal conduct.
+    This is abnormal-market-structure detection. It is not an assertion of illegal conduct,
+    intent, or manipulation.
     """
     out = df.copy()
     if out.empty:

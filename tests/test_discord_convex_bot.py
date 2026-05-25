@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 import discord_convex_bot as bot
+from holder_composition import HolderComposition, HolderRow
 
 
 @pytest.fixture(autouse=True)
@@ -21,10 +22,29 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/convex") == ""
     assert bot._normalize_symbol_query("/convex_status") == ""
     assert bot._normalize_symbol_query("/coin") == ""
+    assert bot._normalize_symbol_query("/whales") == ""
+    assert bot._normalize_symbol_query("/funding") == ""
+    assert bot._normalize_symbol_query("/fundingrates") == ""
+    assert bot._normalize_symbol_query("/setupscore") == ""
+    assert bot._normalize_symbol_query("/flowproof") == ""
+    assert bot._normalize_symbol_query("/coincheck") == ""
+    assert bot._normalize_symbol_query("/floattrap") == ""
+    assert bot._normalize_symbol_query("/squeezeready") == ""
+    assert bot._normalize_symbol_query("/cextargets") == ""
     assert bot._normalize_symbol_query("/timing") == ""
+    assert bot._normalize_symbol_query("/corr") == ""
     assert bot._normalize_symbol_query("/dossier") == ""
     assert bot._normalize_symbol_query("/cexflow") == ""
     assert bot._normalize_symbol_query("/cex_flow") == ""
+    assert bot._normalize_symbol_query("/cexdiag") == ""
+    assert bot._normalize_symbol_query("/earlyflow") == ""
+    assert bot._normalize_symbol_query("/flowcoin") == ""
+    assert bot._normalize_symbol_query("/flowstress") == ""
+    assert bot._normalize_symbol_query("/flowblocked") == ""
+    assert bot._normalize_symbol_query("/flowhealth") == ""
+    assert bot._normalize_symbol_query("/sethflow") == ""
+    assert bot._normalize_symbol_query("/alpha") == ""
+    assert bot._normalize_symbol_query("/sync_commands") == ""
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
@@ -175,6 +195,212 @@ def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
     assert "RAVEUSDT" not in output
 
 
+def test_load_funding_leaderboard_splits_long_and_short_carry(monkeypatch) -> None:
+    now_ms = int(bot.time.time() * 1000)
+
+    class FakeFundingClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def mark_price(self):
+            return [
+                {"symbol": "POSUSDT", "lastFundingRate": "0.0012", "nextFundingTime": now_ms + 7_200_000, "markPrice": "1.23"},
+                {"symbol": "SMALLPOSUSDT", "lastFundingRate": "0.0004", "nextFundingTime": now_ms + 7_200_000, "markPrice": "0.0123"},
+                {"symbol": "NEGUSDT", "lastFundingRate": "-0.0008", "nextFundingTime": now_ms + 3_600_000, "markPrice": "0.00001234"},
+                {"symbol": "BTCUSDC", "lastFundingRate": "0.0099", "nextFundingTime": now_ms + 3_600_000, "markPrice": "100"},
+            ]
+
+        def ticker_24hr(self):
+            return [
+                {"symbol": "POSUSDT", "priceChangePercent": "4.2", "quoteVolume": "12300000"},
+                {"symbol": "SMALLPOSUSDT", "priceChangePercent": "-1.5", "quoteVolume": "250000"},
+                {"symbol": "NEGUSDT", "priceChangePercent": "-2.5", "quoteVolume": "9900000"},
+            ]
+
+        def funding_info(self):
+            return [{"symbol": "NEGUSDT", "fundingIntervalHours": 4}]
+
+        def global_long_short_account_ratio(self, symbol, *, period="1h", limit=1):
+            assert period == "1h"
+            ratios = {
+                "POSUSDT": {"longAccount": "0.4", "shortAccount": "0.6"},
+                "SMALLPOSUSDT": {"longAccount": "0.51", "shortAccount": "0.49"},
+                "NEGUSDT": {"longAccount": "0.7", "shortAccount": "0.3"},
+            }
+            return [ratios[symbol]]
+
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeFundingClient)
+
+    title, chunks = bot._load_funding_leaderboard(2, side="both", period="1h")
+    output = "\n".join(chunks)
+
+    assert title == "Funding carry leaderboard"
+    assert "positive funding = longs pay shorts" in output
+    assert "negative funding = shorts pay longs" in output
+    assert "Short-carry candidates (positive funding; shorts receive)" in output
+    assert "Long-carry candidates (negative funding; longs receive)" in output
+    assert output.index("/POSUSDT | funding +0.1200%/8h") < output.index("/SMALLPOSUSDT | funding +0.0400%/8h")
+    assert "/NEGUSDT | funding -0.0800%/4h" in output
+    assert "vol 12.30M" in output
+    assert "shorts 60.0% | longs 40.0%" in output
+    assert "BTCUSDC" not in output
+
+
+def test_load_funding_leaderboard_can_show_only_long_carry(monkeypatch) -> None:
+    class FakeFundingClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def mark_price(self):
+            return [
+                {"symbol": "POSUSDT", "lastFundingRate": "0.0012", "nextFundingTime": 0, "markPrice": "1"},
+                {"symbol": "NEGUSDT", "lastFundingRate": "-0.0008", "nextFundingTime": 0, "markPrice": "1"},
+            ]
+
+        def ticker_24hr(self):
+            return []
+
+        def funding_info(self):
+            return []
+
+        def global_long_short_account_ratio(self, symbol, *, period="1h", limit=1):
+            return []
+
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeFundingClient)
+
+    _, chunks = bot._load_funding_leaderboard(10, side="longs", min_abs_funding_pct=0.05)
+    output = "\n".join(chunks)
+
+    assert "Long-carry candidates (negative funding; longs receive)" in output
+    assert "Short-carry candidates" not in output
+    assert "/NEGUSDT | funding -0.0800%/8h" in output
+    assert "POSUSDT" not in output
+
+
+def test_load_whale_dominance_list_ranks_top100_holder_concentration(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "LOWUSDT",
+                "top10_holder_pct": 82.0,
+                "top100_holder_pct": 89.9,
+                "holder_count": 1000,
+                "short_account_pct": 55.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "WHALEUSDT",
+                "top10_holder_pct": 70.0,
+                "top100_holder_pct": 94.0,
+                "holder_count": 420,
+                "short_account_pct": 61.2,
+                "cex_deposit_flow_score": 30,
+                "token_platform": "base",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "MEGAUSDT",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 98.0,
+                "holder_count": 120,
+                "short_account_pct": 49.0,
+                "terminal_edge_score": 80,
+                "cex_deposit_flow_score": 72,
+                "token_platform": "ethereum",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_whale_dominance_list(10, min_pct=90)
+    output = "\n".join(chunks)
+
+    assert title == "Whale dominance ranking"
+    assert "Bucket: top100" in output
+    assert "Matches: 2 | Showing: 2" in output
+    assert "Candidates: /MEGAUSDT /WHALEUSDT" in output
+    assert output.index("/MEGAUSDT | top100 98.0% | top10 91.0%") < output.index("/WHALEUSDT | top100 94.0% | top10 70.0%")
+    assert "LOWUSDT" not in output
+    assert "observed contract-holder concentration" in output
+
+
+def test_load_whale_dominance_list_supports_top10_bucket(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {"symbol": "TOP100USDT", "top10_holder_pct": 55.0, "top100_holder_pct": 99.0, "scan_mode": "Deep", "scanned_at_utc": "now"},
+            {"symbol": "TOP10USDT", "top10_holder_pct": 92.0, "top100_holder_pct": 96.0, "scan_mode": "Deep", "scanned_at_utc": "now"},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    _, chunks = bot._load_whale_dominance_list(10, min_pct=90, bucket="top10")
+    output = "\n".join(chunks)
+
+    assert "Bucket: top10" in output
+    assert "/TOP10USDT" in output
+    assert "TOP100USDT" not in output
+
+
+def test_load_whale_dominance_list_computes_top100_when_scan_columns_missing(monkeypatch, tmp_path) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "CALCUSDT",
+                "token_platform": "base",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "short_account_pct": 64.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "LOWUSDT",
+                "token_platform": "base",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "short_account_pct": 55.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setenv("DISCORD_WHALES_CACHE_PATH", str(tmp_path / "whales.csv"))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    def fake_fetch(row, **_kwargs):
+        symbol = str(row.get("symbol", "")).upper()
+        pct = 0.95 if symbol == "CALCUSDT" else 0.50
+        return HolderComposition(
+            symbol=symbol,
+            chain=str(row.get("token_platform", "")),
+            contract_address=str(row.get("token_contract", "")),
+            holder_count=123,
+            top_holders=[
+                HolderRow(
+                    rank=index,
+                    address=f"0x{index:040x}",
+                    percent=pct,
+                )
+                for index in range(1, 101)
+            ],
+            source="test holder scan",
+        )
+
+    monkeypatch.setattr(bot, "fetch_holder_composition", fake_fetch)
+
+    title, chunks = bot._load_whale_dominance_list(10, min_pct=90, bucket="top100", refresh=True)
+    output = "\n".join(chunks)
+
+    assert title == "Whale dominance ranking"
+    assert "computed holder composition" in output
+    assert "Matches: 1 | Showing: 1" in output
+    assert "/CALCUSDT | top100 95.0% | top10 9.5%" in output
+    assert "LOWUSDT" not in output
+    assert (tmp_path / "whales.csv").exists()
+
+
 def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> None:
     cache = tmp_path / "latest.csv"
     pd.DataFrame(
@@ -209,6 +435,86 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
     assert "timing" in output
+
+
+def test_load_corr_list_filters_high_btc_correlation(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "YOUNGUSDT",
+                "corr_to_btc_6m": -0.82,
+                "corr_window_days": 37,
+                "short_account_pct": 61.2,
+                "price_change_24h_pct": 4.5,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "INVERSEUSDT",
+                "corr_to_btc_6m": -0.61,
+                "corr_window_days": 180,
+                "short_account_pct": 54.0,
+                "price_change_24h_pct": -2.1,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "WEAKUSDT",
+                "corr_to_btc_6m": -0.21,
+                "corr_window_days": 180,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "POSUSDT",
+                "corr_to_btc_6m": 0.42,
+                "corr_window_days": 180,
+                "price_change_24h_pct": 1.1,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "HIGHUSDT",
+                "corr_to_btc_6m": 0.72,
+                "corr_window_days": 180,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_corr_list(threshold=0.5)
+    output = "\n".join(chunks)
+
+    assert title == "BTC low-correlation screen"
+    assert "Threshold: corr <= 0.50" in output
+    assert "Target window: max 180d" in output
+    assert "Matches: 4" in output
+    assert "/YOUNGUSDT | corr -0.820 | used 37d (max available)" in output
+    assert "/INVERSEUSDT | corr -0.610 | used 180d" in output
+    assert "/WEAKUSDT | corr -0.210 | used 180d" in output
+    assert "/POSUSDT | corr 0.420 | used 180d" in output
+    assert "shorts 61.2%" in output
+    assert "24h 4.5%" in output
+    assert "HIGHUSDT" not in output
+
+
+def test_load_corr_list_without_threshold_shows_all_negative_rows(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {"symbol": "NEGUSDT", "corr_to_btc_6m": -0.01, "corr_window_days": 12, "scan_mode": "Deep", "scanned_at_utc": "now"},
+            {"symbol": "POSUSDT", "corr_to_btc_6m": 0.01, "corr_window_days": 12, "scan_mode": "Deep", "scanned_at_utc": "now"},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    _, chunks = bot._load_corr_list()
+    output = "\n".join(chunks)
+
+    assert "Threshold: corr < 0.00" in output
+    assert "/NEGUSDT | corr -0.010 | used 12d (max available)" in output
+    assert "POSUSDT" not in output
 
 
 def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, monkeypatch) -> None:
@@ -250,13 +556,21 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
-    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at now"))
+    captured: dict[str, object] = {}
 
-    title, chunks = bot._load_cex_flow_list(10)
+    def fake_fresh_scan(scan_mode=None, **kwargs):
+        captured.update(kwargs)
+        return fresh, "fresh Deep scan at now"
+
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", fake_fresh_scan)
+
+    title, chunks = bot._load_cex_flow_list(10, min_tokens=20_000, lookback_hours=24)
     output = "\n".join(chunks)
 
     assert title == "Wallet-to-CEX flow monitor"
     assert "Wallet-to-CEX flow monitor" in output
+    assert "Min transfer: 20.00K tokens" in output
+    assert "Flow rows before venue gate: 1 | After venue gate: 1" in output
     assert "Candidates: /PLAYUSDT" in output
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
@@ -266,6 +580,805 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert "Bitget" in output
     assert "LOWUSDT" not in output
     assert "OLDUSDT" not in output
+    assert captured["cex_min_transfer_tokens"] == 20_000
+    assert captured["cex_lookback_hours"] == 24
+
+
+def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "EARLYUSDT",
+                "cex_deposit_flow_score": 52,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 25_000,
+                "cex_deposit_24h_max_amount": 25_000,
+                "cex_deposit_24h_target_exchanges": "Gate",
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "gate_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    def fake_fresh_scan(scan_mode=None, **kwargs):
+        captured.update(kwargs)
+        return fresh, "fresh Deep scan at now"
+
+    monkeypatch.delenv("DISCORD_EARLY_FLOW_MIN_TOKENS", raising=False)
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", fake_fresh_scan)
+
+    title, chunks = bot._load_early_flow_list(10)
+    output = "\n".join(chunks)
+
+    assert title == "Early wallet-to-CEX flow sweep"
+    assert "Min transfer: 20.00K tokens" in output
+    assert "Candidates: /EARLYUSDT" in output
+    assert captured["cex_min_transfer_tokens"] == 20_000
+
+
+def test_load_cex_flow_list_can_disable_venue_gate(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "KRAKENUSDT",
+                "cex_deposit_flow_score": 61,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 1_500,
+                "cex_deposit_24h_max_amount": 1_500,
+                "cex_deposit_24h_target_exchanges": "Kraken",
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    gated_title, gated_chunks = bot._load_cex_flow_list(10, min_tokens=1_000, require_venue_gate=True)
+    ungated_title, ungated_chunks = bot._load_cex_flow_list(10, min_tokens=1_000, require_venue_gate=False)
+    gated_output = "\n".join(gated_chunks)
+    ungated_output = "\n".join(ungated_chunks)
+
+    assert gated_title == "Wallet-to-CEX flow monitor"
+    assert "Flow rows before venue gate: 1 | After venue gate: 0" in gated_output
+    assert "require_venue_gate:false" in gated_output
+    assert ungated_title == "Wallet-to-CEX flow monitor"
+    assert "Venue gate: disabled for this command" in ungated_output
+    assert "Candidates: /KRAKENUSDT" in ungated_output
+
+
+def test_load_cex_flow_list_explains_zero_raw_flow(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "HINTUSDT",
+                "token_platform": "bsc",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 96.0,
+                "cex_deposit_flow_score": 0,
+                "cex_deposit_flow_flag": False,
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 96.0%",
+                "cex_deposit_flow_error": "advanced filter HTTP 403",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "NOHINTUSDT",
+                "cex_deposit_flow_score": 0,
+                "cex_deposit_flow_flag": False,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_cex_flow_list(10, min_tokens=1_000, require_venue_gate=False)
+    output = "\n".join(chunks)
+
+    assert title == "Wallet-to-CEX flow monitor"
+    assert "Flow rows before venue gate: 0 | After venue gate: 0" in output
+    assert "Coverage: scan rows 2 | contract hints 1" in output
+    assert "precomputed concentration rows 1 | precomputed gate pass 1" in output
+    assert "CEX-flow attempts 1" in output
+    assert "errors 1 | raw flow 0" in output
+    assert "Status: explorer blocked 1 CEX-flow attempts with HTTP 403; API fallback/label coverage decides" in output
+    assert "Top CEX-flow errors: advanced filter HTTP 403 x1" in output
+    assert "not confirmed transfers" in output
+    assert "Attempted symbols (not confirmed transfers unless status starts FLOW):" in output
+    assert "/HINTUSDT | blocked/error: advanced filter HTTP 403" in output
+    assert "query floor was >= 1.00K tokens; no confirmed CEX transfer parsed" in output
+
+
+def test_load_cex_flow_diagnostics_reports_bottlenecks(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "EMPTYUSDT",
+                "token_platform": "base",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 97.0,
+                "cex_deposit_flow_score": 0,
+                "cex_deposit_flow_flag": False,
+                "cex_deposit_concentration_gate": "top10 92.0% / top100 97.0%",
+                "cex_deposit_flow_note": "concentration gate met; no large labelled CEX deposits found in last 24h.",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    def fake_fresh_scan(scan_mode=None, **kwargs):
+        captured.update(kwargs)
+        return fresh, "fresh Deep scan at now"
+
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", fake_fresh_scan)
+
+    title, description = bot._load_cex_flow_diagnostics(min_tokens=1_000, lookback_hours=48, require_venue_gate=False)
+
+    assert title == "CEX-flow scan diagnostics"
+    assert "Min transfer: 1.00K tokens | Lookback: 48h" in description
+    assert "Venue gate: disabled for this command" in description
+    assert "Coverage: scan rows 1 | contract hints 1" in description
+    assert "no-transfer rows 1" in description
+    assert "Attempted symbols (not confirmed transfers unless status starts FLOW):" in description
+    assert "/EMPTYUSDT | checked: no labelled CEX transfer met threshold/lookback" in description
+    assert "Read: zero raw flow" in description
+    assert "When HTTP 403 dominates, the scanner tries Etherscan V2 token-transfer APIs" in description
+    assert "Blocked attempted-symbol rows are query attempts" in description
+    assert captured["cex_min_transfer_tokens"] == 1_000
+    assert captured["cex_lookback_hours"] == 48
+
+
+def test_load_cex_flow_diagnostics_lists_blocked_symbols(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "BLOCKEDUSDT",
+                "token_platform": "bsc",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 96.0,
+                "cex_deposit_flow_score": 0,
+                "cex_deposit_flow_flag": False,
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 96.0%",
+                "cex_deposit_flow_error": "advanced filter HTTP 403",
+                "cex_deposit_24h_source_url": "https://bscscan.com/advanced-filter?tkn=0x333",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "FLOWUSDT",
+                "token_platform": "base",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 97.0,
+                "cex_deposit_flow_score": 67,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 75_000,
+                "cex_deposit_24h_max_amount": 50_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "cex_deposit_concentration_gate": "top10 92.0% / top100 97.0%",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    _, description = bot._load_cex_flow_diagnostics(min_tokens=1_000, require_venue_gate=False, symbol_limit=10)
+
+    assert "Attempted symbols (not confirmed transfers unless status starts FLOW):" in description
+    assert "/FLOWUSDT | FLOW 67/100 -> Bitget | 2 tx | total 75.00K tokens | max 50.00K" in description
+    assert "/BLOCKEDUSDT | blocked/error: advanced filter HTTP 403" in description
+    assert "query floor was >= 1.00K tokens; no confirmed CEX transfer parsed" in description
+    assert "query URL available" in description
+
+
+def test_load_symbol_cex_flow_uses_custom_threshold(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "PLAYUSDT",
+                "cex_deposit_flow_score": 64,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 42_000,
+                "cex_deposit_24h_max_amount": 22_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    def fake_fresh_scan(scan_mode=None, **kwargs):
+        captured.update(kwargs)
+        return fresh, "fresh Deep scan at now"
+
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", fake_fresh_scan)
+
+    title, description = bot._load_symbol_cex_flow("PLAY", min_tokens=20_000, lookback_hours=12)
+
+    assert title == "PLAYUSDT CEX flow"
+    assert "Min transfer: 20.00K tokens | Lookback: 12h" in description
+    assert "CEX Flow Score: 64/100" in description
+    assert captured["cex_min_transfer_tokens"] == 20_000
+    assert captured["cex_lookback_hours"] == 12
+
+
+def test_load_flow_stress_list_ranks_inventory_stress(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "STRESSUSDT",
+                "cex_deposit_flow_score": 72,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_inventory_stress_score": 91,
+                "cex_deposit_inventory_stress_note": "venue-inventory stress 91/100; total notional $900.00K",
+                "cex_deposit_24h_notional_usd": 900_000,
+                "cex_deposit_24h_notional_to_ask_depth_pct": 310.0,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "cex_deposit_flow_source": "token_transfer_api",
+                "bitget_volume_share_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "QUIETUSDT",
+                "cex_deposit_inventory_stress_score": 0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_flow_stress_list(10, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "CEX inventory-stress monitor"
+    assert "Candidates: /STRESSUSDT" in output
+    assert "/STRESSUSDT | stress 91/100 | flow 72/100 | Bitget | notional 900.00K | deposits/ask 310.0% | source token_transfer_api" in output
+    assert "QUIETUSDT" not in output
+
+
+def test_load_flow_blocked_list_shows_api_fallback_errors(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "BLOCKEDUSDT",
+                "cex_deposit_flow_error": "advanced filter HTTP 403; token-transfer API fallback found no labelled CEX destination matches",
+                "cex_deposit_flow_source": "advanced_filter_blocked_api_fallback",
+                "cex_deposit_24h_source_url": "https://api.etherscan.io/v2/api?chainid=8453&module=account&action=tokentx",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_flow_blocked_list(10, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "CEX-flow blocked/error rows"
+    assert "/BLOCKEDUSDT | advanced filter HTTP 403; token-transfer API fallback found no labelled CEX destination matches" in output
+    assert "advanced_filter_blocked_api_fallback" in output
+    assert "not proof that CEX flow is absent" in output
+
+
+def test_load_flow_health_reports_api_keys_and_address_labels(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "HINTUSDT",
+                "token_platform": "base",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 96.0,
+                "cex_deposit_flow_error": "advanced filter HTTP 403; token-transfer API fallback found no labelled CEX destination matches",
+                "cex_deposit_flow_source": "advanced_filter_blocked_api_fallback",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "test-key")
+    monkeypatch.setenv("CEX_ADDRESS_LABELS", "base:0x9999999999999999999999999999999999999999=Bitget Deposit")
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, description = bot._load_flow_health(min_tokens=1_000, symbol_limit=5)
+
+    assert title == "CEX-flow health"
+    assert "API fallback readiness:" in description
+    assert "- base: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or BASESCAN_API_KEY)" in description
+    assert "CEX address labels loaded: 1" in description
+    assert "Configure CEX_ADDRESS_LABELS or CEX_ADDRESS_BOOK_FILE" in description
+
+
+def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "SETUPUSDT",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 22_000_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 63.0,
+                "range_24h_pct": 8.0,
+                "day_return_pct": 2.0,
+                "dormant_short_fuse_score": 78.0,
+                "pre_pump_precision_score": 72.0,
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "VOLUSDT",
+                "cex_deposit_flow_score": 80,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 15_000_000,
+                "cex_deposit_24h_max_amount": 15_000_000,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 97.0,
+                "short_account_pct": 61.0,
+                "range_24h_pct": 55.0,
+                "day_return_pct": 42.0,
+                "dormant_short_fuse_score": 85.0,
+                "binance_volume_share_pct": 5.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "NOSHORTUSDT",
+                "cex_deposit_flow_score": 70,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 11_000_000,
+                "cex_deposit_24h_max_amount": 11_000_000,
+                "cex_deposit_24h_target_exchanges": "Gate",
+                "top10_holder_pct": 93.0,
+                "top100_holder_pct": 98.0,
+                "short_account_pct": 49.0,
+                "range_24h_pct": 6.0,
+                "dormant_short_fuse_score": 80.0,
+                "gate_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "SMALLUSDT",
+                "cex_deposit_flow_score": 90,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 9_000_000,
+                "cex_deposit_24h_max_amount": 9_000_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "top10_holder_pct": 95.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 70.0,
+                "dormant_short_fuse_score": 90.0,
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "COINBASEUSDT",
+                "cex_deposit_flow_score": 90,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 20_000_000,
+                "cex_deposit_24h_max_amount": 20_000_000,
+                "cex_deposit_24h_target_exchanges": "Coinbase",
+                "top10_holder_pct": 95.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 70.0,
+                "dormant_short_fuse_score": 90.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000)
+    output = "\n".join(chunks)
+
+    assert title == "Seth flow checklist"
+    assert "Confirmed target-CEX flow rows: 3 | Whale+short+dormant pass: 1" in output
+    assert "/SETUPUSDT | RESEARCH: dormant candidate" in output
+    assert "2 tx into Bitget | total 22.00M, max 12.00M" in output
+    assert "top10 91.0%, top100 99.0% | shorts 63.0%" in output
+    assert "VOLUSDT" not in output
+    assert "NOSHORTUSDT" not in output
+    assert "SMALLUSDT" not in output
+    assert "COINBASEUSDT" not in output
+    assert "not a trade instruction" in output
+
+
+def test_load_seth_flow_playbook_can_show_volatile_diagnostic_rows(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "VOLUSDT",
+                "cex_deposit_flow_score": 80,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 15_000_000,
+                "cex_deposit_24h_max_amount": 15_000_000,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 97.0,
+                "short_account_pct": 61.0,
+                "range_24h_pct": 55.0,
+                "day_return_pct": 42.0,
+                "dormant_short_fuse_score": 85.0,
+                "binance_volume_share_pct": 5.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    _, chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000, require_dormant=False)
+    output = "\n".join(chunks)
+
+    assert "/VOLUSDT | SKIP: already volatile/late" in output
+    assert "structure volatile/late" in output
+    assert "24h range 55.0%" in output
+
+
+def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "PRIMEUSDT",
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 3,
+                "cex_deposit_24h_token_amount": 26_000_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "Bitget, GateIO",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 64.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "locked_supply_pct": 70.0,
+                "dormant_short_fuse_score": 80.0,
+                "pre_pump_precision_score": 75.0,
+                "range_24h_pct": 8.0,
+                "day_return_pct": 3.0,
+                "oi_delta_pct": 4.2,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "KRAKENUSDT",
+                "cex_deposit_flow_score": 95,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 30_000_000,
+                "cex_deposit_24h_max_amount": 15_000_000,
+                "cex_deposit_24h_target_exchanges": "Kraken",
+                "top10_holder_pct": 95.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 70.0,
+                "low_float_score": 90.0,
+                "dormant_short_fuse_score": 90.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_setup_score_list(10, min_score=60, min_tokens=10_000_000, strict=True)
+    output = "\n".join(chunks)
+
+    assert title == "Insider-structure setup score"
+    assert "Target CEX: Binance, Gate.io, Bitget" in output
+    assert "Candidates: /PRIMEUSDT" in output
+    assert "/PRIMEUSDT | PASS | score" in output
+    assert "flow 92 Bitget, GateIO 3tx max 12.00M" in output
+    assert "shorts 64.0%" in output
+    assert "KRAKENUSDT" not in output
+
+
+def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "PRIMEUSDT",
+                "cex_deposit_flow_score": 94,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 3,
+                "cex_deposit_24h_token_amount": 26_000_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "cex_deposit_inventory_stress_score": 86,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "centralized_ownership_score": 86.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "short_account_pct": 64.0,
+                "short_dominance_score": 80.0,
+                "short_account_build_score": 74.0,
+                "dormant_short_fuse_score": 82.0,
+                "pre_pump_precision_score": 76.0,
+                "oi_delta_pct": 3.2,
+                "hour_return_pct": 1.6,
+                "day_return_pct": 6.0,
+                "hour_volume_multiple": 1.8,
+                "hour_trade_count_multiple": 1.5,
+                "hour_close_location_pct": 72.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "WEAKUSDT",
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "Kraken",
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 68.0,
+                "low_float_score": 90.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_pump_watch_list(10, min_score=55, min_tokens=10_000_000, require_target_flow=True)
+    output = "\n".join(chunks)
+
+    assert title == "Early pump watch"
+    assert "Target CEX: Binance, Gate.io, Bitget" in output
+    assert "Candidates: /PRIMEUSDT" in output
+    assert "/PRIMEUSDT | Prime early squeeze" in output
+    assert "flow 94 Binance 3tx max 12.00M" in output
+    assert "WEAKUSDT" not in output
+
+
+def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "PROOFUSDT",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 20_500_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_notional_usd": 4_100_000,
+                "cex_deposit_24h_total_pct_supply": 2.5,
+                "cex_deposit_24h_max_pct_supply": 1.4,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "cex_deposit_24h_top_tx": "0xprime",
+                "cex_deposit_flow_source": "token_transfer_api",
+                "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "cex_deposit_flow_note": "API fallback concentration-gated CEX deposit flow",
+                "cex_deposit_24h_source_url": "https://api.etherscan.io/v2/api?chainid=1&action=tokentx",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 63.0,
+                "low_float_score": 80.0,
+                "float_trap_score": 76.0,
+                "fdv_to_market_cap": 7.0,
+                "dormant_short_fuse_score": 78.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    proof_title, proof = bot._load_flow_proof("PROOF", min_tokens=10_000_000)
+    check_title, check = bot._load_coin_check("PROOF", min_tokens=10_000_000)
+
+    assert proof_title == "PROOFUSDT flow proof"
+    assert "Verdict: VERIFIED target-CEX transfer evidence" in proof
+    assert "Top tx/hash: 0xprime" in proof
+    assert "Total token amount: 20.50M" in proof
+    assert "Largest transfer: 12.00M" in proof
+    assert "Flow source: token_transfer_api" in proof
+    assert check_title == "PROOFUSDT checklist"
+    assert "Verdict: PASS" in check
+    assert "PASS target CEX flow" in check
+    assert "PASS whale dominance" in check
+
+
+def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "BITGETUSDT",
+                "cex_deposit_flow_score": 90,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 50_000,
+                "cex_deposit_24h_max_amount": 30_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "cex_deposit_24h_top_tx": "0xbitget",
+                "cex_deposit_flow_source": "advanced_filter",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "KRAKENUSDT",
+                "cex_deposit_flow_score": 99,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 80_000,
+                "cex_deposit_24h_max_amount": 40_000,
+                "cex_deposit_24h_target_exchanges": "Kraken",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_cex_targets_list(10, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "Target CEX transfer board"
+    assert "Bitget 1" in output
+    assert "/BITGETUSDT | Bitget | flow 90/100 | 2 tx | total 50.00K | max 30.00K | top tx 0xbitget" in output
+    assert "KRAKENUSDT" not in output
+
+
+def test_load_float_trap_list_ranks_low_float_high_fdv(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "FLOATYUSDT",
+                "low_float_score": 92,
+                "float_trap_score": 88,
+                "fdv_usd": 1_200_000_000,
+                "market_cap_usd": 80_000_000,
+                "fdv_to_market_cap": 15.0,
+                "circulating_supply_pct": 6.0,
+                "locked_supply_pct": 94.0,
+                "top100_holder_pct": 98.0,
+                "short_account_pct": 62.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {"symbol": "NORMALUSDT", "low_float_score": 20, "float_trap_score": 10, "scan_mode": "Deep", "scanned_at_utc": "now"},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_float_trap_list(10, min_score=60)
+    output = "\n".join(chunks)
+
+    assert title == "Low-float / high-FDV trap ranking"
+    assert "Candidates: /FLOATYUSDT" in output
+    assert "/FLOATYUSDT | float" in output
+    assert "FDV/MC 15x" in output
+    assert "NORMALUSDT" not in output
+
+
+def test_load_squeeze_ready_list_ranks_short_crowded_names(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "SQUEEZEUSDT",
+                "short_account_pct": 68.0,
+                "short_dominance_score": 82.0,
+                "short_account_build_score": 75.0,
+                "short_liquidation_fuel_score": 70.0,
+                "oi_delta_pct": 5.5,
+                "oi_to_market_cap_pct": 18.0,
+                "carry_funding_pct": -0.015,
+                "top100_holder_pct": 96.0,
+                "low_float_score": 80.0,
+                "dormant_short_fuse_score": 70.0,
+                "cex_deposit_flow_score": 60,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 25_000,
+                "cex_deposit_24h_target_exchanges": "Gate",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {"symbol": "LONGUSDT", "short_account_pct": 42.0, "scan_mode": "Deep", "scanned_at_utc": "now"},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_squeeze_ready_list(10, min_short_pct=50, min_score=40)
+    output = "\n".join(chunks)
+
+    assert title == "Squeeze-ready short-crowd ranking"
+    assert "Candidates: /SQUEEZEUSDT" in output
+    assert "/SQUEEZEUSDT | squeeze" in output
+    assert "shorts 68.0%" in output
+    assert "target CEX flow" in output
+    assert "LONGUSDT" not in output
+
+
+def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "FLOWUSDT",
+                "bitget_volume_share_pct": 5.0,
+                "trade_bucket_score": 82,
+                "centralized_ownership_score": 85,
+                "low_float_score": 80,
+                "float_trap_score": 78,
+                "short_dominance_score": 82,
+                "short_account_build_score": 72,
+                "short_liquidation_fuel_score": 70,
+                "price_volume_ignition_score": 68,
+                "convexity_preignition_score": 66,
+                "convexity_runway_score": 75,
+                "short_account_pct": 63,
+                "oi_delta_pct": 3.1,
+                "hour_return_pct": 2.0,
+                "hour_volume_multiple": 2.2,
+                "hour_trade_count_multiple": 1.8,
+                "hour_close_location_pct": 78,
+                "distance_to_high_5d_pct": 1.2,
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_24h_count": 3,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "NOGATEUSDT",
+                "trade_bucket_score": 99,
+                "centralized_ownership_score": 95,
+                "low_float_score": 95,
+                "float_trap_score": 95,
+                "short_account_pct": 70,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setenv("DISCORD_ALPHA_BRIEF_MIN_SCORE", "0")
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_alpha_brief(10)
+    output = "\n".join(chunks)
+
+    assert title == "Alpha brief"
+    assert "Alpha brief - venue-gated convex watchlist" in output
+    assert "FLOWUSDT | brief" in output
+    assert "evidence:" in output
+    assert "next:" in output
+    assert "CEX 88" in output
+    assert "NOGATEUSDT" not in output
 
 
 def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monkeypatch) -> None:
@@ -294,7 +1407,7 @@ def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monk
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
-    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
 
     title, description = bot._load_candidates(5)
 
@@ -329,7 +1442,7 @@ def test_load_candidates_no_current_candidates_does_not_show_old_cache(tmp_path,
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
-    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
 
     title, description = bot._load_candidates(5)
 
@@ -359,7 +1472,7 @@ def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
-    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at now"))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
 
     title, output = bot._load_terminal_list(2)
 
@@ -394,7 +1507,7 @@ def test_load_coin_scan_row_does_not_resurrect_cache_when_fresh_scan_misses_symb
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
-    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
 
     row, source = bot._load_coin_scan_row("PLAYUSDT")
 
@@ -429,7 +1542,7 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
     assert "Perp positioning: short accounts 61.2% | long accounts 38.8%" in description
     assert "Observed trigger:" in description
     assert "Risk level: High" in description
-    assert "Research constraint: entries, sizing, stops, and execution are your own responsibility" in description
+    assert "Research constraint: user owns entries, sizing, stops, and execution" in description
 
 
 def test_convex_candidates_require_bitget_or_gate_by_default(monkeypatch) -> None:

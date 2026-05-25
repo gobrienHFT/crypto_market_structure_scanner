@@ -155,3 +155,76 @@ def test_accumulation_absorption_surfaces_in_terminal_archetype_and_evidence() -
 
     assert row["terminal_setup_archetype"] == "accumulation-like absorption"
     assert "absorption 76/100" in row["terminal_evidence_summary"]
+
+
+def test_terminal_model_scores_concentration_gated_venue_stress() -> None:
+    scored = apply_terminal_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "FLOWUSDT",
+                    "top10_holder_pct": 92,
+                    "top100_holder_pct": 99.4,
+                    "centralized_ownership_score": 88,
+                    "low_float_score": 84,
+                    "float_trap_score": 82,
+                    "cluster_manipulable_supply_pct": 34,
+                    "fdv_to_market_cap": 8.0,
+                    "short_dominance_score": 72,
+                    "short_account_build_score": 68,
+                    "cex_deposit_flow_score": 100,
+                    "cex_deposit_inventory_stress_score": 92,
+                    "cex_deposit_24h_total_pct_supply": 2.2,
+                    "cex_deposit_24h_max_pct_supply": 1.1,
+                    "cex_deposit_24h_count": 4,
+                    "hidden_otc_discount_pct": 80,
+                    "otc_unlock_cluster_score": 85,
+                    "vesting_opacity_score": 82,
+                    "hidden_otc_terms_flag": True,
+                    "vesting_terms_changed_flag": True,
+                    "cex_deposit_inventory_stress_note": "venue-inventory stress 92/100; total notional $1.20M",
+                }
+            ]
+        )
+    )
+    row = scored.iloc[0]
+
+    assert row["terminal_control_plane_score"] >= 70
+    assert row["terminal_distribution_pressure_score"] >= 70
+    assert row["terminal_structure_edge_score"] >= 65
+    assert row["terminal_setup_archetype"] == "concentration-gated venue stress"
+    assert "inventory stress" in row["terminal_evidence_summary"]
+    assert "venue-inventory stress" in row["terminal_structural_opacity_note"]
+    assert "distribution pressure" in row["terminal_structure_edge_note"]
+
+
+def test_terminal_model_scores_pre_ignition_control_before_chase() -> None:
+    scored = apply_terminal_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "COILUSDT",
+                    "top10_holder_pct": 88,
+                    "top100_holder_pct": 98.5,
+                    "centralized_ownership_score": 82,
+                    "low_float_score": 86,
+                    "float_trap_score": 78,
+                    "low_volatility_coil_score": 92,
+                    "pre_pump_compression_score": 88,
+                    "dormant_short_fuse_score": 84,
+                    "silent_oi_accumulation_score": 78,
+                    "pre_pump_precision_score": 82,
+                    "short_account_build_score": 74,
+                    "hour_return_pct": 1.2,
+                    "day_return_pct": 7.0,
+                    "convexity_late_penalty": 5,
+                }
+            ]
+        )
+    )
+    row = scored.iloc[0]
+
+    assert row["terminal_pre_ignition_quality_score"] >= 75
+    assert row["terminal_structure_edge_score"] >= 60
+    assert row["terminal_setup_archetype"] == "pre-ignition controlled float"
+    assert "pre-ignition" in row["terminal_evidence_summary"]

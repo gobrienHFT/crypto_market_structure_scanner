@@ -14,6 +14,10 @@ TERMINAL_SCORE_COLUMNS = [
     "terminal_short_pressure_score",
     "terminal_ignition_score",
     "terminal_runway_score",
+    "terminal_control_plane_score",
+    "terminal_distribution_pressure_score",
+    "terminal_pre_ignition_quality_score",
+    "terminal_structure_edge_score",
     "terminal_opaque_supply_score",
     "terminal_exchange_flow_score",
     "terminal_private_unlock_score",
@@ -24,6 +28,7 @@ TERMINAL_SCORE_COLUMNS = [
     "terminal_liquidity_reality",
     "terminal_setup_archetype",
     "terminal_structural_opacity_note",
+    "terminal_structure_edge_note",
     "terminal_evidence_summary",
     "terminal_confirmation_needed",
     "terminal_invalidation_map",
@@ -55,6 +60,21 @@ def _bool(frame: pd.DataFrame, column: str) -> pd.Series:
 
 def _clip(series: pd.Series, lower: float = 0.0, upper: float = 100.0) -> pd.Series:
     return series.clip(lower=lower, upper=upper)
+
+
+def _score_linear(series: pd.Series, low: float, high: float, *, invert: bool = False) -> pd.Series:
+    if high <= low:
+        scored = pd.Series(0.0, index=series.index, dtype="float64")
+    else:
+        scored = ((series - low) / (high - low) * 100.0).clip(lower=0.0, upper=100.0)
+    return 100.0 - scored if invert else scored
+
+
+def _max_num(frame: pd.DataFrame, *columns: str, default: float = 0.0) -> pd.Series:
+    if not columns:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    parts = [_num(frame, column, default) for column in columns]
+    return pd.concat(parts, axis=1).max(axis=1).fillna(default).astype("float64")
 
 
 def _pct_value(value: Any) -> float | None:
@@ -148,6 +168,7 @@ def infer_liquidity_reality(row: Mapping[str, Any] | pd.Series) -> str:
     exchange_flow = _first_float(
         row,
         "cex_deposit_flow_score",
+        "cex_deposit_inventory_stress_score",
         "terminal_exchange_flow_score",
         "insider_cex_flow_score",
     )
@@ -176,6 +197,13 @@ def infer_setup_archetype(row: Mapping[str, Any] | pd.Series) -> str:
         return "pre-ignition compression"
     if _row_bool(row, "dormant_short_fuse_flag"):
         return "low-vol short-fuse"
+    control_plane = _first_float(row, "terminal_control_plane_score") or 0.0
+    distribution = _first_float(row, "terminal_distribution_pressure_score") or 0.0
+    pre_ignition = _first_float(row, "terminal_pre_ignition_quality_score") or 0.0
+    if distribution >= 72.0 and control_plane >= 62.0:
+        return "concentration-gated venue stress"
+    if pre_ignition >= 72.0 and control_plane >= 58.0:
+        return "pre-ignition controlled float"
     hidden_float = _first_float(
         row,
         "terminal_hidden_float_reflexivity_score",
@@ -221,6 +249,12 @@ def terminal_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     hidden_float = _first_float(row, "terminal_hidden_float_reflexivity_score", "hidden_float_reflexivity_score")
     if hidden_float is not None and hidden_float >= 50:
         parts.append(f"opaque-float {hidden_float:.0f}/100")
+    structure_edge = _first_float(row, "terminal_structure_edge_score")
+    if structure_edge is not None and structure_edge >= 50:
+        parts.append(f"structure edge {structure_edge:.0f}/100")
+    pre_ignition = _first_float(row, "terminal_pre_ignition_quality_score")
+    if pre_ignition is not None and pre_ignition >= 60:
+        parts.append(f"pre-ignition {pre_ignition:.0f}/100")
     exchange_flow = _first_float(
         row,
         "cex_deposit_flow_score",
@@ -229,6 +263,9 @@ def terminal_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     )
     if exchange_flow is not None and exchange_flow >= 50:
         parts.append(f"CEX-flow {exchange_flow:.0f}/100")
+    inventory_stress = _first_float(row, "cex_deposit_inventory_stress_score")
+    if inventory_stress is not None and inventory_stress >= 35:
+        parts.append(f"inventory stress {inventory_stress:.0f}/100")
     accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score")
     if accumulation is not None and accumulation >= 50:
         parts.append(f"absorption {accumulation:.0f}/100")
@@ -254,6 +291,7 @@ def terminal_structural_opacity_note(row: Mapping[str, Any] | pd.Series) -> str:
         "terminal_exchange_flow_score",
         "insider_cex_flow_score",
     ) or 0.0
+    inventory_stress = _first_float(row, "cex_deposit_inventory_stress_score") or 0.0
     info_asymmetry = _first_float(row, "terminal_information_asymmetry_score", "private_info_asymmetry_score") or 0.0
     if hidden_float >= 70 or opaque_supply >= 70:
         notes.append("opaque public float; private supply paths require review")
@@ -262,9 +300,35 @@ def terminal_structural_opacity_note(row: Mapping[str, Any] | pd.Series) -> str:
     if exchange_flow >= 60:
         note = _first_text(row, "cex_deposit_flow_note")
         notes.append(note or "concentration-gated CEX-flow signal requires review")
+    if inventory_stress >= 50:
+        note = _first_text(row, "cex_deposit_inventory_stress_note")
+        notes.append(note or "recent exchange deposits are large versus visible liquidity")
     if info_asymmetry >= 60:
         notes.append("public token distribution data appears incomplete")
     return " | ".join(notes) if notes else "no additional opaque-supply markers in current scan"
+
+
+def terminal_structure_edge_note(row: Mapping[str, Any] | pd.Series) -> str:
+    structure = _first_float(row, "terminal_structure_edge_score") or 0.0
+    control = _first_float(row, "terminal_control_plane_score") or 0.0
+    distribution = _first_float(row, "terminal_distribution_pressure_score") or 0.0
+    pre_ignition = _first_float(row, "terminal_pre_ignition_quality_score") or 0.0
+    short = _first_float(row, "terminal_short_pressure_score") or 0.0
+    inventory = _first_float(row, "cex_deposit_inventory_stress_score") or 0.0
+    parts = [f"structure edge {structure:.0f}/100"]
+    if control >= 50:
+        parts.append(f"control plane {control:.0f}/100")
+    if distribution >= 45:
+        parts.append(f"distribution pressure {distribution:.0f}/100")
+    if pre_ignition >= 45:
+        parts.append(f"pre-ignition quality {pre_ignition:.0f}/100")
+    if short >= 50:
+        parts.append(f"short pressure {short:.0f}/100")
+    if inventory >= 35:
+        parts.append(f"venue inventory stress {inventory:.0f}/100")
+    if len(parts) == 1:
+        parts.append("needs stronger float, venue-flow, or timing confirmation")
+    return " | ".join(parts[:6])
 
 
 def terminal_confirmation_needed(row: Mapping[str, Any] | pd.Series) -> str:
@@ -274,6 +338,8 @@ def terminal_confirmation_needed(row: Mapping[str, Any] | pd.Series) -> str:
     close_loc = _first_float(row, "hour_close_location_pct")
     short_pct = _pct_value(_first_float(row, "short_account_pct"))
     accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    control = _first_float(row, "terminal_control_plane_score") or 0.0
+    distribution = _first_float(row, "terminal_distribution_pressure_score") or 0.0
     if oi is None or oi < 1.0:
         needs.append("OI expansion")
     if vol_x is None or vol_x < 1.3:
@@ -285,6 +351,8 @@ def terminal_confirmation_needed(row: Mapping[str, Any] | pd.Series) -> str:
         needs.append("strong close quality")
     if short_pct is None or short_pct < 50.0:
         needs.append("short crowd confirmation")
+    if control >= 60.0 and distribution < 45.0:
+        needs.append("target-exchange balance check")
     return ", ".join(needs[:4]) if needs else "structure already has OI, volume, close-quality, and positioning confirmation"
 
 
@@ -310,6 +378,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
     cex_deposit_pct = _clip(_num(output, "insider_cex_deposit_pct"))
     cex_withdrawal_pct = _clip(_num(output, "cex_withdrawal_recent_pct"))
     cex_deposit_flow_score = _clip(_num(output, "cex_deposit_flow_score"))
+    cex_inventory_stress_score = _clip(_num(output, "cex_deposit_inventory_stress_score"))
     otc_discount_pct = _clip(_num(output, "hidden_otc_discount_pct"))
     distribution_transparency_risk = _clip(100.0 - _num(output, "distribution_transparency_score", default=100.0))
 
@@ -328,6 +397,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _clip(_num(output, "exchange_withdrawal_cluster_count") * 10.0) * 0.14
         + _clip(_num(output, "exchange_withdrawal_cluster_pct") * 1.15) * 0.14
         + cex_deposit_flow_score * 0.38
+        + cex_inventory_stress_score * 0.16
         + _bool(output, "borrower_wallet_matches_buybacks_flag").astype(float) * 5.0
         + _bool(output, "signer_linked_cluster_flag").astype(float) * 5.0
     )
@@ -355,6 +425,57 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + information_asymmetry_score * 0.20
     )
     accumulation = _clip(_num(output, "accumulation_absorption_score"))
+    top10_control = _max_num(output, "top10_holder_pct", "raw_top_10_pct", "adjusted_top_10_pct")
+    top100_control = _max_num(output, "top100_holder_pct", "raw_top_100_pct")
+    manipulable_cluster = _max_num(
+        output,
+        "cluster_manipulable_supply_pct",
+        "filtered_top_5_manipulable_pct",
+        "largest_manipulable_holder_pct",
+    )
+    control_plane_score = _clip(
+        _score_linear(top10_control, 45.0, 92.0) * 0.16
+        + _score_linear(top100_control, 80.0, 99.5) * 0.12
+        + _num(output, "centralized_ownership_score") * 0.16
+        + _num(output, "low_float_score") * 0.14
+        + _num(output, "float_trap_score") * 0.12
+        + _score_linear(manipulable_cluster, 6.0, 45.0) * 0.12
+        + _score_linear(_num(output, "fdv_to_market_cap"), 1.5, 12.0) * 0.08
+        + hidden_float_reflexivity_score * 0.10
+    )
+    deposit_pct_score = _score_linear(_num(output, "cex_deposit_24h_total_pct_supply"), 0.10, 3.0)
+    max_deposit_pct_score = _score_linear(_num(output, "cex_deposit_24h_max_pct_supply"), 0.05, 1.50)
+    deposit_count_score = _score_linear(_num(output, "cex_deposit_24h_count"), 1.0, 8.0)
+    distribution_pressure_score = _clip(
+        cex_deposit_flow_score * 0.22
+        + cex_inventory_stress_score * 0.24
+        + exchange_flow_score * 0.17
+        + private_unlock_score * 0.13
+        + _num(output, "supply_overhang_score") * 0.07
+        + deposit_pct_score * 0.08
+        + max_deposit_pct_score * 0.05
+        + deposit_count_score * 0.04
+    )
+    hour_abs = _num(output, "hour_return_pct").abs()
+    day_abs = _num(output, "day_return_pct").abs()
+    quiet_tape_score = _clip(
+        100.0
+        - _score_linear(hour_abs, 5.0, 18.0) * 0.45
+        - _score_linear(day_abs, 25.0, 100.0) * 0.35
+        - _num(output, "convexity_late_penalty") * 0.20
+    )
+    pre_ignition_quality_score = _clip(
+        _num(output, "low_volatility_coil_score") * 0.16
+        + _num(output, "pre_pump_compression_score") * 0.16
+        + _num(output, "dormant_short_fuse_score") * 0.15
+        + _num(output, "silent_oi_accumulation_score") * 0.12
+        + _num(output, "pre_pump_precision_score") * 0.15
+        + _num(output, "short_account_build_score") * 0.08
+        + accumulation * 0.08
+        + quiet_tape_score * 0.10
+        + _bool(output, "dormant_short_fuse_flag").astype(float) * 6.0
+        + _bool(output, "pre_pump_precision_flag").astype(float) * 6.0
+    )
     float_score = _clip(
         _num(output, "centralized_ownership_score") * 0.26
         + _num(output, "low_float_score") * 0.22
@@ -362,6 +483,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _num(output, "valuation_trap_score") * 0.10
         + _num(output, "rave_lab_setup_score") * 0.06
         + hidden_float_reflexivity_score * 0.18
+        + control_plane_score * 0.08
     )
     short_score = _clip(
         _num(output, "short_dominance_score") * 0.32
@@ -406,6 +528,33 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + accumulation * 0.10
         - _num(output, "crime_largecap_penalty_score") * 0.16
     )
+    structure_edge_score = _clip(
+        control_plane_score * 0.24
+        + short_score * 0.18
+        + pre_ignition_quality_score * 0.18
+        + distribution_pressure_score * 0.14
+        + ignition_score * 0.10
+        + runway_score * 0.08
+        + liquidity_score * 0.06
+        + hidden_float_reflexivity_score * 0.06
+        - late_risk * 0.12
+    )
+    structure_edge_score = structure_edge_score.where(
+        ~((control_plane_score >= 70.0) & (distribution_pressure_score >= 70.0)),
+        other=structure_edge_score.clip(lower=72.0),
+    )
+    structure_edge_score = structure_edge_score.where(
+        ~((control_plane_score >= 68.0) & (pre_ignition_quality_score >= 72.0)),
+        other=structure_edge_score.clip(lower=68.0),
+    )
+    structure_edge_score = structure_edge_score.where(
+        ~((control_plane_score >= 58.0) & (pre_ignition_quality_score >= 72.0)),
+        other=structure_edge_score.clip(lower=62.0),
+    )
+    structure_edge_score = structure_edge_score.where(
+        ~((control_plane_score >= 60.0) & (pre_ignition_quality_score >= 60.0) & (short_score >= 45.0)),
+        other=structure_edge_score.clip(lower=64.0),
+    )
     edge = _clip(
         float_score * 0.24
         + short_score * 0.20
@@ -415,12 +564,19 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
         + liquidity_score * 0.09
         + hidden_float_reflexivity_score * 0.06
         + accumulation * 0.08
+        + structure_edge_score * 0.10
+        + distribution_pressure_score * 0.06
+        + pre_ignition_quality_score * 0.06
         - late_risk * 0.10
         + _bool(output, "pre_pump_precision_flag").astype(float) * 12.0
         + _bool(output, "dormant_short_fuse_flag").astype(float) * 8.0
         + _bool(output, "convexity_prime_flag").astype(float) * 6.0
     )
 
+    output["terminal_control_plane_score"] = control_plane_score
+    output["terminal_distribution_pressure_score"] = distribution_pressure_score
+    output["terminal_pre_ignition_quality_score"] = pre_ignition_quality_score
+    output["terminal_structure_edge_score"] = structure_edge_score
     output["terminal_float_score"] = float_score
     output["terminal_short_pressure_score"] = short_score
     output["terminal_ignition_score"] = ignition_score
@@ -438,6 +594,7 @@ def apply_terminal_model(frame: pd.DataFrame) -> pd.DataFrame:
     output["terminal_liquidity_reality"] = output.apply(infer_liquidity_reality, axis=1)
     output["terminal_setup_archetype"] = output.apply(infer_setup_archetype, axis=1)
     output["terminal_structural_opacity_note"] = output.apply(terminal_structural_opacity_note, axis=1)
+    output["terminal_structure_edge_note"] = output.apply(terminal_structure_edge_note, axis=1)
     output["terminal_evidence_summary"] = output.apply(terminal_evidence_summary, axis=1)
     output["terminal_confirmation_needed"] = output.apply(terminal_confirmation_needed, axis=1)
     output["terminal_invalidation_map"] = output.apply(terminal_invalidation_map, axis=1)
@@ -457,10 +614,12 @@ def build_setup_dossier(row: Mapping[str, Any] | pd.Series) -> str:
         "",
         f"- Terminal score: {_fmt_num(_first_float(row, 'terminal_edge_score'))}/100",
         f"- Archetype: {_first_text(row, 'terminal_setup_archetype') or infer_setup_archetype(row)}",
+        f"- Case-study analogue: {_first_text(row, 'archetype_match_note') or 'No case-study analogue has been assigned yet.'}",
         f"- Regime: {_first_text(row, 'terminal_market_regime') or infer_market_regime(row)}",
         f"- Liquidity reality: {_first_text(row, 'terminal_liquidity_reality') or infer_liquidity_reality(row)}",
         f"- Evidence: {_first_text(row, 'terminal_evidence_summary') or terminal_evidence_summary(row)}",
         f"- Structural opacity: {_first_text(row, 'terminal_structural_opacity_note') or terminal_structural_opacity_note(row)}",
+        f"- Structure edge: {_first_text(row, 'terminal_structure_edge_note') or terminal_structure_edge_note(row)}",
         f"- Confirmation needed: {_first_text(row, 'terminal_confirmation_needed') or terminal_confirmation_needed(row)}",
         f"- Invalidation map: {_first_text(row, 'terminal_invalidation_map') or terminal_invalidation_map(row)}",
         "",
@@ -475,8 +634,12 @@ def build_setup_dossier(row: Mapping[str, Any] | pd.Series) -> str:
         f"- FDV/market cap: {_fmt_num(_first_float(row, 'fdv_to_market_cap'))}",
         f"- ATH runway: {_fmt_num(_first_float(row, 'ath_multiple'))}x",
         f"- Opaque supply score: {_fmt_num(_first_float(row, 'terminal_opaque_supply_score'))}/100",
+        f"- Control-plane score: {_fmt_num(_first_float(row, 'terminal_control_plane_score'))}/100",
+        f"- Pre-ignition quality: {_fmt_num(_first_float(row, 'terminal_pre_ignition_quality_score'))}/100",
+        f"- Distribution pressure: {_fmt_num(_first_float(row, 'terminal_distribution_pressure_score'))}/100",
         f"- Exchange-flow score: {_fmt_num(_first_float(row, 'terminal_exchange_flow_score'))}/100",
         f"- Recent concentration-gated CEX flow: {_fmt_num(_first_float(row, 'cex_deposit_flow_score'))}/100",
+        f"- Recent venue-inventory stress: {_fmt_num(_first_float(row, 'cex_deposit_inventory_stress_score'))}/100",
         f"- Recent CEX-flow note: {_first_text(row, 'cex_deposit_flow_note') or 'No concentration-gated CEX-flow evidence in current scan.'}",
         f"- Private unlock/OTC score: {_fmt_num(_first_float(row, 'terminal_private_unlock_score'))}/100",
         f"- Accumulation absorption score: {_fmt_num(_first_float(row, 'accumulation_absorption_score'))}/100",

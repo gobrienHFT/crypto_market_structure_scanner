@@ -11,17 +11,22 @@ from typing import Any
 import pandas as pd
 import requests
 
+from archetype_scoring import apply_archetype_model
 from binance_futures import BinanceFuturesPublic
-from cex_flow_scanner import build_cex_flow_discord_block
+from cex_flow_scanner import TOKEN_TRANSFER_API_CONFIGS, build_cex_flow_discord_block, load_cex_address_book, token_transfer_api_key_envs
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
     DISCORD_FOOTER,
     DISCORD_PRODUCT_IDENTITY,
     build_discord_flag_card,
+    infer_evidence_stack,
+    infer_next_check,
     join_discord_flag_cards,
 )
-from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
+from early_pump_radar import apply_early_pump_radar
+from holder_composition import fetch_holder_composition, format_holder_composition_for_discord, load_contract_hints, resolve_contract_hint
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
+from scan_orchestrator import run_fresh_scan_frame
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
 from trade_setup_pipeline import TradeBotConfig, TradeBotRuntime
@@ -100,6 +105,18 @@ def _safe_float(value: Any) -> float | None:
     return parsed
 
 
+def _safe_pct(value: Any) -> float | None:
+    try:
+        parsed = float(str(value).replace(",", "").replace("%", "").strip())
+    except Exception:
+        return None
+    if pd.isna(parsed):
+        return None
+    if parsed != 0.0 and abs(parsed) <= 1.0:
+        return parsed * 100.0
+    return parsed
+
+
 def _boolish_series(series: Any, *, index: pd.Index | None = None) -> pd.Series:
     if not isinstance(series, pd.Series):
         if series is None and index is not None:
@@ -108,7 +125,14 @@ def _boolish_series(series: Any, *, index: pd.Index | None = None) -> pd.Series:
             series = pd.Series(series if series is not None else [])
             if index is not None and len(series) == len(index):
                 series.index = index
-    return series.fillna(False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
+    return series.astype("object").where(pd.notna(series), False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
+
+
+def _text_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series("", index=frame.index)
+    series = frame[column].fillna("").astype(str).str.strip()
+    return series.where(~series.str.lower().isin({"nan", "none", "null", "<na>"}), "")
 
 
 def _fmt_compact_number(value: Any) -> str:
@@ -134,6 +158,13 @@ def _chunk_text_lines(lines: list[str], *, max_chars: int = 1850) -> list[str]:
     if current:
         chunks.append("\n".join(current).strip())
     return chunks
+
+
+def _clip_text(text: str, max_chars: int) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= max_chars:
+        return clean
+    return f"{clean[: max_chars - 3].rstrip()}..."
 
 
 def _normalize_tier(raw_tier: str) -> str:
@@ -188,10 +219,29 @@ def _feature_required_tier(feature: str) -> str:
         "archive": "pro",
         "shortcut": "paid",
         "shorts": "free",
+        "whales": "paid",
+        "funding": "free",
+        "setupscore": "paid",
+        "pumpwatch": "paid",
+        "flowproof": "paid",
+        "coincheck": "paid",
+        "floattrap": "paid",
+        "squeezeready": "paid",
+        "cextargets": "paid",
         "terminal": "paid",
         "dossier": "paid",
         "timing": "paid",
+        "corr": "paid",
         "cexflow": "paid",
+        "cexdiag": "paid",
+        "earlyflow": "paid",
+        "flowcoin": "paid",
+        "flowstress": "paid",
+        "flowblocked": "paid",
+        "flowhealth": "paid",
+        "sethflow": "paid",
+        "alpha": "paid",
+        "sync_commands": "pro",
         "startbot": "pro",
         "stopbot": "pro",
         "tradebot_status": "pro",
@@ -234,6 +284,191 @@ def _holder_composition_text(row: pd.Series) -> str:
     )
 
 
+def _cex_flow_scan_diagnostic_lines(
+    frame: pd.DataFrame,
+    *,
+    min_top10: float,
+    min_top100: float,
+) -> list[str]:
+    if frame.empty:
+        return ["Coverage: scan rows 0 | contract hints 0 | CEX-flow attempts 0 | raw flow 0"]
+
+    hints_path = _holder_contract_hints_path()
+    hint_count = 0
+    precomputed_gate_count = 0
+    precomputed_concentration_rows = 0
+    for _, row in frame.iterrows():
+        row_dict = row.to_dict()
+        try:
+            if resolve_contract_hint(row_dict, hints_path=hints_path) is not None:
+                hint_count += 1
+        except Exception:
+            pass
+
+        top10 = _safe_pct(row.get("top10_holder_pct"))
+        top100 = _safe_pct(row.get("top100_holder_pct"))
+        if top10 is not None or top100 is not None:
+            precomputed_concentration_rows += 1
+        if (top10 is not None and top10 >= min_top10) or (top100 is not None and top100 >= min_top100):
+            precomputed_gate_count += 1
+
+    score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
+    raw_flow_mask = flag | score.gt(0.0)
+    gate_text = _text_series(frame, "cex_deposit_concentration_gate")
+    note_text = _text_series(frame, "cex_deposit_flow_note")
+    error_text = _text_series(frame, "cex_deposit_flow_error")
+    source_url = _text_series(frame, "cex_deposit_24h_source_url")
+    source_kind = _text_series(frame, "cex_deposit_flow_source")
+    attempt_mask = raw_flow_mask | gate_text.ne("") | note_text.ne("") | error_text.ne("") | source_url.ne("")
+    no_large_mask = note_text.str.contains("no large labelled CEX deposits", case=False, regex=False)
+    gate_not_met_mask = note_text.str.contains("concentration gate not met", case=False, regex=False)
+    max_symbols = _env_int("CEX_DEPOSIT_FLOW_MAX_SYMBOLS", 0, minimum=0)
+    attempt_count = int(attempt_mask.sum())
+    no_large_count = int(no_large_mask.sum())
+    gate_not_met_count = int(gate_not_met_mask.sum())
+    error_count = int(error_text.ne("").sum())
+    raw_flow_count = int(raw_flow_mask.sum())
+    http_403_count = int(error_text.str.contains("HTTP 403", case=False, regex=False).sum())
+
+    lines = [
+        (
+            f"Coverage: scan rows {len(frame)} | contract hints {hint_count} | "
+            f"precomputed concentration rows {precomputed_concentration_rows} | precomputed gate pass {precomputed_gate_count}"
+        ),
+        (
+            f"CEX-flow attempts {attempt_count}"
+            f" | no-transfer rows {no_large_count}"
+            f" | gate-not-met rows {gate_not_met_count}"
+            f" | errors {error_count}"
+            f" | raw flow {raw_flow_count}"
+        ),
+    ]
+    if max_symbols > 0 and hint_count > max_symbols:
+        lines.append(f"CEX scan cap: top {max_symbols} contract-hinted symbols by priority were scanned.")
+
+    if http_403_count > 0 and http_403_count >= max(1, (error_count + 1) // 2):
+        lines.append(
+            f"Status: explorer blocked {http_403_count} CEX-flow attempts with HTTP 403; API fallback/label coverage decides whether zero raw flow is conclusive."
+        )
+    elif raw_flow_count == 0 and attempt_count == 0 and hint_count == 0:
+        lines.append("Status: no contract-hinted tokens were available for CEX-flow scanning.")
+    elif raw_flow_count == 0 and attempt_count == 0:
+        lines.append("Status: no CEX-flow attempts were recorded; check scan mode, CEX-flow enablement, and scan cap settings.")
+    elif raw_flow_count == 0 and gate_not_met_count >= attempt_count and attempt_count > 0:
+        lines.append("Status: holder concentration gate filtered all attempted tokens before CEX-flow scoring.")
+    elif raw_flow_count == 0 and no_large_count > 0 and error_count == 0:
+        lines.append("Status: scan reached labelled CEX-transfer checks, but no transfers met the threshold/lookback.")
+    elif raw_flow_count > 0:
+        lines.append("Status: verified labelled CEX-flow rows exist; venue gate decides whether they appear in `/cexflow`.")
+
+    error_counts = error_text[error_text.ne("")].value_counts().head(3)
+    if not error_counts.empty:
+        summary = "; ".join(f"{str(error)[:80]} x{int(count)}" for error, count in error_counts.items())
+        lines.append(f"Top CEX-flow errors: {summary}")
+    source_counts = source_kind[source_kind.ne("")].value_counts().head(4)
+    if not source_counts.empty:
+        summary = "; ".join(f"{str(source)[:50]} x{int(count)}" for source, count in source_counts.items())
+        lines.append(f"CEX-flow source paths: {summary}")
+    return lines
+
+
+def _cex_attempt_amount_text(row: pd.Series, *, min_transfer_tokens: float | None = None) -> str:
+    count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+    total_amount = _safe_float(row.get("cex_deposit_24h_token_amount"))
+    max_amount = _safe_float(row.get("cex_deposit_24h_max_amount"))
+    total_pct = _safe_pct(row.get("cex_deposit_24h_total_pct_supply"))
+
+    if count > 0 or (total_amount is not None and total_amount > 0):
+        parts: list[str] = []
+        if count > 0:
+            parts.append(f"{count} tx")
+        if total_amount is not None and total_amount > 0:
+            parts.append(f"total {_fmt_compact_number(total_amount)} tokens")
+        if max_amount is not None and max_amount > 0:
+            parts.append(f"max {_fmt_compact_number(max_amount)}")
+        if total_pct is not None:
+            parts.append(f"{total_pct:.2f}% supply")
+        return " | ".join(parts)
+
+    error = str(row.get("cex_deposit_flow_error", "") or "")
+    if "no labelled CEX destination matches" in error:
+        return "API fallback reached token transfers; no labelled CEX destination matched"
+    if error and min_transfer_tokens is not None:
+        return f"query floor was >= {_fmt_compact_number(min_transfer_tokens)} tokens; no confirmed CEX transfer parsed"
+    if error:
+        return "no confirmed CEX transfer parsed"
+    return ""
+
+
+def _cex_flow_attempt_symbol_lines(
+    frame: pd.DataFrame,
+    *,
+    limit: int = 15,
+    min_transfer_tokens: float | None = None,
+) -> list[str]:
+    if frame.empty:
+        return []
+
+    score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
+    raw_flow_mask = flag | score.gt(0.0)
+    gate_text = _text_series(frame, "cex_deposit_concentration_gate")
+    note_text = _text_series(frame, "cex_deposit_flow_note")
+    error_text = _text_series(frame, "cex_deposit_flow_error")
+    source_url = _text_series(frame, "cex_deposit_24h_source_url")
+    attempt_mask = raw_flow_mask | gate_text.ne("") | note_text.ne("") | error_text.ne("") | source_url.ne("")
+    if not bool(attempt_mask.any()):
+        return []
+
+    rows = frame.loc[attempt_mask].copy()
+    if "symbol" not in rows.columns:
+        rows["symbol"] = ""
+    rows["_cex_diag_score"] = score.loc[attempt_mask]
+    rows["_cex_diag_rank"] = 5
+    rows.loc[raw_flow_mask.loc[attempt_mask], "_cex_diag_rank"] = 0
+    rows.loc[error_text.loc[attempt_mask].str.contains("HTTP 403", case=False, regex=False), "_cex_diag_rank"] = 1
+    rows.loc[error_text.loc[attempt_mask].ne("") & rows["_cex_diag_rank"].ne(1), "_cex_diag_rank"] = 2
+    rows.loc[note_text.loc[attempt_mask].str.contains("no large labelled CEX deposits", case=False, regex=False), "_cex_diag_rank"] = 3
+    rows.loc[note_text.loc[attempt_mask].str.contains("concentration gate not met", case=False, regex=False), "_cex_diag_rank"] = 4
+    rows = rows.sort_values(["_cex_diag_rank", "_cex_diag_score", "symbol"], ascending=[True, False, True])
+
+    capped_limit = min(max(int(limit), 1), 50)
+    lines = ["Attempted symbols (not confirmed transfers unless status starts FLOW):"]
+    for _, row in rows.head(capped_limit).iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        row_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
+        is_flow = bool(row_score > 0.0) or str(row.get("cex_deposit_flow_flag", "")).strip().lower() in {"1", "true", "yes"}
+        error = _clip_text(row.get("cex_deposit_flow_error", ""), 70)
+        note = _clip_text(row.get("cex_deposit_flow_note", ""), 70)
+        gate = _clip_text(row.get("cex_deposit_concentration_gate", ""), 48)
+        targets = _clip_text(row.get("cex_deposit_24h_target_exchanges", ""), 40)
+        source = _clip_text(row.get("cex_deposit_24h_source_url", ""), 70)
+        amount_text = _cex_attempt_amount_text(row, min_transfer_tokens=min_transfer_tokens)
+
+        if is_flow:
+            status = f"FLOW {row_score:.0f}/100" + (f" -> {targets}" if targets else "")
+        elif error:
+            status = f"blocked/error: {error}"
+        elif "no large labelled cex deposits" in note.lower():
+            status = "checked: no labelled CEX transfer met threshold/lookback"
+        elif "concentration gate not met" in note.lower():
+            status = "holder gate not met"
+        elif note:
+            status = note
+        else:
+            status = "attempted: no scored flow row"
+
+        detail_parts = [part for part in (amount_text, gate, "query URL available" if source else "") if part]
+        detail = f" | {' | '.join(detail_parts)}" if detail_parts else ""
+        lines.append(f"/{symbol} | {status}{detail}")
+
+    remaining = len(rows) - min(len(rows), capped_limit)
+    if remaining > 0:
+        lines.append(f"... {remaining} more attempted symbol(s) hidden; raise the command limit to inspect more.")
+    return lines
+
+
 def _candidate_line(row: pd.Series) -> str:
     holder_text = _holder_composition_text(row)
     return build_discord_flag_card(row, holder_text=holder_text)
@@ -251,6 +486,10 @@ def _shorts_cache_path() -> Path:
     return Path(_env_value("DISCORD_SHORTS_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_majority.csv")))
 
 
+def _whales_cache_path() -> Path:
+    return Path(_env_value("DISCORD_WHALES_CACHE_PATH", str(APP_DIR / "data" / "latest_whale_dominance.csv")))
+
+
 def _normalize_symbol_query(raw_symbol: str) -> str:
     match = SYMBOL_QUERY_RE.fullmatch(str(raw_symbol or "").strip())
     if not match:
@@ -263,11 +502,30 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
         "CONVEX_ARCHIVE",
         "COIN",
         "SHORTS",
+        "WHALES",
+        "FUNDING",
+        "FUNDINGRATES",
+        "SETUPSCORE",
+        "FLOWPROOF",
+        "COINCHECK",
+        "FLOATTRAP",
+        "SQUEEZEREADY",
+        "CEXTARGETS",
         "TERMINAL",
         "TIMING",
+        "CORR",
         "DOSSIER",
         "CEXFLOW",
         "CEX_FLOW",
+        "CEXDIAG",
+        "EARLYFLOW",
+        "FLOWCOIN",
+        "FLOWSTRESS",
+        "FLOWBLOCKED",
+        "FLOWHEALTH",
+        "SETHFLOW",
+        "ALPHA",
+        "SYNC_COMMANDS",
     }:
         return ""
     if not symbol.endswith("USDT"):
@@ -326,7 +584,12 @@ def _latest_snapshot_frame() -> pd.DataFrame:
     return frame
 
 
-def _fresh_scanner_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, str]:
+def _fresh_scanner_frame(
+    scan_mode: str | None = None,
+    *,
+    cex_min_transfer_tokens: float | None = None,
+    cex_lookback_hours: int | None = None,
+) -> tuple[pd.DataFrame, str]:
     live_default = _env_bool("DISCORD_TIMING_LIVE_SCAN_ENABLED", True)
     if not _env_bool("DISCORD_COMMAND_LIVE_SCAN_ENABLED", live_default):
         return pd.DataFrame(), "live scan disabled"
@@ -334,27 +597,11 @@ def _fresh_scanner_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, st
         scan_mode
         or _env_value("DISCORD_COMMAND_SCAN_MODE", _env_value("DISCORD_TIMING_SCAN_MODE", "Deep"))
     ).strip() or "Deep"
-    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    try:
-        os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
-        import app as scanner_app
-
-        scan_fn = getattr(scanner_app.run_scan, "__wrapped__", scanner_app.run_scan)
-        _, all_df = scan_fn(int(time.time()), mode)
-        if all_df.empty:
-            return pd.DataFrame(), f"fresh {mode} scan returned no rows at {started_at}"
-        frame = all_df.copy()
-        if "scanned_at_utc" not in frame.columns:
-            frame.insert(0, "scanned_at_utc", started_at)
-        if "scan_mode" not in frame.columns:
-            frame.insert(1, "scan_mode", mode)
-        try:
-            scanner_app._write_latest_convex_longs_cache(frame, scan_mode=mode)
-        except Exception:
-            pass
-        return frame, f"fresh {mode} scan at {started_at}"
-    except Exception as exc:
-        return pd.DataFrame(), f"fresh scan unavailable: {exc}"
+    return run_fresh_scan_frame(
+        mode,
+        cex_min_transfer_tokens=cex_min_transfer_tokens,
+        cex_lookback_hours=cex_lookback_hours,
+    )
 
 
 def _source_is_unavailable(source: str) -> bool:
@@ -625,9 +872,578 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
 
-def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
-    scan_mode = _env_value("DISCORD_CEX_FLOW_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+def _pct_numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(float("nan"), index=frame.index, dtype="float64")
+    return frame[column].map(_safe_pct).astype("float64")
+
+
+def _holder_concentration_source_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, str]:
+    mode = scan_mode or _env_value("DISCORD_WHALES_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    frame, source = _fresh_scanner_frame(mode)
+    if frame.empty and _source_is_unavailable(source):
+        snapshot = _latest_snapshot_frame()
+        if not snapshot.empty and {"top10_holder_pct", "top100_holder_pct"} & set(snapshot.columns):
+            return snapshot, "latest full scanner snapshot fallback"
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    return frame, source
+
+
+def _holder_source_frame_for_direct_scan(frame: pd.DataFrame) -> pd.DataFrame:
+    if not frame.empty and "symbol" in frame.columns:
+        return frame.loc[:, ~frame.columns.duplicated()].copy()
+    cache = _read_csv_if_exists(_cache_path())
+    if not cache.empty and "symbol" in cache.columns:
+        return cache.loc[:, ~cache.columns.duplicated()].copy()
+    hints = load_contract_hints(_holder_contract_hints_path())
+    rows = [
+        {"symbol": hint.symbol, "token_platform": hint.chain, "token_contract": hint.contract_address}
+        for hint in hints.values()
+    ]
+    return pd.DataFrame(rows)
+
+
+def _bucket_columns_available(frame: pd.DataFrame, bucket_key: str) -> bool:
+    if frame.empty:
+        return False
+    has_top10 = "top10_holder_pct" in frame.columns and _pct_numeric_series(frame, "top10_holder_pct").notna().any()
+    has_top100 = "top100_holder_pct" in frame.columns and _pct_numeric_series(frame, "top100_holder_pct").notna().any()
+    if bucket_key == "top10":
+        return has_top10
+    if bucket_key == "top100":
+        return has_top100
+    if bucket_key == "both":
+        return has_top10 and has_top100
+    return has_top10 or has_top100
+
+
+def _whale_cache_is_fresh(path: Path) -> bool:
+    ttl_seconds = _env_int("DISCORD_WHALES_CACHE_TTL_SECONDS", 1800, minimum=0)
+    return ttl_seconds > 0 and path.exists() and time.time() - path.stat().st_mtime <= ttl_seconds
+
+
+def _direct_holder_dominance_frame(
+    source_frame: pd.DataFrame,
+    *,
+    max_symbols: int = 0,
+    timeout: int | None = None,
+    max_holders: int = 100,
+) -> tuple[pd.DataFrame, str]:
+    source = _holder_source_frame_for_direct_scan(source_frame)
+    if source.empty or "symbol" not in source.columns:
+        return pd.DataFrame(), "no contract-hinted holder universe available"
+    hints_path = _holder_contract_hints_path()
+    source = source.copy()
+    source["symbol"] = source["symbol"].astype(str).str.upper().str.strip()
+    source = source[source["symbol"].ne("")]
+    source = source.drop_duplicates(subset=["symbol"], keep="first")
+    capped = max(0, int(max_symbols or 0))
+    if capped > 0:
+        source = source.head(capped)
+    timeout_seconds = timeout or _env_int("DISCORD_WHALES_HOLDER_TIMEOUT_SECONDS", 12, minimum=3)
+    holder_limit = min(max(int(max_holders), 10), 100)
+    rows: list[dict[str, Any]] = []
+    errors = 0
+    for _, row in source.iterrows():
+        row_dict = row.to_dict()
+        try:
+            hint = resolve_contract_hint(row_dict, hints_path=hints_path)
+        except Exception:
+            hint = None
+        if hint is None:
+            errors += 1
+            continue
+        try:
+            composition = fetch_holder_composition(
+                row_dict,
+                hints_path=hints_path,
+                timeout=timeout_seconds,
+                max_holders=holder_limit,
+            )
+        except Exception:
+            errors += 1
+            continue
+        if composition.error:
+            errors += 1
+            continue
+        top10 = composition.top_pct(10)
+        top100 = composition.top_pct(100)
+        record = row_dict.copy()
+        record.update(
+            {
+                "symbol": str(row_dict.get("symbol", composition.symbol)).upper().strip(),
+                "token_platform": composition.chain or hint.chain,
+                "token_contract": composition.contract_address or hint.contract_address,
+                "top10_holder_pct": top10,
+                "top100_holder_pct": top100,
+                "holder_count": composition.holder_count,
+                "holder_source": composition.source,
+                "holder_explorer_url": composition.explorer_url,
+                "scanned_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "scan_mode": "live holder composition",
+            }
+        )
+        rows.append(record)
+    frame = pd.DataFrame(rows)
+    if not frame.empty:
+        cache_path = _whales_cache_path()
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(cache_path, index=False)
+        except Exception:
+            pass
+    return frame, f"computed holder composition ({len(rows)} rows, {errors} skipped)"
+
+
+def _normalize_whale_bucket(bucket: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(bucket or "top100").lower())
+    aliases = {
+        "100": "top100",
+        "top100": "top100",
+        "t100": "top100",
+        "10": "top10",
+        "top10": "top10",
+        "t10": "top10",
+        "either": "either",
+        "any": "either",
+        "or": "either",
+        "both": "both",
+        "and": "both",
+    }
+    return aliases.get(normalized, "top100")
+
+
+def _load_whale_dominance_list(
+    limit: int,
+    *,
+    min_pct: float = 90.0,
+    bucket: str = "top100",
+    require_contract_hint: bool = False,
+    max_symbols: int = 0,
+    refresh: bool = False,
+) -> tuple[str, list[str]]:
+    frame, source = _holder_concentration_source_frame()
+    threshold = max(0.0, min(float(min_pct), 100.0))
+    bucket_key = _normalize_whale_bucket(bucket)
+    if not _bucket_columns_available(frame, bucket_key):
+        cache_path = _whales_cache_path()
+        if not refresh and _whale_cache_is_fresh(cache_path):
+            cached = _read_csv_if_exists(cache_path)
+            if _bucket_columns_available(cached, bucket_key):
+                frame = cached
+                source = f"latest whale-dominance cache ({cache_path.name})"
+        if not _bucket_columns_available(frame, bucket_key):
+            frame, computed_source = _direct_holder_dominance_frame(
+                frame,
+                max_symbols=max_symbols,
+                max_holders=100,
+            )
+            source = f"{computed_source} from contract hints"
+    header = (
+        "Whale dominance ranking\n"
+        f"Source: {source} | Threshold: >= {threshold:.1f}% | Bucket: {bucket_key} | "
+        "Read: observed contract-holder concentration, not proof of control or native-chain global supply."
+    )
+    if frame.empty:
+        return "Whale dominance ranking", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    if "symbol" not in frame.columns:
+        return "Whale dominance ranking", [header + "\n\nThe current scan source has no symbol column."]
+
+    rows = frame.loc[:, ~frame.columns.duplicated()].copy()
+    top10 = _pct_numeric_series(rows, "top10_holder_pct")
+    top100 = _pct_numeric_series(rows, "top100_holder_pct")
+    if top10.isna().all() and top100.isna().all():
+        return "Whale dominance ranking", [header + "\n\nCould not compute top-holder concentration from the active scan, cache, or contract hints."]
+
+    if require_contract_hint:
+        hints_path = _holder_contract_hints_path()
+        has_hint: list[bool] = []
+        for _, row in rows.iterrows():
+            try:
+                has_hint.append(resolve_contract_hint(row.to_dict(), hints_path=hints_path) is not None)
+            except Exception:
+                has_hint.append(False)
+        hint_mask = pd.Series(has_hint, index=rows.index)
+    else:
+        hint_mask = pd.Series(True, index=rows.index)
+
+    if bucket_key == "top10":
+        pass_mask = top10.ge(threshold)
+        whale_metric = top10
+    elif bucket_key == "either":
+        pass_mask = top10.ge(threshold) | top100.ge(threshold)
+        whale_metric = pd.concat([top10, top100], axis=1).max(axis=1)
+    elif bucket_key == "both":
+        pass_mask = top10.ge(threshold) & top100.ge(threshold)
+        whale_metric = pd.concat([top10, top100], axis=1).min(axis=1)
+    else:
+        pass_mask = top100.ge(threshold)
+        whale_metric = top100
+
+    rows["_whale_top10"] = top10
+    rows["_whale_top100"] = top100
+    rows["_whale_metric"] = whale_metric
+    rows = rows[pass_mask & hint_mask].copy()
+    if rows.empty:
+        return "Whale dominance ranking", [header + "\n\nNo symbols met the whale-dominance threshold in the active scan source."]
+
+    rows["symbol"] = rows["symbol"].astype(str).str.upper().str.strip()
+    rows = rows[rows["symbol"].ne("")]
+    rows = rows.sort_values(["_whale_metric", "_whale_top10", "symbol"], ascending=[False, False, True])
+    rows = rows.drop_duplicates(subset=["symbol"], keep="first")
+    visible = rows.head(min(max(int(limit), 1), 300))
+    hidden_count = max(0, len(rows) - len(visible))
+
+    lines = [
+        header,
+        f"Matches: {len(rows)} | Showing: {len(visible)}" + (f" | Hidden: {hidden_count}" if hidden_count else ""),
+        "",
+        "Candidates: " + " ".join(f"/{symbol}" for symbol in visible["symbol"].tolist()),
+        "",
+    ]
+    for _, row in visible.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        top10_text = f"{float(row['_whale_top10']):.1f}%" if pd.notna(row.get("_whale_top10")) else "n/a"
+        top100_text = f"{float(row['_whale_top100']):.1f}%" if pd.notna(row.get("_whale_top100")) else "n/a"
+        short_pct = _safe_float(row.get("short_account_pct"))
+        short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+        holders = _safe_float(row.get("holder_count"))
+        holder_text = f"{holders:.0f}" if holders is not None else "n/a"
+        terminal_score = _safe_float(row.get("terminal_edge_score"))
+        terminal_text = f"{terminal_score:.0f}" if terminal_score is not None else "n/a"
+        cex_score = _safe_float(row.get("cex_deposit_flow_score"))
+        cex_text = f"{cex_score:.0f}" if cex_score is not None else "n/a"
+        platform = str(row.get("token_platform", "") or row.get("chain", "") or "").strip()
+        platform_text = f" | chain {platform}" if platform else ""
+        lines.append(
+            f"/{symbol} | top100 {top100_text} | top10 {top10_text} | holders {holder_text} | "
+            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text}{platform_text}"
+        )
+    if hidden_count:
+        lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")
+    return "Whale dominance ranking", _chunk_text_lines(lines)
+
+
+def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, list[str]]:
+    scan_mode = _env_value("DISCORD_CORR_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
     frame, source = _fresh_scanner_frame(scan_mode)
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty:
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    if frame.empty:
+        return "BTC low-correlation screen", [f"No live scan, scanner snapshot, or cache exists yet. `{source}`"]
+
+    frame = frame.loc[:, ~frame.columns.duplicated()].copy()
+    corr_column = "corr_to_btc_6m" if "corr_to_btc_6m" in frame.columns else "corr_to_btc" if "corr_to_btc" in frame.columns else ""
+    if not corr_column:
+        cache_frame = _read_csv_if_exists(_cache_path())
+        cache_corr_column = (
+            "corr_to_btc_6m"
+            if "corr_to_btc_6m" in cache_frame.columns
+            else "corr_to_btc"
+            if "corr_to_btc" in cache_frame.columns
+            else ""
+        )
+        if cache_corr_column:
+            frame = cache_frame.loc[:, ~cache_frame.columns.duplicated()].copy()
+            source = "latest Convex cache fallback"
+            corr_column = cache_corr_column
+    if not corr_column or "symbol" not in frame.columns:
+        return (
+            "BTC low-correlation screen",
+            [
+                f"{_cache_age_header(frame, source)}\n\n"
+                "The current scan source does not include BTC-correlation columns. Run a full dashboard scan first."
+            ],
+        )
+
+    max_corr = min(max(float(threshold or 0.0), 0.0), 1.0)
+    corr = pd.to_numeric(frame[corr_column], errors="coerce")
+    window = pd.to_numeric(frame.get("corr_window_days", pd.Series(0, index=frame.index)), errors="coerce").fillna(0)
+    if max_corr > 0.0:
+        selected = frame[corr.notna() & corr.le(max_corr)].copy()
+    else:
+        selected = frame[corr.notna() & corr.lt(0.0)].copy()
+    selected["_discord_corr_to_btc"] = corr.loc[selected.index]
+    selected["_discord_corr_window_days"] = window.loc[selected.index]
+    selected = selected.sort_values(["_discord_corr_to_btc", "symbol"], ascending=[True, True])
+
+    target_window_days = 180
+    threshold_text = f"corr <= {max_corr:.2f}" if max_corr > 0.0 else "corr < 0.00"
+    header = (
+        "BTC low-correlation screen\n"
+        f"{_cache_age_header(frame, source)}\n"
+        f"Threshold: {threshold_text} | Target window: max {target_window_days}d; younger symbols use available overlap."
+    )
+    if selected.empty:
+        return "BTC low-correlation screen", [header + "\n\nNo symbols currently met the BTC-correlation threshold."]
+
+    requested_limit = int(limit or 0)
+    capped_limit = min(max(requested_limit, 0), 300)
+    visible = selected.head(capped_limit) if capped_limit > 0 else selected
+    hidden_count = max(0, len(selected) - len(visible))
+
+    lines = [header, "", f"Matches: {len(selected)}" + (f" | Showing: {len(visible)}" if hidden_count else ""), ""]
+    for _, row in visible.iterrows():
+        symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        corr_value = _safe_float(row.get("_discord_corr_to_btc"))
+        window_days = int(_safe_float(row.get("_discord_corr_window_days")) or 0)
+        window_text = f"used {window_days}d" if window_days > 0 else "used n/a"
+        if 0 < window_days < target_window_days:
+            window_text += " (max available)"
+        line = f"/{symbol} | corr {corr_value:.3f} | {window_text}" if corr_value is not None else f"/{symbol} | corr n/a | {window_text}"
+        short_pct = _safe_float(row.get("short_account_pct"))
+        if short_pct is not None:
+            line += f" | shorts {short_pct:.1f}%"
+        day_return = _safe_float(row.get("day_return_pct"))
+        if day_return is None:
+            day_return = _safe_float(row.get("price_change_24h_pct"))
+        if day_return is not None:
+            line += f" | 24h {day_return:.1f}%"
+        market_type = str(row.get("market_type", "") or "").strip()
+        if market_type:
+            line += f" | {market_type}"
+        lines.append(line)
+    if hidden_count:
+        lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")
+    return "BTC low-correlation screen", _chunk_text_lines(lines)
+
+
+def _normalize_funding_side(side: str) -> str:
+    normalized = str(side or "both").strip().lower().replace("_", "-").replace(" ", "-")
+    if normalized in {"short", "shorts", "short-carry", "shorts-receive", "positive", "pos"}:
+        return "shorts"
+    if normalized in {"long", "longs", "long-carry", "longs-receive", "negative", "neg"}:
+        return "longs"
+    return "both"
+
+
+def _format_signed_pct(value: Any, *, decimals: int = 1) -> str:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return "n/a"
+    if abs(parsed) < 0.5 * (10 ** -decimals):
+        parsed = 0.0
+    sign = "+" if parsed > 0 else ""
+    return f"{sign}{parsed:.{decimals}f}%"
+
+
+def _format_mark_price(value: Any) -> str:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return "n/a"
+    absolute = abs(parsed)
+    if absolute >= 100:
+        text = f"{parsed:.2f}"
+    elif absolute >= 1:
+        text = f"{parsed:.4f}"
+    elif absolute >= 0.01:
+        text = f"{parsed:.6f}"
+    else:
+        text = f"{parsed:.8f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _next_funding_text(next_funding_time: Any) -> str:
+    timestamp = _safe_float(next_funding_time)
+    if timestamp is None or timestamp <= 0:
+        return "n/a"
+    hours = max(0.0, (timestamp - time.time() * 1000.0) / 3_600_000.0)
+    if hours >= 24.0:
+        return f"{hours / 24.0:.1f}d"
+    if hours >= 1.0:
+        return f"{hours:.1f}h"
+    return f"{hours * 60.0:.0f}m"
+
+
+def _funding_account_percentages(client: BinanceFuturesPublic, symbol: str, *, period: str) -> tuple[float | None, float | None]:
+    try:
+        ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=1)
+    except Exception:
+        return None, None
+    if not ratio_rows:
+        return None, None
+    latest = ratio_rows[-1]
+    long_pct = _safe_float(latest.get("longAccount"))
+    short_pct = _safe_float(latest.get("shortAccount"))
+    if long_pct is not None and abs(long_pct) <= 1.0:
+        long_pct *= 100.0
+    if short_pct is not None and abs(short_pct) <= 1.0:
+        short_pct *= 100.0
+    return long_pct, short_pct
+
+
+def _format_funding_row(row: dict[str, Any]) -> str:
+    interval_hours = _safe_float(row.get("funding_interval_hours")) or 8.0
+    interval_text = f"{interval_hours:.0f}h" if abs(interval_hours - round(interval_hours)) < 0.01 else f"{interval_hours:.1f}h"
+    parts = [
+        f"/{row.get('symbol', 'UNKNOWN')}",
+        f"funding {_format_signed_pct(row.get('funding_pct'), decimals=4)}/{interval_text}",
+        f"ann {_format_signed_pct(row.get('annualized_funding_pct'), decimals=1)}",
+        f"mark {_format_mark_price(row.get('mark_price'))}",
+    ]
+    change_pct = _safe_float(row.get("price_change_24h_pct"))
+    if change_pct is not None:
+        parts.append(f"24h {_format_signed_pct(change_pct, decimals=1)}")
+    quote_volume = _safe_float(row.get("quote_volume_24h"))
+    if quote_volume is not None:
+        parts.append(f"vol {_fmt_compact_number(quote_volume)}")
+    short_pct = _safe_float(row.get("short_account_pct"))
+    long_pct = _safe_float(row.get("long_account_pct"))
+    if short_pct is not None:
+        parts.append(f"shorts {short_pct:.1f}%")
+    if long_pct is not None:
+        parts.append(f"longs {long_pct:.1f}%")
+    parts.append(f"next {_next_funding_text(row.get('next_funding_time'))}")
+    return " | ".join(parts)
+
+
+def _load_funding_leaderboard(
+    limit: int,
+    *,
+    side: str = "both",
+    period: str = "1h",
+    min_abs_funding_pct: float = 0.0,
+) -> tuple[str, list[str]]:
+    normalized_side = _normalize_funding_side(side)
+    capped_limit = min(max(int(limit or 10), 1), 30)
+    minimum_abs = max(0.0, float(min_abs_funding_pct or 0.0))
+    ratio_period = str(period or "1h").strip() or "1h"
+
+    try:
+        client = BinanceFuturesPublic(
+            timeout=_env_int("DISCORD_FUNDING_BINANCE_TIMEOUT_SECONDS", 10, minimum=3),
+            requests_per_second=float(_env_value("DISCORD_FUNDING_REQUESTS_PER_SECOND", "8")),
+            retries=_env_int("DISCORD_FUNDING_BINANCE_RETRIES", 2, minimum=1),
+        )
+        mark_rows = client.mark_price()
+    except Exception as exc:
+        return "Funding carry leaderboard", [f"Live Binance funding scan unavailable: {type(exc).__name__}: {exc}"]
+
+    try:
+        ticker_rows = client.ticker_24hr()
+    except Exception:
+        ticker_rows = []
+    ticker_by_symbol = {
+        str(item.get("symbol", "")).upper(): item
+        for item in ticker_rows
+        if str(item.get("symbol", "")).upper().endswith("USDT")
+    }
+
+    interval_by_symbol: dict[str, float] = {}
+    try:
+        for item in client.funding_info():
+            symbol = str(item.get("symbol", "")).upper().strip()
+            interval = _safe_float(item.get("fundingIntervalHours"))
+            if symbol and interval is not None and interval > 0:
+                interval_by_symbol[symbol] = interval
+    except Exception:
+        pass
+
+    rows: list[dict[str, Any]] = []
+    for item in mark_rows:
+        symbol = str(item.get("symbol", "")).upper().strip()
+        if not symbol.endswith("USDT"):
+            continue
+        funding_rate = _safe_float(item.get("lastFundingRate"))
+        if funding_rate is None:
+            continue
+        funding_pct = funding_rate * 100.0
+        if abs(funding_pct) < minimum_abs:
+            continue
+        interval_hours = interval_by_symbol.get(symbol, 8.0)
+        ticker = ticker_by_symbol.get(symbol, {})
+        annualized = funding_pct * (24.0 / max(interval_hours, 1e-9)) * 365.0
+        rows.append(
+            {
+                "symbol": symbol,
+                "funding_pct": funding_pct,
+                "annualized_funding_pct": annualized,
+                "funding_interval_hours": interval_hours,
+                "next_funding_time": item.get("nextFundingTime"),
+                "mark_price": item.get("markPrice"),
+                "price_change_24h_pct": ticker.get("priceChangePercent"),
+                "quote_volume_24h": ticker.get("quoteVolume"),
+            }
+        )
+
+    positive_rows = sorted((row for row in rows if _safe_float(row.get("funding_pct")) and row["funding_pct"] > 0), key=lambda row: (-row["funding_pct"], row["symbol"]))
+    negative_rows = sorted((row for row in rows if _safe_float(row.get("funding_pct")) and row["funding_pct"] < 0), key=lambda row: (row["funding_pct"], row["symbol"]))
+    selected_rows = (
+        positive_rows[:capped_limit] + negative_rows[:capped_limit]
+        if normalized_side == "both"
+        else positive_rows[:capped_limit]
+        if normalized_side == "shorts"
+        else negative_rows[:capped_limit]
+    )
+
+    if _env_bool("DISCORD_FUNDING_INCLUDE_ACCOUNT_RATIO", True):
+        for row in selected_rows:
+            long_pct, short_pct = _funding_account_percentages(client, str(row.get("symbol", "")), period=ratio_period)
+            row["long_account_pct"] = long_pct
+            row["short_account_pct"] = short_pct
+
+    scanned_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines = [
+        "Funding carry leaderboard",
+        f"Source: live Binance futures premiumIndex at {scanned_at}",
+        "Read: positive funding = longs pay shorts; negative funding = shorts pay longs. Funding is current/last premiumIndex rate.",
+        f"Side: {normalized_side} | Limit per side: {capped_limit} | Account-ratio period: {ratio_period} | Min abs funding: {minimum_abs:.4f}%",
+        "",
+    ]
+
+    if normalized_side in {"both", "shorts"}:
+        visible = positive_rows[:capped_limit]
+        lines.append("Short-carry candidates (positive funding; shorts receive)")
+        if visible:
+            for row in visible:
+                lines.append(_format_funding_row(row))
+        else:
+            lines.append("No positive-funding USDT perpetuals met the requested floor.")
+        lines.append("")
+
+    if normalized_side in {"both", "longs"}:
+        visible = negative_rows[:capped_limit]
+        lines.append("Long-carry candidates (negative funding; longs receive)")
+        if visible:
+            for row in visible:
+                lines.append(_format_funding_row(row))
+        else:
+            lines.append("No negative-funding USDT perpetuals met the requested floor.")
+
+    if not rows:
+        lines.append("No USDT perpetual funding rows met the requested floor.")
+    return "Funding carry leaderboard", _chunk_text_lines(lines)
+
+
+def _load_cex_flow_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    require_venue_gate: bool = True,
+    title_prefix: str = "Wallet-to-CEX flow monitor",
+) -> tuple[str, list[str]]:
+    scan_mode = _env_value("DISCORD_CEX_FLOW_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    effective_min_transfer = (
+        max(0.0, float(min_tokens))
+        if min_tokens is not None and _safe_float(min_tokens) is not None and float(min_tokens) > 0
+        else _env_float("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", 500_000.0, minimum=0.0)
+    )
+    effective_lookback = (
+        max(1, int(lookback_hours))
+        if lookback_hours is not None and _safe_float(lookback_hours) is not None and int(lookback_hours) > 0
+        else int(_env_float("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", 24.0, minimum=1.0))
+    )
+    frame, source = _fresh_scanner_frame(
+        scan_mode,
+        cex_min_transfer_tokens=effective_min_transfer,
+        cex_lookback_hours=effective_lookback,
+    )
     if frame.empty and _source_is_unavailable(source):
         frame = _latest_snapshot_frame()
         source = "latest full scanner snapshot fallback"
@@ -635,33 +1451,71 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
         frame = _read_csv_if_exists(_cache_path())
         source = "latest Convex cache fallback"
 
-    lookback_hours = _env_float("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", 24.0, minimum=1.0)
-    min_transfer = _env_float("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", 500_000.0, minimum=0.0)
     min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
     min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
     header = (
-        "Wallet-to-CEX flow monitor\n"
+        f"{title_prefix}\n"
         "The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.\n"
         f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
-        f"Min transfer: {_fmt_compact_number(min_transfer)} tokens | Lookback: {lookback_hours:.0f}h | "
-        f"{bitget_gate_venue_header(allow_cex_flow_targets=True)}"
+        f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback:.0f}h | "
+        f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
+    if "fallback" in source.lower():
+        header += "\nNote: fallback cache may have been generated with a different transfer threshold."
     if frame.empty:
-        return "Wallet-to-CEX flow monitor", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+        return title_prefix, [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
 
     score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
     flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
-    flow = frame[flag | score.gt(0.0)].copy()
-    flow = apply_bitget_gate_venue_gate(flow, allow_cex_flow_targets=True)
+    raw_flow = frame[flag | score.gt(0.0)].copy()
+    raw_flow_count = len(raw_flow)
+    flow = apply_bitget_gate_venue_gate(raw_flow, allow_cex_flow_targets=True) if require_venue_gate else raw_flow.copy()
+    header += f"\nFlow rows before venue gate: {raw_flow_count} | After venue gate: {len(flow)}"
+    diagnostic_lines = _cex_flow_scan_diagnostic_lines(
+        frame,
+        min_top10=min_top10,
+        min_top100=min_top100,
+    )
+    diagnostic_text = "\n".join(diagnostic_lines)
+    header += "\n" + diagnostic_text
     if flow.empty:
+        if raw_flow_count > 0 and require_venue_gate:
+            message = (
+                "Concentration-gated CEX transfer flow was found, but none of those rows also met the Bitget/Gate venue gate. "
+                "Retry with `require_venue_gate:false` to inspect all labelled CEX-flow rows."
+            )
+        elif "explorer blocked" in diagnostic_text.lower():
+            message = (
+                "No verified labelled CEX token-transfer rows were produced because explorer requests were blocked. "
+                "Attempted-symbol rows are query attempts at the requested transfer floor, not confirmed transfers."
+            )
+        else:
+            message = (
+                "No concentration-gated labelled CEX token-transfer flow was found in the active scan coverage. "
+                "That can mean no matching transfers, missing contract hints, unsupported explorer data, or rows outside the scanned universe."
+            )
+        lines = [header, "", message]
+        attempted_lines = _cex_flow_attempt_symbol_lines(
+            frame,
+            limit=limit,
+            min_transfer_tokens=effective_min_transfer,
+        )
+        if attempted_lines:
+            lines.extend(["", *attempted_lines])
         return (
-            "Wallet-to-CEX flow monitor",
-            [header + "\n\nNo concentration-gated large CEX token-transfer flow currently met the Bitget/Gate venue gate."],
+            title_prefix,
+            _chunk_text_lines(lines),
         )
 
     flow["_cex_flow_score"] = pd.to_numeric(flow.get("cex_deposit_flow_score"), errors="coerce").fillna(0.0)
-    flow["_cex_total_pct"] = pd.to_numeric(flow.get("cex_deposit_24h_total_pct_supply"), errors="coerce").fillna(0.0)
-    flow["_cex_count"] = pd.to_numeric(flow.get("cex_deposit_24h_count"), errors="coerce").fillna(0.0)
+    flow["_cex_total_pct"] = pd.to_numeric(
+        flow.get("cex_deposit_24h_total_pct_supply", pd.Series(0.0, index=flow.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    flow["_cex_count"] = pd.to_numeric(
+        flow.get("cex_deposit_24h_count", pd.Series(0.0, index=flow.index)),
+        errors="coerce",
+    ).fillna(0.0)
     flow = flow.sort_values(
         ["_cex_flow_score", "_cex_total_pct", "_cex_count", "symbol"],
         ascending=[False, False, False, True],
@@ -672,7 +1526,1200 @@ def _load_cex_flow_list(limit: int) -> tuple[str, list[str]]:
     for _, row in flow.iterrows():
         lines.append(build_cex_flow_discord_block(row, max_chars=900))
         lines.append("")
-    return "Wallet-to-CEX flow monitor", _chunk_text_lines(lines)
+    return title_prefix, _chunk_text_lines(lines)
+
+
+def _load_cex_flow_diagnostics(
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    require_venue_gate: bool = True,
+    symbol_limit: int = 15,
+) -> tuple[str, str]:
+    scan_mode = _env_value("DISCORD_CEX_FLOW_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    effective_min_transfer = (
+        max(0.0, float(min_tokens))
+        if min_tokens is not None and _safe_float(min_tokens) is not None and float(min_tokens) > 0
+        else _env_float("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", 500_000.0, minimum=0.0)
+    )
+    effective_lookback = (
+        max(1, int(lookback_hours))
+        if lookback_hours is not None and _safe_float(lookback_hours) is not None and int(lookback_hours) > 0
+        else int(_env_float("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", 24.0, minimum=1.0))
+    )
+    frame, source = _fresh_scanner_frame(
+        scan_mode,
+        cex_min_transfer_tokens=effective_min_transfer,
+        cex_lookback_hours=effective_lookback,
+    )
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty and _source_is_unavailable(source):
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+
+    min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
+    min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
+    header = (
+        "CEX-flow scan diagnostics\n"
+        f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
+        f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback:.0f}h | "
+        f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
+    )
+    if "fallback" in source.lower():
+        header += "\nNote: fallback cache may have been generated with a different transfer threshold."
+    if frame.empty:
+        return "CEX-flow scan diagnostics", header + "\n\nNo live scan, scanner snapshot, or cache exists yet."
+
+    score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
+    raw_flow = frame[flag | score.gt(0.0)].copy()
+    flow = apply_bitget_gate_venue_gate(raw_flow, allow_cex_flow_targets=True) if require_venue_gate else raw_flow.copy()
+    lines = [
+        header,
+        f"Flow rows before venue gate: {len(raw_flow)} | After venue gate: {len(flow)}",
+        *_cex_flow_scan_diagnostic_lines(frame, min_top10=min_top10, min_top100=min_top100),
+        "",
+        *_cex_flow_attempt_symbol_lines(
+            frame,
+            limit=symbol_limit,
+            min_transfer_tokens=effective_min_transfer,
+        ),
+        "",
+        "Read: zero raw flow means no verified labelled CEX-transfer rows were produced.",
+        "When HTTP 403 dominates, the scanner tries Etherscan V2 token-transfer APIs; label coverage then becomes the next bottleneck.",
+        "Blocked attempted-symbol rows are query attempts at the requested transfer floor, not confirmed transfers.",
+        "Use `/flowcoin symbol:<symbol>` for single-coin detail/query URL and `/flowhealth` for API-key/address-label coverage.",
+    ]
+    return "CEX-flow scan diagnostics", "\n".join(lines)[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def _load_early_flow_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    require_venue_gate: bool = True,
+) -> tuple[str, list[str]]:
+    default_min = _env_float("DISCORD_EARLY_FLOW_MIN_TOKENS", 20_000.0, minimum=0.0)
+    return _load_cex_flow_list(
+        limit,
+        min_tokens=default_min if min_tokens is None else min_tokens,
+        lookback_hours=lookback_hours,
+        require_venue_gate=require_venue_gate,
+        title_prefix="Early wallet-to-CEX flow sweep",
+    )
+
+
+def _load_symbol_cex_flow(symbol_query: str, *, min_tokens: float | None = None, lookback_hours: int | None = None) -> tuple[str, str]:
+    symbol = _normalize_symbol_query(symbol_query)
+    if not symbol:
+        return "Symbol CEX flow", "Use `/flowcoin symbol:PLAYUSDT min_tokens:20000`."
+    scan_mode = _env_value("DISCORD_CEX_FLOW_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    effective_min_transfer = (
+        max(0.0, float(min_tokens))
+        if min_tokens is not None and _safe_float(min_tokens) is not None and float(min_tokens) > 0
+        else _env_float("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", 500_000.0, minimum=0.0)
+    )
+    effective_lookback = (
+        max(1, int(lookback_hours))
+        if lookback_hours is not None and _safe_float(lookback_hours) is not None and int(lookback_hours) > 0
+        else int(_env_float("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", 24.0, minimum=1.0))
+    )
+    frame, source = _fresh_scanner_frame(
+        scan_mode,
+        cex_min_transfer_tokens=effective_min_transfer,
+        cex_lookback_hours=effective_lookback,
+    )
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty and _source_is_unavailable(source):
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    row = _row_for_symbol(frame, symbol)
+    if row is None:
+        return f"{symbol} CEX flow", f"No scan row found for {symbol}. Source: {source or 'unavailable'}"
+    header = (
+        f"Source: {source}\n"
+        f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
+        f"{bitget_gate_venue_header(allow_cex_flow_targets=True)}"
+    )
+    if "fallback" in source.lower():
+        header += "\nNote: fallback cache may have been generated with a different transfer threshold."
+    return f"{symbol} CEX flow", (header + "\n\n" + build_cex_flow_discord_block(row, max_chars=1500))[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def _cex_scan_frame_for_commands(
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+) -> tuple[pd.DataFrame, str, float, int]:
+    scan_mode = _env_value("DISCORD_CEX_FLOW_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    effective_min_transfer = (
+        max(0.0, float(min_tokens))
+        if min_tokens is not None and _safe_float(min_tokens) is not None and float(min_tokens) > 0
+        else _env_float("CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS", 500_000.0, minimum=0.0)
+    )
+    effective_lookback = (
+        max(1, int(lookback_hours))
+        if lookback_hours is not None and _safe_float(lookback_hours) is not None and int(lookback_hours) > 0
+        else int(_env_float("CEX_DEPOSIT_FLOW_LOOKBACK_HOURS", 24.0, minimum=1.0))
+    )
+    frame, source = _fresh_scanner_frame(
+        scan_mode,
+        cex_min_transfer_tokens=effective_min_transfer,
+        cex_lookback_hours=effective_lookback,
+    )
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty and _source_is_unavailable(source):
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    return frame, source, effective_min_transfer, effective_lookback
+
+
+def _load_flow_stress_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    require_venue_gate: bool = True,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    header = (
+        "CEX inventory-stress monitor\n"
+        f"Source: {source} | Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | "
+        f"Lookback: {effective_lookback}h | "
+        f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
+    )
+    if frame.empty:
+        return "CEX inventory-stress monitor", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    stress = pd.to_numeric(
+        frame.get("cex_deposit_inventory_stress_score", pd.Series(0.0, index=frame.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    rows = frame[(stress.gt(0.0)) | (score.gt(0.0))].copy()
+    raw_count = len(rows)
+    if require_venue_gate and not rows.empty:
+        rows = apply_bitget_gate_venue_gate(rows, allow_cex_flow_targets=True)
+    header += f"\nInventory-stress rows before venue gate: {raw_count} | After venue gate: {len(rows)}"
+    if rows.empty:
+        return "CEX inventory-stress monitor", [header + "\n\nNo CEX inventory-stress rows found in the active scan coverage."]
+    rows["_flow_stress"] = stress.loc[rows.index]
+    rows["_flow_score"] = score.loc[rows.index]
+    rows = rows.sort_values(["_flow_stress", "_flow_score", "symbol"], ascending=[False, False, True]).head(min(max(int(limit), 1), 100))
+    lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
+    for _, row in rows.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        stress_value = _safe_float(row.get("cex_deposit_inventory_stress_score")) or 0.0
+        flow_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
+        targets = _clip_text(row.get("cex_deposit_24h_target_exchanges", ""), 50) or "labelled CEX"
+        notional = _fmt_compact_number(row.get("cex_deposit_24h_notional_usd"))
+        depth_pct = _safe_float(row.get("cex_deposit_24h_notional_to_ask_depth_pct"))
+        depth_text = f" | deposits/ask {depth_pct:.1f}%" if depth_pct is not None else ""
+        source_text = _clip_text(row.get("cex_deposit_flow_source", ""), 40)
+        note = _clip_text(row.get("cex_deposit_inventory_stress_note", "") or row.get("cex_deposit_flow_note", ""), 160)
+        lines.append(
+            f"/{symbol} | stress {stress_value:.0f}/100 | flow {flow_score:.0f}/100 | {targets} | "
+            f"notional {notional}{depth_text} | source {source_text or 'n/a'}"
+        )
+        if note:
+            lines.append(f"  {note}")
+    return "CEX inventory-stress monitor", _chunk_text_lines(lines)
+
+
+def _load_flow_blocked_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    header = (
+        "CEX-flow blocked/error rows\n"
+        f"Source: {source} | Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h"
+    )
+    if frame.empty:
+        return "CEX-flow blocked/error rows", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    error_text = _text_series(frame, "cex_deposit_flow_error")
+    rows = frame[error_text.ne("")].copy()
+    if rows.empty:
+        return "CEX-flow blocked/error rows", [header + "\n\nNo CEX-flow blocked/error rows in the active scan."]
+    rows["_http403"] = error_text.loc[rows.index].str.contains("HTTP 403", case=False, regex=False)
+    rows["_symbol"] = rows.get("symbol", pd.Series("", index=rows.index)).astype(str)
+    rows = rows.sort_values(["_http403", "_symbol"], ascending=[False, True]).head(min(max(int(limit), 1), 100))
+    lines = [header, f"Blocked/error rows: {len(frame[error_text.ne('')])}", ""]
+    for _, row in rows.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        source_url = _clip_text(row.get("cex_deposit_24h_source_url", ""), 90)
+        source_kind = _clip_text(row.get("cex_deposit_flow_source", ""), 50)
+        error = _clip_text(row.get("cex_deposit_flow_error", ""), 170)
+        lines.append(f"/{symbol} | {error} | source {source_kind or 'n/a'}")
+        if source_url:
+            lines.append(f"  {source_url}")
+    lines.append("")
+    lines.append("Read: these are data-source failures or no labelled API matches, not proof that CEX flow is absent.")
+    return "CEX-flow blocked/error rows", _chunk_text_lines(lines)
+
+
+def _load_flow_health(*, min_tokens: float | None = None, lookback_hours: int | None = None, symbol_limit: int = 10) -> tuple[str, str]:
+    title, diagnostics = _load_cex_flow_diagnostics(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+        require_venue_gate=False,
+        symbol_limit=symbol_limit,
+    )
+    api_lines = ["", "API fallback readiness:"]
+    for chain in sorted(TOKEN_TRANSFER_API_CONFIGS):
+        env_keys = token_transfer_api_key_envs(chain)
+        present_keys = [env_key for env_key in env_keys if _env_value(env_key, "")]
+        key_text = "key present" if present_keys else "no key"
+        env_text = " or ".join(env_keys) if env_keys else "unsupported"
+        api_lines.append(f"- {chain}: {key_text} ({env_text})")
+    address_book = load_cex_address_book()
+    api_lines.append(f"- CEX address labels loaded: {len(address_book)}")
+    api_lines.append("- Configure CEX_ADDRESS_LABELS or CEX_ADDRESS_BOOK_FILE to classify API token-transfer destinations without scraping explorer labels.")
+    return "CEX-flow health", (diagnostics + "\n" + "\n".join(api_lines))[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+TARGET_CEX_PATTERN = re.compile(r"\b(?:binance|bitget|gate(?:\.io|io)?)\b", flags=re.IGNORECASE)
+
+
+def _target_cex_text(row: pd.Series) -> str:
+    targets = _clip_text(row.get("cex_deposit_24h_target_exchanges", ""), 60)
+    return targets if TARGET_CEX_PATTERN.search(targets) else ""
+
+
+def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
+    setup_score = max(
+        _safe_float(row.get("dormant_short_fuse_score")) or 0.0,
+        _safe_float(row.get("pre_pump_precision_score")) or 0.0,
+        _safe_float(row.get("rave_lab_setup_score")) or 0.0,
+        _safe_float(row.get("terminal_pre_ignition_quality_score")) or 0.0,
+        _safe_float(row.get("timing_early_score")) or 0.0,
+    )
+    range_pct = _safe_float(row.get("range_24h_pct")) or 0.0
+    day_move = _safe_float(row.get("day_return_pct"))
+    if day_move is None:
+        day_move = _safe_float(row.get("price_change_24h_pct")) or 0.0
+    too_late = _safe_float(row.get("timing_too_late_score")) or 0.0
+    volatile = range_pct >= max_range_pct or abs(day_move) >= max_day_move_pct or too_late >= 65.0
+    if volatile:
+        reasons: list[str] = []
+        if range_pct >= max_range_pct:
+            reasons.append(f"24h range {range_pct:.1f}%")
+        if abs(day_move) >= max_day_move_pct:
+            reasons.append(f"24h move {day_move:.1f}%")
+        if too_late >= 65.0:
+            reasons.append(f"late score {too_late:.0f}")
+        return "volatile/late", False, setup_score, ", ".join(reasons[:3])
+    if setup_score >= 55.0:
+        return "dormant candidate", True, setup_score, f"setup {setup_score:.0f}"
+    if setup_score >= 35.0:
+        return "early watch", True, setup_score, f"setup {setup_score:.0f}"
+    return "structure unclear", False, setup_score, f"setup {setup_score:.0f}"
+
+
+def _load_seth_flow_playbook(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    min_short_pct: float = 50.0,
+    require_dormant: bool = True,
+    require_venue_gate: bool = False,
+    max_range_pct: float = 35.0,
+    max_day_move_pct: float = 30.0,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
+    min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
+    header = (
+        "Seth flow checklist\n"
+        f"Source: {source} | Confirmed target-CEX flow only | Min transfer: >= {_fmt_compact_number(effective_min_transfer)} tokens | "
+        f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
+        f"Short gate: >= {min_short_pct:.1f}% | Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
+    )
+    if "fallback" in source.lower():
+        header += "\nNote: fallback cache may have been generated with a different transfer threshold."
+    if frame.empty:
+        return "Seth flow checklist", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+
+    frame = apply_timing_model(apply_terminal_model(frame.loc[:, ~frame.columns.duplicated()].copy()))
+    score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
+    count = pd.to_numeric(frame.get("cex_deposit_24h_count", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    max_amount = pd.to_numeric(frame.get("cex_deposit_24h_max_amount", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    targets = _text_series(frame, "cex_deposit_24h_target_exchanges")
+    target_mask = targets.str.contains(TARGET_CEX_PATTERN, regex=True)
+    flow_mask = (flag | score.gt(0.0)) & count.gt(0.0) & max_amount.ge(effective_min_transfer) & target_mask
+    raw_target_flow = frame[flow_mask].copy()
+    if require_venue_gate and not raw_target_flow.empty:
+        raw_target_flow = apply_bitget_gate_venue_gate(raw_target_flow, allow_cex_flow_targets=True)
+
+    if raw_target_flow.empty:
+        raw_count = int(((flag | score.gt(0.0)) & count.gt(0.0)).sum())
+        target_count = int(flow_mask.sum())
+        return (
+            "Seth flow checklist",
+            [
+                header
+                + f"\n\nConfirmed CEX flow rows: {raw_count} | Target Binance/Gate/Bitget rows: {target_count}"
+                + "\nNo confirmed target-CEX flow rows met the requested floor. Blocked/error rows are not transfer confirmations."
+            ],
+        )
+
+    rows = raw_target_flow.copy()
+    top10 = pd.to_numeric(rows.get("top10_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
+    top100 = pd.to_numeric(rows.get("top100_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
+    shorts = pd.to_numeric(rows.get("short_account_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
+    rows["_seth_whale_pass"] = top10.ge(min_top10) | top100.ge(min_top100)
+    rows["_seth_short_pass"] = shorts.ge(min_short_pct)
+    structure_states: list[str] = []
+    structure_passes: list[bool] = []
+    structure_scores: list[float] = []
+    structure_reasons: list[str] = []
+    for _, row in rows.iterrows():
+        state, passed, setup_score, reason = _seth_structure_state(
+            row,
+            max_range_pct=max_range_pct,
+            max_day_move_pct=max_day_move_pct,
+        )
+        structure_states.append(state)
+        structure_passes.append(passed)
+        structure_scores.append(setup_score)
+        structure_reasons.append(reason)
+    rows["_seth_structure_state"] = structure_states
+    rows["_seth_structure_pass"] = structure_passes
+    rows["_seth_structure_score"] = structure_scores
+    rows["_seth_structure_reason"] = structure_reasons
+    rows["_seth_flow_score"] = score.loc[rows.index]
+    rows["_seth_short_pct"] = shorts.fillna(0.0)
+    rows["_seth_score"] = (
+        rows["_seth_flow_score"] * 0.38
+        + rows["_seth_structure_score"] * 0.24
+        + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.18
+        + top10.fillna(0.0).clip(upper=100.0) * 0.10
+        + top100.fillna(0.0).clip(upper=100.0) * 0.10
+    )
+    rows["_seth_all_pass"] = rows["_seth_whale_pass"] & rows["_seth_short_pass"] & rows["_seth_structure_pass"]
+    visible = rows[rows["_seth_all_pass"]].copy() if require_dormant else rows.copy()
+    if visible.empty:
+        visible = rows.sort_values(["_seth_short_pass", "_seth_whale_pass", "_seth_score", "symbol"], ascending=[False, False, False, True]).head(
+            min(max(int(limit), 1), 100)
+        )
+        empty_note = "\nNo rows passed every gate; showing nearest confirmed target-CEX flow rows for diagnosis."
+    else:
+        empty_note = ""
+    visible = visible.sort_values(["_seth_all_pass", "_seth_score", "_seth_flow_score", "symbol"], ascending=[False, False, False, True]).head(
+        min(max(int(limit), 1), 100)
+    )
+
+    pass_count = int(rows["_seth_all_pass"].sum())
+    lines = [
+        header,
+        f"Confirmed target-CEX flow rows: {len(raw_target_flow)} | Whale+short+dormant pass: {pass_count}{empty_note}",
+        "",
+        "Checklist: 1 flow -> 2 whale dominated -> 3 >50% short accounts -> 4 dormant/early, not already wild -> 5 research state.",
+        "",
+        "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in visible.get("symbol", pd.Series(dtype='object')).tolist()),
+        "",
+    ]
+    for _, row in visible.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        flow_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
+        cex_count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+        total_amount = _fmt_compact_number(row.get("cex_deposit_24h_token_amount"))
+        max_transfer = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+        short_pct = _safe_float(row.get("short_account_pct")) or 0.0
+        row_top10 = _safe_float(row.get("top10_holder_pct"))
+        row_top100 = _safe_float(row.get("top100_holder_pct"))
+        range_pct = _safe_float(row.get("range_24h_pct"))
+        day_move = _safe_float(row.get("day_return_pct"))
+        if day_move is None:
+            day_move = _safe_float(row.get("price_change_24h_pct"))
+        targets_text = _target_cex_text(row) or "target CEX"
+        state = str(row.get("_seth_structure_state", "structure unclear"))
+        action = "RESEARCH: dormant candidate; wait for absorption/reclaim evidence"
+        if not bool(row.get("_seth_whale_pass")):
+            action = "WAIT: whale gate failed"
+        elif not bool(row.get("_seth_short_pass")):
+            action = "WAIT: short-account gate failed"
+        elif state == "volatile/late":
+            action = "SKIP: already volatile/late"
+        elif not bool(row.get("_seth_structure_pass")):
+            action = "WAIT: structure not clean enough"
+        range_text = f"{range_pct:.1f}%" if range_pct is not None else "n/a"
+        day_text = f"{day_move:.1f}%" if day_move is not None else "n/a"
+        top10_text = f"{row_top10:.1f}%" if row_top10 is not None else "n/a"
+        top100_text = f"{row_top100:.1f}%" if row_top100 is not None else "n/a"
+        lines.append(
+            f"/{symbol} | {action} | flow {flow_score:.0f}/100 | {cex_count} tx into {targets_text} | "
+            f"total {total_amount}, max {max_transfer} | top10 {top10_text}, top100 {top100_text} | "
+            f"shorts {short_pct:.1f}% | structure {state}"
+        )
+        lines.append(
+            f"  chart gate: range {range_text}, 24h {day_text}, {_clip_text(row.get('_seth_structure_reason', ''), 80)} | "
+            "not a trade instruction; validate OI/volume and price absorption."
+        )
+    return "Seth flow checklist", _chunk_text_lines(lines)
+
+
+def _num_series(frame: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[column], errors="coerce").fillna(default).astype("float64")
+
+
+def _max_series(frame: pd.DataFrame, *columns: str, default: float = 0.0) -> pd.Series:
+    parts = [_num_series(frame, column, default=float("nan")) for column in columns if column in frame.columns]
+    if not parts:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    return pd.concat(parts, axis=1).max(axis=1).fillna(default).astype("float64")
+
+
+def _score_linear_series(series: pd.Series, low: float, high: float, *, invert: bool = False) -> pd.Series:
+    if high <= low:
+        return pd.Series(0.0, index=series.index, dtype="float64")
+    scored = ((series.astype("float64") - low) / (high - low) * 100.0).clip(lower=0.0, upper=100.0)
+    return 100.0 - scored if invert else scored
+
+
+def _first_row_float(row: pd.Series, *columns: str) -> float | None:
+    for column in columns:
+        value = _safe_float(row.get(column))
+        if value is not None:
+            return value
+    return None
+
+
+def _confirmed_cex_flow_mask(frame: pd.DataFrame, *, min_transfer_tokens: float = 0.0, target_only: bool = True) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    score = _num_series(frame, "cex_deposit_flow_score")
+    flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
+    count = _num_series(frame, "cex_deposit_24h_count")
+    max_amount = _num_series(frame, "cex_deposit_24h_max_amount")
+    targets = _text_series(frame, "cex_deposit_24h_target_exchanges")
+    flow_mask = (flag | score.gt(0.0)) & count.gt(0.0) & max_amount.ge(max(0.0, float(min_transfer_tokens or 0.0)))
+    if target_only:
+        flow_mask = flow_mask & targets.str.contains(TARGET_CEX_PATTERN, regex=True)
+    return flow_mask.fillna(False)
+
+
+def _whale_component_series(frame: pd.DataFrame) -> pd.Series:
+    top10 = _safe_pct_series(frame, "top10_holder_pct")
+    top100 = _safe_pct_series(frame, "top100_holder_pct")
+    return pd.concat(
+        [
+            _score_linear_series(top10.fillna(0.0), 55.0, 92.0),
+            _score_linear_series(top100.fillna(0.0), 82.0, 99.5),
+            _num_series(frame, "centralized_ownership_score"),
+            _num_series(frame, "terminal_control_plane_score"),
+            _score_linear_series(_num_series(frame, "cluster_manipulable_supply_pct"), 8.0, 45.0),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+
+def _safe_pct_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(float("nan"), index=frame.index, dtype="float64")
+    return frame[column].map(_safe_pct).astype("float64")
+
+
+def _goal_score_frame(
+    frame: pd.DataFrame,
+    *,
+    min_transfer_tokens: float = 0.0,
+    min_short_pct: float = 50.0,
+    min_whale_pct: float = 90.0,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    output = apply_timing_model(apply_terminal_model(frame.loc[:, ~frame.columns.duplicated()].copy()))
+    target_flow = _confirmed_cex_flow_mask(output, min_transfer_tokens=min_transfer_tokens, target_only=True)
+    any_flow = _confirmed_cex_flow_mask(output, min_transfer_tokens=min_transfer_tokens, target_only=False)
+    flow_strength = _max_series(
+        output,
+        "cex_deposit_flow_score",
+        "cex_deposit_inventory_stress_score",
+        "terminal_exchange_flow_score",
+    )
+    target_flow_component = flow_strength.where(target_flow, 0.0)
+    whale_component = _whale_component_series(output)
+    float_component = pd.concat(
+        [
+            _num_series(output, "low_float_score"),
+            _num_series(output, "float_trap_score"),
+            _num_series(output, "terminal_float_score"),
+            _num_series(output, "terminal_hidden_float_reflexivity_score"),
+            _score_linear_series(_num_series(output, "fdv_to_market_cap"), 1.8, 12.0),
+            _score_linear_series(_num_series(output, "locked_supply_pct"), 15.0, 85.0),
+        ],
+        axis=1,
+    ).max(axis=1)
+    short_pct = _safe_pct_series(output, "short_account_pct").fillna(_num_series(output, "short_account_pct"))
+    short_component = pd.concat(
+        [
+            _score_linear_series(short_pct, min_short_pct, 72.0),
+            _num_series(output, "short_dominance_score"),
+            _num_series(output, "short_account_build_score"),
+            _num_series(output, "short_liquidation_fuel_score"),
+            _num_series(output, "terminal_short_pressure_score"),
+            _num_series(output, "forced_buying_setup_score"),
+        ],
+        axis=1,
+    ).max(axis=1)
+    structure_component = pd.concat(
+        [
+            _num_series(output, "terminal_pre_ignition_quality_score"),
+            _num_series(output, "timing_score"),
+            _num_series(output, "dormant_short_fuse_score"),
+            _num_series(output, "pre_pump_precision_score"),
+            _num_series(output, "rave_lab_setup_score"),
+            _num_series(output, "accumulation_absorption_score"),
+        ],
+        axis=1,
+    ).max(axis=1)
+    late_risk = pd.concat(
+        [
+            _num_series(output, "timing_too_late_score"),
+            _num_series(output, "convexity_late_penalty"),
+            _num_series(output, "no_chase_penalty_score"),
+            _num_series(output, "exit_fragility_score") * 0.7,
+        ],
+        axis=1,
+    ).max(axis=1)
+    not_late_component = (100.0 - late_risk).clip(lower=0.0, upper=100.0)
+    top10 = _safe_pct_series(output, "top10_holder_pct").fillna(0.0)
+    top100 = _safe_pct_series(output, "top100_holder_pct").fillna(0.0)
+    whale_pass = top10.ge(_env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)) | top100.ge(min_whale_pct)
+    short_pass = short_pct.ge(min_short_pct)
+    float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
+    structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0)
+
+    setup_score = (
+        target_flow_component * 0.23
+        + whale_component * 0.19
+        + float_component * 0.17
+        + short_component * 0.18
+        + structure_component * 0.14
+        + not_late_component * 0.09
+        + target_flow.astype(float) * 4.0
+        + whale_pass.astype(float) * 3.0
+        + short_pass.astype(float) * 3.0
+        + float_pass.astype(float) * 2.0
+    ).clip(lower=0.0, upper=100.0)
+
+    output["_goal_setup_score"] = setup_score
+    output["_goal_target_flow"] = target_flow
+    output["_goal_any_flow"] = any_flow
+    output["_goal_whale_component"] = whale_component
+    output["_goal_float_component"] = float_component
+    output["_goal_short_component"] = short_component
+    output["_goal_structure_component"] = structure_component
+    output["_goal_not_late_component"] = not_late_component
+    output["_goal_whale_pass"] = whale_pass
+    output["_goal_short_pass"] = short_pass
+    output["_goal_float_pass"] = float_pass
+    output["_goal_structure_pass"] = structure_pass
+    output["_goal_all_pass"] = target_flow & whale_pass & short_pass & float_pass & structure_pass
+    return output
+
+
+def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
+    if bool(row.get("_goal_all_pass")) and (_safe_float(row.get("_goal_setup_score")) or 0.0) >= min_score:
+        return "PASS"
+    if not bool(row.get("_goal_target_flow")):
+        return "DATA GAP" if bool(row.get("_goal_any_flow")) or str(row.get("cex_deposit_flow_error", "") or "").strip() else "REJECT"
+    missing: list[str] = []
+    if not bool(row.get("_goal_whale_pass")):
+        missing.append("whale")
+    if not bool(row.get("_goal_short_pass")):
+        missing.append("short")
+    if not bool(row.get("_goal_float_pass")):
+        missing.append("float")
+    if not bool(row.get("_goal_structure_pass")):
+        missing.append("timing")
+    return "WATCH" if missing else "WATCH"
+
+
+def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
+    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    status = _goal_row_status(row, min_score=min_score)
+    score = _safe_float(row.get("_goal_setup_score")) or 0.0
+    targets = _target_cex_text(row) or _clip_text(row.get("cex_deposit_24h_target_exchanges", ""), 36) or "no target CEX"
+    flow_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
+    cex_count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+    max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+    top10 = _safe_pct(row.get("top10_holder_pct"))
+    top100 = _safe_pct(row.get("top100_holder_pct"))
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    float_score = _safe_float(row.get("_goal_float_component")) or 0.0
+    fdv_ratio = _safe_float(row.get("fdv_to_market_cap"))
+    structure = _safe_float(row.get("_goal_structure_component")) or 0.0
+    oi = _safe_float(row.get("oi_delta_pct"))
+    parts = [
+        f"/{symbol}",
+        f"{status}",
+        f"score {score:.0f}",
+        f"flow {flow_score:.0f} {targets} {cex_count}tx max {max_amount}",
+        f"whale t10 {top10:.1f}%" if top10 is not None else "whale t10 n/a",
+        f"t100 {top100:.1f}%" if top100 is not None else "t100 n/a",
+        f"shorts {short_pct:.1f}%" if short_pct is not None else "shorts n/a",
+        f"float {float_score:.0f}",
+    ]
+    if fdv_ratio is not None and fdv_ratio > 0:
+        parts.append(f"FDV/MC {fdv_ratio:.1f}x")
+    parts.append(f"structure {structure:.0f}")
+    if oi is not None:
+        parts.append(f"OI {oi:.1f}%")
+    return " | ".join(parts)
+
+
+def _load_setup_score_list(
+    limit: int,
+    *,
+    min_score: float = 60.0,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    min_short_pct: float = 50.0,
+    min_whale_pct: float = 90.0,
+    strict: bool = True,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    header = (
+        "Insider-structure setup score\n"
+        f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
+        "Target CEX: Binance, Gate.io, Bitget | "
+        f"Gates: top100 >= {min_whale_pct:.1f}% or top10 >= {_env_float('CEX_DEPOSIT_FLOW_MIN_TOP10_PCT', 80.0, minimum=0.0):.1f}%, "
+        f"shorts >= {min_short_pct:.1f}%, low-float/FDV, not-late structure | Strict: {strict}"
+    )
+    if frame.empty:
+        return "Insider-structure setup score", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    scored = _goal_score_frame(
+        frame,
+        min_transfer_tokens=effective_min_transfer,
+        min_short_pct=min_short_pct,
+        min_whale_pct=min_whale_pct,
+    )
+    selected = scored[scored["_goal_setup_score"].ge(max(0.0, float(min_score)))].copy()
+    if strict:
+        selected = selected[selected["_goal_all_pass"]].copy()
+    if selected.empty:
+        nearest = scored.sort_values(["_goal_all_pass", "_goal_setup_score", "symbol"], ascending=[False, False, True]).head(
+            min(max(int(limit), 1), 50)
+        )
+        lines = [
+            header,
+            "",
+            "No rows passed the requested setup-score filters. Nearest rows:",
+            "",
+            *[_setup_score_line(row, min_score=min_score) for _, row in nearest.iterrows()],
+        ]
+        return "Insider-structure setup score", _chunk_text_lines(lines)
+    selected = selected.sort_values(["_goal_setup_score", "_goal_target_flow", "symbol"], ascending=[False, False, True]).head(
+        min(max(int(limit), 1), 100)
+    )
+    lines = [
+        header,
+        f"Matches: {len(selected)} | Read: rank-order evidence, not an execution instruction.",
+        "",
+        "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()),
+        "",
+    ]
+    for _, row in selected.iterrows():
+        lines.append(_setup_score_line(row, min_score=min_score))
+    return "Insider-structure setup score", _chunk_text_lines(lines)
+
+
+def _load_pump_watch_list(
+    limit: int,
+    *,
+    min_score: float = 55.0,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    require_target_flow: bool = False,
+    require_venue_gate: bool = True,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    header = (
+        "Early pump watch\n"
+        f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
+        "Target CEX: Binance, Gate.io, Bitget | "
+        f"Min radar: {float(min_score):.0f} | Target flow required: {require_target_flow} | "
+        f"{'Venue gate: Binance/Bitget/Gate support or confirmed target transfer' if require_venue_gate else 'Venue gate: disabled for this command'}"
+    )
+    if frame.empty:
+        return "Early pump watch", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+
+    scored = frame.loc[:, ~frame.columns.duplicated()].copy()
+    scored = apply_terminal_model(scored)
+    scored = apply_archetype_model(scored)
+    scored = apply_timing_model(scored)
+    scored = apply_early_pump_radar(scored)
+    if require_venue_gate:
+        venue_gate = _boolish_series(scored.get("early_pump_venue_gate", pd.Series(False, index=scored.index)), index=scored.index)
+        scored = scored[venue_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [header + "\n\nNo rows survived the venue gate."]
+
+    score = _num_series(scored, "early_pump_radar_score")
+    target_flow = _boolish_series(scored.get("early_pump_confirmed_target_flow", pd.Series(False, index=scored.index)), index=scored.index)
+    selected = scored[score.ge(max(0.0, float(min_score)))].copy()
+    if require_target_flow:
+        selected = selected[target_flow.loc[selected.index]].copy()
+    if selected.empty:
+        nearest = scored.sort_values(
+            ["early_pump_alert_flag", "early_pump_confirmed_target_flow", "early_pump_radar_score", "symbol"],
+            ascending=[False, False, False, True],
+        ).head(min(max(int(limit), 1), 30))
+        lines = [
+            header,
+            "",
+            "No rows passed the requested pump-watch filters. Nearest rows:",
+            "",
+            *[_pump_watch_line(row) for _, row in nearest.iterrows()],
+        ]
+        return "Early pump watch", _chunk_text_lines(lines)
+
+    selected = selected.sort_values(
+        [
+            "early_pump_alert_flag",
+            "early_pump_confirmed_target_flow",
+            "early_pump_radar_score",
+            "early_pump_flow_score",
+            "early_pump_short_squeeze_score",
+            "symbol",
+        ],
+        ascending=[False, False, False, False, False, True],
+    ).head(min(max(int(limit), 1), 100))
+    target_count = int(_boolish_series(selected.get("early_pump_confirmed_target_flow"), index=selected.index).sum())
+    lines = [
+        header,
+        f"Matches: {len(selected)} | Confirmed target-flow rows: {target_count} | Read: rank-order evidence, not an execution instruction.",
+        "",
+        "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist()),
+        "",
+    ]
+    for _, row in selected.iterrows():
+        lines.append(_pump_watch_line(row))
+    return "Early pump watch", _chunk_text_lines(lines)
+
+
+def _pump_watch_line(row: pd.Series) -> str:
+    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    radar = _safe_float(row.get("early_pump_radar_score")) or 0.0
+    state = _clip_text(row.get("early_pump_state", ""), 32) or "No edge"
+    signal = _clip_text(row.get("early_pump_primary_signal", ""), 44) or "signal n/a"
+    targets = _target_cex_text(row) or "no target flow"
+    flow_score = _safe_float(row.get("early_pump_flow_score")) or 0.0
+    cex_count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+    max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+    top10 = _safe_pct(row.get("top10_holder_pct"))
+    top100 = _safe_pct(row.get("top100_holder_pct"))
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
+    top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
+    short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    float_score = _safe_float(row.get("early_pump_float_score")) or 0.0
+    timing = _safe_float(row.get("early_pump_timing_score")) or 0.0
+    not_late = _safe_float(row.get("early_pump_not_late_score")) or 0.0
+    archetype = _clip_text(row.get("archetype_best_match", ""), 36)
+    next_check = _clip_text(row.get("early_pump_next_check", ""), 96)
+    archetype_suffix = f" | {archetype}" if archetype and archetype != "No strong case-study analogue" else ""
+    next_suffix = f" | next: {next_check}" if next_check else ""
+    return (
+        f"/{symbol} | {state} | radar {radar:.0f}/100 | {signal} | "
+        f"flow {flow_score:.0f} {targets} {cex_count}tx max {max_amount} | "
+        f"top10 {top10_text}, top100 {top100_text} | shorts {short_text} | "
+        f"float {float_score:.0f} | timing {timing:.0f} | not-late {not_late:.0f}"
+        f"{archetype_suffix}{next_suffix}"
+    )
+
+
+def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, lookback_hours: int | None = None) -> tuple[str, str]:
+    symbol = _normalize_symbol_query(symbol_query)
+    if not symbol:
+        return "Flow proof", "Use `/flowproof symbol:PLAYUSDT min_tokens:20000`."
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    row = _row_for_symbol(frame, symbol)
+    if row is None:
+        return f"{symbol} flow proof", f"No scan row found for {symbol}. Source: {source or 'unavailable'}"
+    row_frame = pd.DataFrame([row.to_dict()])
+    target_confirmed = bool(
+        _confirmed_cex_flow_mask(row_frame, min_transfer_tokens=effective_min_transfer, target_only=True).iloc[0]
+    )
+    any_confirmed = bool(
+        _confirmed_cex_flow_mask(row_frame, min_transfer_tokens=effective_min_transfer, target_only=False).iloc[0]
+    )
+    if target_confirmed:
+        verdict = "VERIFIED target-CEX transfer evidence"
+    elif any_confirmed:
+        verdict = "VERIFIED non-target CEX transfer; not Binance/Gate/Bitget"
+    elif str(row.get("cex_deposit_flow_error", "") or "").strip():
+        verdict = "DATA GAP: transfer source blocked/error or no labelled destination match"
+    else:
+        verdict = "NO VERIFIED CEX transfer at this floor/lookback"
+    top_tx = _clip_text(row.get("cex_deposit_24h_top_tx", ""), 90) or "n/a"
+    source_url = _clip_text(row.get("cex_deposit_24h_source_url", ""), 240)
+    lines = [
+        f"{symbol} flow proof",
+        f"Verdict: {verdict}",
+        f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h",
+        "Read: only rows with count > 0, largest transfer above floor, and a labelled destination are treated as confirmed.",
+        "",
+        f"Targets: {_clip_text(row.get('cex_deposit_24h_target_exchanges', ''), 80) or 'n/a'}",
+        f"Transfers: {int(_safe_float(row.get('cex_deposit_24h_count')) or 0)}",
+        f"Total token amount: {_fmt_compact_number(row.get('cex_deposit_24h_token_amount'))}",
+        f"Largest transfer: {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))}",
+        f"Total notional: {_fmt_compact_number(row.get('cex_deposit_24h_notional_usd'))}",
+        f"Total supply pct: {(_safe_pct(row.get('cex_deposit_24h_total_pct_supply')) or 0.0):.2f}%",
+        f"Largest supply pct: {(_safe_pct(row.get('cex_deposit_24h_max_pct_supply')) or 0.0):.2f}%",
+        f"Top tx/hash: {top_tx}",
+        f"Flow source: {_clip_text(row.get('cex_deposit_flow_source', ''), 80) or 'n/a'}",
+        f"Concentration gate: {_clip_text(row.get('cex_deposit_concentration_gate', ''), 120) or 'n/a'}",
+    ]
+    error = _clip_text(row.get("cex_deposit_flow_error", ""), 220)
+    note = _clip_text(row.get("cex_deposit_flow_note", ""), 240)
+    if error:
+        lines.append(f"Data status: {error}")
+    if note:
+        lines.append(f"Note: {note}")
+    if source_url:
+        lines.append(f"Query/source URL: {source_url}")
+    return f"{symbol} flow proof", "\n".join(lines)[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def _load_coin_check(
+    symbol_query: str,
+    *,
+    min_score: float = 60.0,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    min_short_pct: float = 50.0,
+    min_whale_pct: float = 90.0,
+) -> tuple[str, str]:
+    symbol = _normalize_symbol_query(symbol_query)
+    if not symbol:
+        return "Coin checklist", "Use `/coincheck symbol:PLAYUSDT min_tokens:20000`."
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    row = _row_for_symbol(frame, symbol)
+    if row is None:
+        return f"{symbol} checklist", f"No scan row found for {symbol}. Source: {source or 'unavailable'}"
+    scored = _goal_score_frame(
+        pd.DataFrame([row.to_dict()]),
+        min_transfer_tokens=effective_min_transfer,
+        min_short_pct=min_short_pct,
+        min_whale_pct=min_whale_pct,
+    )
+    scored_row = scored.iloc[0]
+    status = _goal_row_status(scored_row, min_score=min_score)
+    score = _safe_float(scored_row.get("_goal_setup_score")) or 0.0
+
+    def gate_line(label: str, passed: bool, detail: str) -> str:
+        return f"{'PASS' if passed else 'FAIL'} {label}: {detail}"
+
+    top10 = _safe_pct(scored_row.get("top10_holder_pct"))
+    top100 = _safe_pct(scored_row.get("top100_holder_pct"))
+    short_pct = _safe_pct(scored_row.get("short_account_pct"))
+    float_score = _safe_float(scored_row.get("_goal_float_component")) or 0.0
+    structure = _safe_float(scored_row.get("_goal_structure_component")) or 0.0
+    lines = [
+        f"{symbol} manipulation-structure checklist",
+        f"Verdict: {status} | setup score {score:.0f}/100 | Source: {source}",
+        f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h",
+        "",
+        gate_line("target CEX flow", bool(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),
+        gate_line(
+            "whale dominance",
+            bool(scored_row.get("_goal_whale_pass")),
+            f"top10 {top10:.1f}%, top100 {top100:.1f}%" if top10 is not None and top100 is not None else "top10/top100 n/a",
+        ),
+        gate_line("short dominance", bool(scored_row.get("_goal_short_pass")), f"short accounts {short_pct:.1f}%" if short_pct is not None else "short accounts n/a"),
+        gate_line("low-float/high-FDV", bool(scored_row.get("_goal_float_pass")), f"float {float_score:.0f}/100 | FDV/MC {_fmt_compact_number(scored_row.get('fdv_to_market_cap'))}x | locked {_fmt_compact_number(scored_row.get('locked_supply_pct'))}%"),
+        gate_line("dormant/not-late structure", bool(scored_row.get("_goal_structure_pass")), f"structure {structure:.0f}/100 | not-late {(_safe_float(scored_row.get('_goal_not_late_component')) or 0.0):.0f}/100"),
+        "",
+        _setup_score_line(scored_row, min_score=min_score),
+    ]
+    return f"{symbol} checklist", "\n".join(lines)[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, list[str]]:
+    frame, source = _fresh_scanner_frame(_env_value("DISCORD_FLOATTRAP_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep")
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty:
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    header = (
+        "Low-float / high-FDV trap ranking\n"
+        f"Source: {source} | Minimum score: {float(min_score):.0f} | Read: observed float/FDV pressure, not insider proof."
+    )
+    if frame.empty:
+        return "Low-float / high-FDV trap ranking", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    scored = apply_terminal_model(frame.loc[:, ~frame.columns.duplicated()].copy())
+    if "symbol" not in scored.columns:
+        return "Low-float / high-FDV trap ranking", [header + "\n\nThe active scan source has no symbol column."]
+    top10 = _safe_pct_series(scored, "top10_holder_pct").fillna(0.0)
+    top100 = _safe_pct_series(scored, "top100_holder_pct").fillna(0.0)
+    fdv_score = _score_linear_series(_num_series(scored, "fdv_to_market_cap"), 1.8, 12.0)
+    scored["_floattrap_fdv_ratio"] = _num_series(scored, "fdv_to_market_cap")
+    scored["_floattrap_rank_score"] = pd.concat(
+        [
+            _num_series(scored, "low_float_score"),
+            _num_series(scored, "float_trap_score"),
+            _num_series(scored, "terminal_float_score"),
+            _num_series(scored, "terminal_hidden_float_reflexivity_score"),
+            _score_linear_series(top10, 55.0, 92.0),
+            _score_linear_series(top100, 82.0, 99.5),
+            fdv_score,
+            _score_linear_series(_num_series(scored, "locked_supply_pct"), 15.0, 85.0),
+        ],
+        axis=1,
+    ).max(axis=1)
+    selected = scored[scored["_floattrap_rank_score"].ge(max(0.0, float(min_score)))].copy()
+    if selected.empty:
+        return "Low-float / high-FDV trap ranking", [header + "\n\nNo symbols met the float-trap threshold."]
+    selected = selected.sort_values(["_floattrap_rank_score", "_floattrap_fdv_ratio", "symbol"], ascending=[False, False, True]).head(
+        min(max(int(limit), 1), 100)
+    )
+    lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()), ""]
+    for _, row in selected.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        lines.append(
+            f"/{symbol} | float {(_safe_float(row.get('_floattrap_rank_score')) or 0.0):.0f}/100 | "
+            f"low-float {(_safe_float(row.get('low_float_score')) or 0.0):.0f} | trap {(_safe_float(row.get('float_trap_score')) or 0.0):.0f} | "
+            f"FDV {_fmt_compact_number(row.get('fdv_usd'))} | MC {_fmt_compact_number(row.get('market_cap_usd'))} | "
+            f"FDV/MC {_fmt_compact_number(row.get('fdv_to_market_cap'))}x | circ {_fmt_compact_number(row.get('circulating_supply_pct'))}% | "
+            f"locked {_fmt_compact_number(row.get('locked_supply_pct'))}% | top100 {_fmt_compact_number(row.get('top100_holder_pct'))}% | "
+            f"shorts {_fmt_compact_number(row.get('short_account_pct'))}%"
+        )
+    return "Low-float / high-FDV trap ranking", _chunk_text_lines(lines)
+
+
+def _funding_pressure_value(row: pd.Series) -> float | None:
+    for column in ("predicted_funding_pct", "carry_funding_pct", "last_settled_funding_pct", "funding_rate", "funding_pct"):
+        value = _safe_pct(row.get(column))
+        if value is not None:
+            return value
+    return None
+
+
+def _load_squeeze_ready_list(limit: int, *, min_short_pct: float = 50.0, min_score: float = 55.0) -> tuple[str, list[str]]:
+    frame, source = _fresh_scanner_frame(_env_value("DISCORD_SQUEEZE_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep")
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty:
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    header = (
+        "Squeeze-ready short-crowd ranking\n"
+        f"Source: {source} | Short gate: >= {min_short_pct:.1f}% | Minimum score: {min_score:.0f}"
+    )
+    if frame.empty:
+        return "Squeeze-ready short-crowd ranking", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    scored = _goal_score_frame(frame, min_short_pct=min_short_pct)
+    short_pct = _safe_pct_series(scored, "short_account_pct").fillna(_num_series(scored, "short_account_pct"))
+    oi_component = pd.concat(
+        [
+            _score_linear_series(_num_series(scored, "oi_delta_pct"), 0.5, 8.0),
+            _score_linear_series(_num_series(scored, "oi_to_market_cap_pct"), 4.0, 30.0),
+            _num_series(scored, "silent_oi_accumulation_score"),
+        ],
+        axis=1,
+    ).max(axis=1)
+    funding_pressure = scored.apply(lambda row: abs(min(_funding_pressure_value(row) or 0.0, 0.0)), axis=1).astype("float64")
+    funding_component = _score_linear_series(funding_pressure, 0.002, 0.08)
+    scored["_squeeze_ready_score"] = (
+        _score_linear_series(short_pct, min_short_pct, 75.0) * 0.28
+        + _num_series(scored, "terminal_short_pressure_score") * 0.20
+        + oi_component * 0.18
+        + funding_component * 0.08
+        + _num_series(scored, "_goal_whale_component") * 0.12
+        + _num_series(scored, "_goal_float_component") * 0.08
+        + _num_series(scored, "_goal_structure_component") * 0.06
+    ).clip(lower=0.0, upper=100.0)
+    selected = scored[short_pct.ge(min_short_pct) & scored["_squeeze_ready_score"].ge(max(0.0, float(min_score)))].copy()
+    if selected.empty:
+        return "Squeeze-ready short-crowd ranking", [header + "\n\nNo symbols met the squeeze-ready filters."]
+    selected = selected.sort_values(["_squeeze_ready_score", "short_account_pct", "symbol"], ascending=[False, False, True]).head(
+        min(max(int(limit), 1), 100)
+    )
+    lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()), ""]
+    for _, row in selected.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        funding = _funding_pressure_value(row)
+        target_flow = "target CEX flow" if bool(row.get("_goal_target_flow")) else "no target CEX flow"
+        lines.append(
+            f"/{symbol} | squeeze {(_safe_float(row.get('_squeeze_ready_score')) or 0.0):.0f}/100 | "
+            f"shorts {(_safe_pct(row.get('short_account_pct')) or 0.0):.1f}% | OI {_fmt_compact_number(row.get('oi_delta_pct'))}% | "
+            f"funding {_format_signed_pct(funding, decimals=4) if funding is not None else 'n/a'} | "
+            f"whale {(_safe_float(row.get('_goal_whale_component')) or 0.0):.0f} | float {(_safe_float(row.get('_goal_float_component')) or 0.0):.0f} | {target_flow}"
+        )
+    return "Squeeze-ready short-crowd ranking", _chunk_text_lines(lines)
+
+
+def _load_cex_targets_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    header = (
+        "Target CEX transfer board\n"
+        f"Source: {source} | Target CEX: Binance, Gate.io, Bitget | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h"
+    )
+    if frame.empty:
+        return "Target CEX transfer board", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+    mask = _confirmed_cex_flow_mask(frame, min_transfer_tokens=effective_min_transfer, target_only=True)
+    rows = frame[mask].copy()
+    if rows.empty:
+        return "Target CEX transfer board", [header + "\n\nNo confirmed Binance/Gate/Bitget transfer rows met the requested floor/lookback."]
+    rows["_target_flow_score"] = pd.to_numeric(rows.get("cex_deposit_flow_score", pd.Series(0.0, index=rows.index)), errors="coerce").fillna(0.0)
+    rows["_target_max_amount"] = pd.to_numeric(rows.get("cex_deposit_24h_max_amount", pd.Series(0.0, index=rows.index)), errors="coerce").fillna(0.0)
+    rows = rows.sort_values(["_target_flow_score", "_target_max_amount", "symbol"], ascending=[False, False, True]).head(
+        min(max(int(limit), 1), 100)
+    )
+    exchange_counts: dict[str, int] = {"Binance": 0, "Bitget": 0, "Gate": 0}
+    for target_text in rows.get("cex_deposit_24h_target_exchanges", pd.Series(dtype="object")).astype(str):
+        lowered = target_text.lower()
+        if "binance" in lowered:
+            exchange_counts["Binance"] += 1
+        if "bitget" in lowered:
+            exchange_counts["Bitget"] += 1
+        if "gate" in lowered:
+            exchange_counts["Gate"] += 1
+    counts = " | ".join(f"{exchange} {count}" for exchange, count in exchange_counts.items() if count)
+    lines = [header, f"Rows: {len(rows)}" + (f" | {counts}" if counts else ""), "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
+    for _, row in rows.iterrows():
+        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        lines.append(
+            f"/{symbol} | {_target_cex_text(row)} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.0f}/100 | "
+            f"{int(_safe_float(row.get('cex_deposit_24h_count')) or 0)} tx | total {_fmt_compact_number(row.get('cex_deposit_24h_token_amount'))} | "
+            f"max {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))} | top tx {_clip_text(row.get('cex_deposit_24h_top_tx', ''), 48) or 'n/a'} | "
+            f"source {_clip_text(row.get('cex_deposit_flow_source', ''), 38) or 'n/a'}"
+        )
+    return "Target CEX transfer board", _chunk_text_lines(lines)
+
+
+def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
+    scan_mode = _env_value("DISCORD_ALPHA_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    frame, source = _fresh_scanner_frame(scan_mode)
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty:
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    if frame.empty:
+        return "Alpha brief", [f"No live scan, scanner snapshot, or cache exists yet. `{source}`"]
+
+    source_frame = frame.loc[:, ~frame.columns.duplicated()].copy()
+    source_frame = apply_timing_model(apply_terminal_model(source_frame))
+    source_frame = apply_bitget_gate_venue_gate(source_frame, allow_cex_flow_targets=True)
+    venue_header = bitget_gate_venue_header(allow_cex_flow_targets=True)
+    if source_frame.empty:
+        return "Alpha brief", [venue_header + "\n\nNo rows met the Discord venue gate."]
+
+    def num(column: str) -> pd.Series:
+        return pd.to_numeric(source_frame.get(column, pd.Series(0.0, index=source_frame.index)), errors="coerce").fillna(0.0)
+
+    terminal = num("terminal_edge_score")
+    timing = num("timing_score")
+    cex_flow = pd.concat(
+        [
+            num("cex_deposit_flow_score"),
+            num("terminal_exchange_flow_score"),
+            num("target_cex_flow_score"),
+        ],
+        axis=1,
+    ).max(axis=1)
+    scanner = pd.concat(
+        [
+            num("trade_bucket_score"),
+            num("convexity_entry_score"),
+            num("convexity_score"),
+        ],
+        axis=1,
+    ).max(axis=1)
+    short_component = ((num("short_account_pct") - 50.0) * 4.0).clip(lower=0.0, upper=100.0)
+    balanced = terminal * 0.36 + timing * 0.28 + cex_flow * 0.18 + scanner * 0.12 + short_component * 0.06
+    flow_priority = cex_flow * 0.72 + terminal * 0.18 + timing * 0.10
+    structure_priority = terminal * 0.58 + timing * 0.25 + scanner * 0.17
+    source_frame["_discord_alpha_brief_score"] = pd.concat([balanced, flow_priority, structure_priority], axis=1).max(axis=1)
+
+    min_score = _env_float("DISCORD_ALPHA_BRIEF_MIN_SCORE", 35.0, minimum=0.0)
+    selected = source_frame[source_frame["_discord_alpha_brief_score"].ge(min_score)].copy()
+    if selected.empty:
+        return "Alpha brief", [venue_header + f"\n\nNo rows reached the alpha brief minimum score of {min_score:.0f}."]
+
+    selected = selected.sort_values(
+        ["_discord_alpha_brief_score", "terminal_edge_score", "timing_score", "symbol"],
+        ascending=[False, False, False, True],
+    ).head(min(max(int(limit), 1), 50))
+
+    header = (
+        "Alpha brief - venue-gated convex watchlist\n"
+        f"{_cache_age_header(selected, source)}\n"
+        f"{venue_header}\n"
+        "Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel."
+    )
+    symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype="object")).tolist())
+    lines = [header, "", f"Candidates: {symbols}" if symbols else "Candidates: none", ""]
+    for _, row in selected.iterrows():
+        symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        brief_score = _safe_float(row.get("_discord_alpha_brief_score")) or 0.0
+        terminal_score = _safe_float(row.get("terminal_edge_score")) or 0.0
+        timing_score = _safe_float(row.get("timing_score")) or 0.0
+        flow_values = [
+            _safe_float(row.get("cex_deposit_flow_score")),
+            _safe_float(row.get("terminal_exchange_flow_score")),
+            _safe_float(row.get("target_cex_flow_score")),
+        ]
+        flow_score = max([value for value in flow_values if value is not None] or [0.0])
+        short_pct = _safe_float(row.get("short_account_pct"))
+        short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+        state = str(row.get("timing_state", "") or row.get("terminal_setup_archetype", "watchlist structure")).strip()
+        lines.append(
+            f"{symbol} | brief {brief_score:.1f} | terminal {terminal_score:.0f} | timing {timing_score:.0f} | "
+            f"CEX {flow_score:.0f} | shorts {short_text} | {state}"
+        )
+        lines.append(f"  evidence: {_clip_text(infer_evidence_stack(row), 170)}")
+        lines.append(f"  next: {_clip_text(infer_next_check(row), 150)}")
+    return "Alpha brief", _chunk_text_lines(lines)
 
 
 def _trade_bot_client() -> BinanceFuturesPublic:
@@ -964,6 +3011,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     allowed_channel_raw = _env_value("DISCORD_ALLOWED_CHANNEL_ID")
     default_top_n = max(1, int(_env_value("DISCORD_CONVEX_COMMAND_TOP_N", "10")))
     default_cexflow_top_n = _env_int("DISCORD_CEX_FLOW_TOP_N", 25, minimum=1)
+    default_alpha_top_n = _env_int("DISCORD_ALPHA_TOP_N", 15, minimum=1)
+    default_funding_top_n = _env_int("DISCORD_FUNDING_TOP_N", 10, minimum=1)
     announce_online = _env_value("DISCORD_ANNOUNCE_ONLINE", "0").strip().lower() in {"1", "true", "yes", "on"}
     message_content_intent_enabled = _env_bool("DISCORD_MESSAGE_CONTENT_INTENT_ENABLED", False)
     symbol_shortcuts_enabled = _env_bool("DISCORD_SYMBOL_SHORTCUTS_ENABLED", False) and message_content_intent_enabled
@@ -1026,6 +3075,356 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
+    funding_kwargs = {"name": "funding", "description": "Rank Binance USDT perps by funding carry for longs and shorts."}
+    if guild is not None:
+        funding_kwargs["guild"] = guild
+
+    @tree.command(**funding_kwargs)
+    @app_commands.describe(
+        side="Which carry side to show: both, shorts, or longs.",
+        limit="Rows per side to return.",
+        period="Binance global long/short account-ratio period, for example 5m, 15m, 1h, or 4h.",
+        min_abs_funding_pct="Minimum absolute funding percent, for example 0.01 for 0.01%.",
+    )
+    @app_commands.choices(
+        side=[
+            app_commands.Choice(name="both", value="both"),
+            app_commands.Choice(name="shorts receive positive funding", value="shorts"),
+            app_commands.Choice(name="longs receive negative funding", value="longs"),
+        ]
+    )
+    async def funding(
+        interaction: discord.Interaction,
+        side: str = "both",
+        limit: int = default_funding_top_n,
+        period: str = "1h",
+        min_abs_funding_pct: float = 0.0,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("funding")):
+            await interaction.response.send_message(_access_denied_message("funding"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_funding_leaderboard,
+            min(max(int(limit), 1), 30),
+            side=side,
+            period=period,
+            min_abs_funding_pct=min_abs_funding_pct,
+        )
+        if not chunks:
+            chunks = ["No funding rows found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x14B8A6)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    setupscore_kwargs = {"name": "setupscore", "description": "Rank the full low-float whale/CEX-flow short-squeeze thesis."}
+    if guild is not None:
+        setupscore_kwargs["guild"] = guild
+
+    @tree.command(**setupscore_kwargs)
+    @app_commands.describe(
+        min_score="Minimum setup score to show.",
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        min_short_pct="Minimum short-account percentage.",
+        min_whale_pct="Minimum top100 holder concentration percentage.",
+        strict="Require target CEX flow, whale, short, float, and not-late gates.",
+    )
+    async def setupscore(
+        interaction: discord.Interaction,
+        min_score: float = 60.0,
+        min_tokens: float = 20_000.0,
+        limit: int = 20,
+        lookback_hours: int = 24,
+        min_short_pct: float = 50.0,
+        min_whale_pct: float = 90.0,
+        strict: bool = True,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("setupscore")):
+            await interaction.response.send_message(_access_denied_message("setupscore"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_setup_score_list,
+            min(max(int(limit), 1), 100),
+            min_score=max(0.0, min(float(min_score), 100.0)),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            strict=strict,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x22C55E)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    pumpwatch_kwargs = {"name": "pumpwatch", "description": "Rank early pump candidates across target flow, whales, shorts, float, and timing."}
+    if guild is not None:
+        pumpwatch_kwargs["guild"] = guild
+
+    @tree.command(**pumpwatch_kwargs)
+    @app_commands.describe(
+        min_score="Minimum pump radar score to show.",
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
+        require_venue_gate="Require Bitget/Gate support or target-flow venue gate.",
+    )
+    async def pumpwatch(
+        interaction: discord.Interaction,
+        min_score: float = 55.0,
+        min_tokens: float = 20_000.0,
+        limit: int = 20,
+        lookback_hours: int = 24,
+        require_target_flow: bool = False,
+        require_venue_gate: bool = True,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("pumpwatch")):
+            await interaction.response.send_message(_access_denied_message("pumpwatch"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_pump_watch_list,
+            min(max(int(limit), 1), 100),
+            min_score=max(0.0, min(float(min_score), 100.0)),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            require_target_flow=require_target_flow,
+            require_venue_gate=require_venue_gate,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xEF4444)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    flowproof_kwargs = {"name": "flowproof", "description": "Show transfer proof and data status for one symbol."}
+    if guild is not None:
+        flowproof_kwargs["guild"] = guild
+
+    @tree.command(**flowproof_kwargs)
+    @app_commands.describe(
+        symbol="Symbol to inspect, for example PLAYUSDT or PLAY.",
+        min_tokens="Minimum token amount per confirmed transfer.",
+        lookback_hours="Transfer lookback window in hours.",
+    )
+    async def flowproof(
+        interaction: discord.Interaction,
+        symbol: str,
+        min_tokens: float = 20_000.0,
+        lookback_hours: int = 24,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("flowproof")):
+            await interaction.response.send_message(_access_denied_message("flowproof"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(
+            _load_flow_proof,
+            symbol,
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    coincheck_kwargs = {"name": "coincheck", "description": "Run one symbol through the full manipulation-structure checklist."}
+    if guild is not None:
+        coincheck_kwargs["guild"] = guild
+
+    @tree.command(**coincheck_kwargs)
+    @app_commands.describe(
+        symbol="Symbol to inspect, for example PLAYUSDT or PLAY.",
+        min_score="Minimum setup score for a PASS verdict.",
+        min_tokens="Minimum token amount per confirmed transfer.",
+        lookback_hours="Transfer lookback window in hours.",
+        min_short_pct="Minimum short-account percentage.",
+        min_whale_pct="Minimum top100 holder concentration percentage.",
+    )
+    async def coincheck(
+        interaction: discord.Interaction,
+        symbol: str,
+        min_score: float = 60.0,
+        min_tokens: float = 20_000.0,
+        lookback_hours: int = 24,
+        min_short_pct: float = 50.0,
+        min_whale_pct: float = 90.0,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("coincheck")):
+            await interaction.response.send_message(_access_denied_message("coincheck"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(
+            _load_coin_check,
+            symbol,
+            min_score=max(0.0, min(float(min_score), 100.0)),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0x22C55E)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    floattrap_kwargs = {"name": "floattrap", "description": "Rank low-float, high-FDV, whale-controlled structures."}
+    if guild is not None:
+        floattrap_kwargs["guild"] = guild
+
+    @tree.command(**floattrap_kwargs)
+    @app_commands.describe(
+        min_score="Minimum float-trap score to show.",
+        limit="Maximum rows to return.",
+    )
+    async def floattrap(interaction: discord.Interaction, min_score: float = 60.0, limit: int = 25) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("floattrap")):
+            await interaction.response.send_message(_access_denied_message("floattrap"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_float_trap_list,
+            min(max(int(limit), 1), 100),
+            min_score=max(0.0, min(float(min_score), 100.0)),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xA855F7)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    squeezeready_kwargs = {"name": "squeezeready", "description": "Rank short-crowded coins with squeeze fuel."}
+    if guild is not None:
+        squeezeready_kwargs["guild"] = guild
+
+    @tree.command(**squeezeready_kwargs)
+    @app_commands.describe(
+        min_short_pct="Minimum short-account percentage.",
+        min_score="Minimum squeeze-ready score to show.",
+        limit="Maximum rows to return.",
+    )
+    async def squeezeready(interaction: discord.Interaction, min_short_pct: float = 50.0, min_score: float = 55.0, limit: int = 25) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("squeezeready")):
+            await interaction.response.send_message(_access_denied_message("squeezeready"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_squeeze_ready_list,
+            min(max(int(limit), 1), 100),
+            min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
+            min_score=max(0.0, min(float(min_score), 100.0)),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF59E0B)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    cextargets_kwargs = {"name": "cextargets", "description": "Rank confirmed recent transfers into Binance, Gate.io, or Bitget."}
+    if guild is not None:
+        cextargets_kwargs["guild"] = guild
+
+    @tree.command(**cextargets_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+    )
+    async def cextargets(
+        interaction: discord.Interaction,
+        min_tokens: float = 20_000.0,
+        limit: int = 25,
+        lookback_hours: int = 24,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("cextargets")):
+            await interaction.response.send_message(_access_denied_message("cextargets"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_cex_targets_list,
+            min(max(int(limit), 1), 100),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    whales_kwargs = {"name": "whales", "description": "Rank symbols by top-holder whale dominance."}
+    if guild is not None:
+        whales_kwargs["guild"] = guild
+
+    @tree.command(**whales_kwargs)
+    @app_commands.describe(
+        min_pct="Minimum holder concentration percentage. Default 90.",
+        bucket="Which holder bucket to rank: top100, top10, either, or both.",
+        limit="Maximum rows to return.",
+        require_contract_hint="Only include rows with a known token contract hint.",
+        max_symbols="Maximum symbols to live-fetch when holder columns are missing. Use 0 for all.",
+        refresh="Ignore the whale cache and recompute holder composition when needed.",
+    )
+    async def whales(
+        interaction: discord.Interaction,
+        min_pct: float = 90.0,
+        bucket: str = "top100",
+        limit: int = 50,
+        require_contract_hint: bool = False,
+        max_symbols: int = 0,
+        refresh: bool = False,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("whales")):
+            await interaction.response.send_message(_access_denied_message("whales"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_whale_dominance_list,
+            min(max(int(limit), 1), 300),
+            min_pct=min_pct,
+            bucket=bucket,
+            require_contract_hint=require_contract_hint,
+            max_symbols=max(0, int(max_symbols)),
+            refresh=refresh,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xA855F7)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
     terminal_kwargs = {"name": "terminal", "description": "Show top market-structure evidence rows."}
     if guild is not None:
         terminal_kwargs["guild"] = guild
@@ -1062,12 +3461,54 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
 
+    corr_kwargs = {"name": "corr", "description": "Show symbols below a BTC-correlation cutoff."}
+    if guild is not None:
+        corr_kwargs["guild"] = guild
+
+    @tree.command(**corr_kwargs)
+    @app_commands.describe(
+        threshold="Maximum BTC correlation to show. 0.5 means corr_to_btc <= +0.50; negatives always pass.",
+        limit="Maximum rows to return. Use 0 for all matching rows.",
+    )
+    async def corr(interaction: discord.Interaction, threshold: float = 0.0, limit: int = 0) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("corr")):
+            await interaction.response.send_message(_access_denied_message("corr"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_corr_list,
+            threshold=threshold,
+            limit=min(max(int(limit), 0), 300),
+        )
+        if not chunks:
+            chunks = ["No negative BTC-correlation rows found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x38BDF8)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
     cexflow_kwargs = {"name": "cexflow", "description": "Show concentration-gated large CEX token-transfer flow."}
     if guild is not None:
         cexflow_kwargs["guild"] = guild
 
     @tree.command(**cexflow_kwargs)
-    async def cexflow(interaction: discord.Interaction, limit: int = default_cexflow_top_n) -> None:
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer, for example 20000.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        require_venue_gate="Require Binance perp plus Bitget/Gate venue support. Disable for raw CEX-flow sweep.",
+    )
+    async def cexflow(
+        interaction: discord.Interaction,
+        min_tokens: float = 0.0,
+        limit: int = default_cexflow_top_n,
+        lookback_hours: int = 24,
+        require_venue_gate: bool = True,
+    ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
@@ -1075,10 +3516,297 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             await interaction.response.send_message(_access_denied_message("cexflow"), ephemeral=True)
             return
         await interaction.response.defer(thinking=True)
-        title, chunks = await asyncio.to_thread(_load_cex_flow_list, min(max(int(limit), 1), 100))
+        title, chunks = await asyncio.to_thread(
+            _load_cex_flow_list,
+            min(max(int(limit), 1), 100),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            require_venue_gate=require_venue_gate,
+        )
         if not chunks:
             chunks = ["No concentration-gated large CEX token-transfer flow found."]
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    cexdiag_kwargs = {"name": "cexdiag", "description": "Explain CEX-flow scan coverage and filter bottlenecks."}
+    if guild is not None:
+        cexdiag_kwargs["guild"] = guild
+
+    @tree.command(**cexdiag_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer, for example 1000.",
+        lookback_hours="Transfer lookback window in hours.",
+        require_venue_gate="Show how many raw CEX-flow rows survive the Binance/Bitget/Gate venue gate.",
+        symbol_limit="How many attempted symbols to list.",
+    )
+    async def cexdiag(
+        interaction: discord.Interaction,
+        min_tokens: float = 0.0,
+        lookback_hours: int = 24,
+        require_venue_gate: bool = True,
+        symbol_limit: int = 15,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("cexdiag")):
+            await interaction.response.send_message(_access_denied_message("cexdiag"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(
+            _load_cex_flow_diagnostics,
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            require_venue_gate=require_venue_gate,
+            symbol_limit=min(max(int(symbol_limit), 1), 50),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    earlyflow_kwargs = {"name": "earlyflow", "description": "Search smaller whale-to-CEX transfers for early low-float flow."}
+    if guild is not None:
+        earlyflow_kwargs["guild"] = guild
+
+    @tree.command(**earlyflow_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer. Defaults to DISCORD_EARLY_FLOW_MIN_TOKENS or 20000.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        require_venue_gate="Require Binance perp plus Bitget/Gate venue support. Disable for raw early-flow sweep.",
+    )
+    async def earlyflow(
+        interaction: discord.Interaction,
+        min_tokens: float = 0.0,
+        limit: int = default_cexflow_top_n,
+        lookback_hours: int = 24,
+        require_venue_gate: bool = True,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("earlyflow")):
+            await interaction.response.send_message(_access_denied_message("earlyflow"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_early_flow_list,
+            min(max(int(limit), 1), 100),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            require_venue_gate=require_venue_gate,
+        )
+        if not chunks:
+            chunks = ["No early wallet-to-CEX token-transfer flow found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    flowcoin_kwargs = {"name": "flowcoin", "description": "Inspect wallet-to-CEX flow for one symbol with a custom threshold."}
+    if guild is not None:
+        flowcoin_kwargs["guild"] = guild
+
+    @tree.command(**flowcoin_kwargs)
+    @app_commands.describe(
+        symbol="Symbol to inspect, for example PLAYUSDT or PLAY.",
+        min_tokens="Minimum token amount per transfer, for example 20000.",
+        lookback_hours="Transfer lookback window in hours.",
+    )
+    async def flowcoin(
+        interaction: discord.Interaction,
+        symbol: str,
+        min_tokens: float = 0.0,
+        lookback_hours: int = 24,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("flowcoin")):
+            await interaction.response.send_message(_access_denied_message("flowcoin"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(
+            _load_symbol_cex_flow,
+            symbol,
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    flowstress_kwargs = {"name": "flowstress", "description": "Rank CEX deposit inventory stress versus visible liquidity."}
+    if guild is not None:
+        flowstress_kwargs["guild"] = guild
+
+    @tree.command(**flowstress_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer, for example 20000.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        require_venue_gate="Also apply the stricter Binance perp plus Bitget/Gate venue-support gate.",
+    )
+    async def flowstress(
+        interaction: discord.Interaction,
+        min_tokens: float = 0.0,
+        limit: int = default_cexflow_top_n,
+        lookback_hours: int = 24,
+        require_venue_gate: bool = True,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("flowstress")):
+            await interaction.response.send_message(_access_denied_message("flowstress"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_flow_stress_list,
+            min(max(int(limit), 1), 100),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            require_venue_gate=require_venue_gate,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    flowblocked_kwargs = {"name": "flowblocked", "description": "List CEX-flow rows blocked by explorer/API data-source errors."}
+    if guild is not None:
+        flowblocked_kwargs["guild"] = guild
+
+    @tree.command(**flowblocked_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer, for example 20000.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+    )
+    async def flowblocked(
+        interaction: discord.Interaction,
+        min_tokens: float = 0.0,
+        limit: int = 25,
+        lookback_hours: int = 24,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("flowblocked")):
+            await interaction.response.send_message(_access_denied_message("flowblocked"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_flow_blocked_list,
+            min(max(int(limit), 1), 100),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    flowhealth_kwargs = {"name": "flowhealth", "description": "Show CEX-flow source health, API fallback status, and label coverage."}
+    if guild is not None:
+        flowhealth_kwargs["guild"] = guild
+
+    @tree.command(**flowhealth_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer, for example 20000.",
+        lookback_hours="Transfer lookback window in hours.",
+        symbol_limit="How many attempted symbols to list.",
+    )
+    async def flowhealth(
+        interaction: discord.Interaction,
+        min_tokens: float = 0.0,
+        lookback_hours: int = 24,
+        symbol_limit: int = 10,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("flowhealth")):
+            await interaction.response.send_message(_access_denied_message("flowhealth"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, description = await asyncio.to_thread(
+            _load_flow_health,
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            symbol_limit=min(max(int(symbol_limit), 1), 50),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+
+    sethflow_kwargs = {"name": "sethflow", "description": "Run the CEX-flow, whale, shorts, and dormant-structure checklist."}
+    if guild is not None:
+        sethflow_kwargs["guild"] = guild
+
+    @tree.command(**sethflow_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per transfer, for example 10000000.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        min_short_pct="Minimum short-account percentage, default 50.",
+        require_dormant="Only show rows that pass the dormant/early structure gate.",
+        require_venue_gate="Require Binance perp plus Bitget/Gate venue support.",
+    )
+    async def sethflow(
+        interaction: discord.Interaction,
+        min_tokens: float = 10_000_000.0,
+        limit: int = 15,
+        lookback_hours: int = 24,
+        min_short_pct: float = 50.0,
+        require_dormant: bool = True,
+        require_venue_gate: bool = False,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("sethflow")):
+            await interaction.response.send_message(_access_denied_message("sethflow"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_seth_flow_playbook,
+            min(max(int(limit), 1), 100),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
+            require_dormant=require_dormant,
+            require_venue_gate=require_venue_gate,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x14B8A6)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    alpha_kwargs = {"name": "alpha", "description": "Show a venue-gated alpha brief across structure, timing, and CEX flow."}
+    if guild is not None:
+        alpha_kwargs["guild"] = guild
+
+    @tree.command(**alpha_kwargs)
+    async def alpha(interaction: discord.Interaction, limit: int = default_alpha_top_n) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("alpha")):
+            await interaction.response.send_message(_access_denied_message("alpha"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(_load_alpha_brief, min(max(int(limit), 1), 50))
+        if not chunks:
+            chunks = ["No alpha brief rows found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x14B8A6)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:
@@ -1274,6 +4002,28 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         await interaction.response.defer(thinking=True)
         await interaction.followup.send("Proof archive export.", file=discord.File(str(path), filename=path.name))
 
+    sync_kwargs = {"name": "sync_commands", "description": "Force slash-command resync for this bot."}
+    if guild is not None:
+        sync_kwargs["guild"] = guild
+
+    @tree.command(**sync_kwargs)
+    async def sync_commands(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("sync_commands")):
+            await interaction.response.send_message(_access_denied_message("sync_commands"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        synced = await tree.sync(guild=guild) if guild is not None else await tree.sync()
+        names = ", ".join(f"/{command.name}" for command in synced) or "none"
+        scope = f"guild {guild.id}" if guild is not None else "global"
+        await interaction.followup.send(
+            f"Synced slash commands to {scope}: {names}\n"
+            "If Discord still says a command is outdated, close the command composer and type the command again.",
+            ephemeral=True,
+        )
+
     @client.event
     async def on_message(message: discord.Message) -> None:
         if not symbol_shortcuts_enabled or message.author.bot:
@@ -1310,6 +4060,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         )
 
         if guild is not None:
+            if _env_bool("DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC", False):
+                tree.clear_commands(guild=None)
+                cleared = await tree.sync()
+                print(f"Cleared global slash-command scope; remaining global commands: {len(cleared)}.")
             commands = await tree.sync(guild=guild)
             scope = f"guild {guild.id}"
         else:
@@ -1317,6 +4071,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             scope = "global"
         command_names = ", ".join(f"/{command.name}" for command in commands) or "none"
         print(f"Discord Convex bot logged in as {client.user}. Slash commands synced to {scope}: {command_names}.")
+        print(
+            "If Discord says a command is outdated after a schema change, close the slash-command composer and retry. "
+            "Guild commands usually refresh within a few minutes; global commands can take longer."
+        )
 
         if allowed_channel_id is None:
             print("DISCORD_ALLOWED_CHANNEL_ID is not set; commands are allowed in any channel.")
@@ -1335,7 +4093,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/convex`, `/shorts`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
+                    "Convex bot online. Use `/convex_status`, `/alpha`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")

@@ -14,6 +14,7 @@ TIMING_SCORE_COLUMNS = [
     "timing_flow_score",
     "timing_early_score",
     "timing_too_late_score",
+    "timing_inventory_response_score",
     "timing_state",
     "timing_observed_trigger",
     "timing_confirmation_needed",
@@ -62,6 +63,7 @@ def infer_timing_state(row: Mapping[str, Any] | pd.Series) -> str:
     close_loc = _first_float(row, "hour_close_location_pct")
     wick = _first_float(row, "hour_upper_wick_pct") or 0.0
     vol_x = _first_float(row, "hour_volume_multiple", "daily_quote_volume_multiple") or 0.0
+    inventory_response = _first_float(row, "timing_inventory_response_score") or 0.0
 
     if too_late >= 72.0 or (wick >= 38.0 and close_loc is not None and close_loc <= 42.0):
         return "Extended / fragile"
@@ -69,7 +71,7 @@ def infer_timing_state(row: Mapping[str, Any] | pd.Series) -> str:
         return "Dead / invalidating"
     if score >= 72.0 and trigger >= 65.0:
         return "Confirmed"
-    if score >= 58.0 and trigger >= 48.0:
+    if score >= 58.0 and (trigger >= 48.0 or inventory_response >= 62.0):
         return "Triggering"
     if terminal >= 58.0 and trigger < 45.0:
         return "Coiling"
@@ -81,6 +83,10 @@ def infer_timing_state(row: Mapping[str, Any] | pd.Series) -> str:
 def infer_observed_trigger(row: Mapping[str, Any] | pd.Series) -> str:
     triggers: list[str] = []
     accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    inventory_stress = _first_float(row, "cex_deposit_inventory_stress_score") or 0.0
+    inventory_response = _first_float(row, "timing_inventory_response_score") or 0.0
+    if inventory_stress >= 45.0 and inventory_response >= 55.0:
+        triggers.append("recent venue inventory is being absorbed constructively")
     if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
         triggers.append("aggressive taker demand absorbed with muted price response")
     if (_first_float(row, "oi_delta_pct") or 0.0) >= 1.0:
@@ -101,6 +107,10 @@ def infer_observed_trigger(row: Mapping[str, Any] | pd.Series) -> str:
 def infer_timing_confirmation(row: Mapping[str, Any] | pd.Series) -> str:
     needs: list[str] = []
     accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    inventory_stress = _first_float(row, "cex_deposit_inventory_stress_score") or 0.0
+    inventory_response = _first_float(row, "timing_inventory_response_score") or 0.0
+    if inventory_stress >= 45.0 and inventory_response < 55.0:
+        needs.append("post-deposit absorption check")
     if (_first_float(row, "oi_delta_pct") or 0.0) < 1.0:
         needs.append("OI expansion")
     if (_first_float(row, "hour_volume_multiple", "daily_quote_volume_multiple") or 0.0) < 1.25:
@@ -132,6 +142,8 @@ def infer_failure_condition(row: Mapping[str, Any] | pd.Series) -> str:
 
 def infer_hold_condition(row: Mapping[str, Any] | pd.Series) -> str:
     accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
+    if (_first_float(row, "cex_deposit_inventory_stress_score") or 0.0) >= 45.0:
+        return "structure remains relevant while venue-inventory stress is absorbed, OI holds, and price avoids rejection wicks"
     if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
         return "structure remains relevant while absorption persists, OI does not flush, and price avoids chase extension"
     if infer_timing_state(row) in {"Confirmed", "Triggering"}:
@@ -143,6 +155,9 @@ def infer_timing_liquidity_warning(row: Mapping[str, Any] | pd.Series) -> str:
     accumulation = _first_float(row, "accumulation_absorption_score", "accumulation_cvd_proxy_score") or 0.0
     if accumulation >= 60.0 or _row_bool(row, "accumulation_absorption_flag"):
         return "accumulation-like absorption can release into gaps if liquidity thins; verify visible depth"
+    inventory_stress = _first_float(row, "cex_deposit_inventory_stress_score") or 0.0
+    if inventory_stress >= 60.0:
+        return "recent CEX deposits are large versus visible liquidity; verify whether added inventory is being absorbed"
     top100 = _first_float(row, "top100_holder_pct")
     ask_depth = _first_float(row, "ask_depth_1pct_usdt")
     spread = _first_float(row, "coinbase_bid_ask_spread_pct")
@@ -179,9 +194,22 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
     dist_5d = _num(output, "distance_to_high_5d_pct", 25.0)
     dist_20d = _num(output, "distance_to_high_20d_pct", 35.0)
     terminal = _num(output, "terminal_edge_score")
+    structure_edge = _num(output, "terminal_structure_edge_score")
+    pre_ignition_quality = _num(output, "terminal_pre_ignition_quality_score")
+    distribution_pressure = _num(output, "terminal_distribution_pressure_score")
+    inventory_stress = _num(output, "cex_deposit_inventory_stress_score")
     ask_depth_to_vol = _num(output, "ask_depth_to_24h_volume_pct", 0.15)
     range_event_score = _num(output, "range_breakout_score")
     accumulation = _num(output, "accumulation_absorption_score")
+    inventory_response = _clip(
+        inventory_stress * 0.32
+        + accumulation * 0.24
+        + _score_linear(close_loc, 55.0, 88.0) * 0.18
+        + _score_linear(volume_signal, 1.05, 4.0) * 0.12
+        + _score_linear(oi, 0.25, 5.0) * 0.10
+        + structure_edge * 0.08
+        - _score_linear(wick, 20.0, 55.0) * 0.24
+    )
 
     trigger_score = _clip(
         _score_linear(oi, 0.25, 5.0) * 0.28
@@ -191,6 +219,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _score_linear(trade_count, 1.05, 3.0) * 0.14
         + range_event_score * 0.06
         + accumulation * 0.10
+        + inventory_response * 0.08
     )
     reclaim_score = _clip(
         _score_linear(dist_5d.abs(), 0.0, 12.0, invert=True) * 0.55
@@ -203,6 +232,8 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _score_linear(volume_signal, 1.0, 5.0) * 0.20
         + _score_linear(trade_count, 1.0, 3.5) * 0.16
         + accumulation * 0.12
+        + distribution_pressure * 0.06
+        + inventory_response * 0.08
     )
     too_late = _clip(
         _score_linear(hour_return, 10.0, 32.0) * 0.26
@@ -218,15 +249,18 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
         + _score_band(daily_vol, 0.75, 1.05, 3.0, 9.0) * 0.14
         + _score_linear(ask_depth_to_vol, 0.02, 0.20) * 0.13
         + accumulation * 0.08
+        + pre_ignition_quality * 0.08
     )
     timing_score = _clip(
         terminal * 0.22
+        + structure_edge * 0.08
         + trigger_score * 0.25
         + reclaim_score * 0.18
         + flow_score * 0.15
         + early_score * 0.15
         + _num(output, "terminal_liquidity_score", 50.0) * 0.05
         + accumulation * 0.08
+        + inventory_response * 0.06
         - too_late * 0.12
         + _bool(output, "setup_ready_flag").astype(float) * 6.0
         + _bool(output, "clean_convex_setup_flag").astype(float) * 4.0
@@ -238,6 +272,7 @@ def apply_timing_model(frame: pd.DataFrame) -> pd.DataFrame:
     output["timing_flow_score"] = flow_score
     output["timing_early_score"] = early_score
     output["timing_too_late_score"] = too_late
+    output["timing_inventory_response_score"] = inventory_response
     output["timing_state"] = output.apply(infer_timing_state, axis=1)
     output["timing_observed_trigger"] = output.apply(infer_observed_trigger, axis=1)
     output["timing_confirmation_needed"] = output.apply(infer_timing_confirmation, axis=1)

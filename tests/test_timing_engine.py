@@ -109,3 +109,34 @@ def test_accumulation_absorption_surfaces_in_timing_card() -> None:
 
     assert "aggressive taker demand absorbed" in row["timing_observed_trigger"]
     assert "absorption persists" in row["timing_hold_condition"]
+
+
+def test_timing_model_scores_constructive_inventory_absorption() -> None:
+    scored = apply_timing_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "FLOWUSDT",
+                    "terminal_edge_score": 68,
+                    "terminal_structure_edge_score": 78,
+                    "terminal_distribution_pressure_score": 74,
+                    "terminal_pre_ignition_quality_score": 64,
+                    "cex_deposit_inventory_stress_score": 82,
+                    "accumulation_absorption_score": 72,
+                    "oi_delta_pct": 2.4,
+                    "hour_return_pct": 1.8,
+                    "day_return_pct": 9.0,
+                    "hour_volume_multiple": 1.9,
+                    "hour_trade_count_multiple": 1.5,
+                    "hour_close_location_pct": 76,
+                    "hour_upper_wick_pct": 6,
+                    "short_account_pct": 55,
+                }
+            ]
+        )
+    )
+    row = scored.iloc[0]
+
+    assert row["timing_inventory_response_score"] >= 60
+    assert "venue inventory is being absorbed" in row["timing_observed_trigger"]
+    assert "venue-inventory stress is absorbed" in row["timing_hold_condition"]
