@@ -21,6 +21,19 @@ RAVEUSDT | brief 74.1 | terminal 81 | timing 58 | CEX 36 | shorts 68.5% | Coilin
   next: recheck short-account pressure, OI, funding, and reclaim or failed-reclaim behavior on the next scan.
 ```
 
+## `/precrime min_tokens:20000`
+
+```text
+Pre-activity crime-pump radar
+Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Target flow required: False | Quiet required: True | Behaviour gate required: True
+Matches: 2 | Target-flow rows: 1 | Quiet-gated rows: 2 | Read: structural-risk evidence, not trade instruction.
+
+Candidates: /SLEEPUSDT /COILUSDT
+
+/SLEEPUSDT | Stealth inventory setup | latent 79/100 | target CEX flow 92/100 | CEX-tell 92 Binance, Gate.io 2tx max 240.00K | control 91 | float 86 | thin-book 94 | quiet 82 heat 12 | top10 90.0%, top100 99.0% | shorts 63.0% | anchor LABUSDT 2026-05-11 | next: watch for absorption, OI expansion, and first volume lift while price remains below chase heat
+/COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | top10 86.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
+```
+
 ## `/corr threshold:0.5`
 
 ```text
@@ -33,6 +46,32 @@ Matches: 3
 /YOUNGUSDT | corr -0.820 | used 37d (max available) | shorts 61.2% | 24h 4.5%
 /INVERSEUSDT | corr -0.610 | used 180d | shorts 54.0% | 24h -2.1%
 /WEAKPOSUSDT | corr 0.420 | used 180d | shorts 51.5% | 24h 1.1%
+```
+
+## `/high days:20D`
+
+```text
+20D high breakout screen
+Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
+Filter: `broke_high_20d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
+
+Matches: 2
+
+/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0%
+/SLOWUSDT | broke 20D high | 24h +2.1% | breaks H1/L0
+```
+
+## `/low days:90D`
+
+```text
+90D low breakout screen
+Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
+Filter: `broke_low_90d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
+
+Matches: 2
+
+/LOWERUSDT | broke 90D low | 24h -9.5% | breaks H0/L2
+/BOUNCEUSDT | broke 90D low | 24h -2.0% | breaks H0/L1
 ```
 
 ## `/funding side:both limit:3`

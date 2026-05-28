@@ -26,7 +26,35 @@ def test_lab_style_archetype_prioritizes_controlled_float_cex_inventory() -> Non
 
     assert row["archetype_lab_score"] >= 80
     assert row["archetype_best_match"] == "LAB-style venue-inventory stress"
+    assert row["archetype_reference_symbol"] == "LABUSDT"
+    assert row["archetype_reference_date"] == "2026-05-11"
     assert "controlled float" in row["archetype_match_note"]
+    assert "LABUSDT 2026-05-11" in row["archetype_match_note"]
+
+
+def test_rave_style_archetype_includes_historical_anchor_date() -> None:
+    row = apply_archetype_model(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "RAVEUSDT",
+                    "top10_holder_pct": 94,
+                    "top100_holder_pct": 99.8,
+                    "terminal_hidden_float_reflexivity_score": 88,
+                    "terminal_control_plane_score": 84,
+                    "ath_multiple": 55,
+                    "fdv_to_market_cap": 11,
+                    "terminal_distribution_pressure_score": 70,
+                }
+            ]
+        )
+    ).iloc[0]
+
+    assert row["archetype_rave_score"] >= 70
+    assert row["archetype_best_match"] == "RAVE-style cap-table reflexivity"
+    assert row["archetype_reference_symbol"] == "RAVEUSDT"
+    assert row["archetype_reference_date"] == "2026-04-18"
+    assert "RAVEUSDT 2026-04-18" in row["archetype_match_note"]
 
 
 def test_siren_style_archetype_scores_short_fuse_pre_ignition() -> None:
@@ -114,3 +142,5 @@ def test_low_signal_rows_keep_neutral_archetype_label() -> None:
 
     assert row["archetype_match_score"] < 35
     assert row["archetype_best_match"] == "No strong case-study analogue"
+    assert row["archetype_reference_symbol"] == ""
+    assert row["archetype_reference_date"] == ""

@@ -29,6 +29,7 @@ Recommended live workflow:
 
 ```text
 /alpha
+/precrime min_tokens:20000
 /pumpwatch min_tokens:20000
 /setupscore min_tokens:20000 strict:true
 /flowproof symbol:PLAYUSDT min_tokens:20000
@@ -46,6 +47,8 @@ Recommended live workflow:
 /flowblocked min_tokens:20000
 /flowhealth min_tokens:20000
 /sethflow min_tokens:10000000
+/high days:20D
+/low days:20D
 /terminal
 /timing
 /corr threshold:0.5
@@ -55,6 +58,10 @@ Recommended live workflow:
 ```
 
 Use `/alpha` as the triage queue. It blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact venue-gated watchlist.
+
+Use `/precrime` before `/pumpwatch` when you specifically want the quiet pre-activity version of the thesis. It rewards holder/control concentration, low-float/high-FDV structure, Binance/Bitget/Gate inventory tells, short-fuse perp positioning, and thin visible books, but it penalizes names that already have breakout, volume, CMC-mover, or high-return chase heat. Keep `require_quiet:true` when hunting before the crowd notices; use `require_target_flow:true` when you only want confirmed labelled CEX-transfer rows.
+
+Historical anchors: `RAVEUSDT` on `2026-04-18` is the RAVE-style cap-table reflexivity example; `LABUSDT` on `2026-05-11` is the LAB-style venue-inventory stress example. These are used as pattern references for review/backtesting context, not as claims about current intent.
 
 Use `/pumpwatch` as the fastest catch board. It does not force every row to have confirmed transfer evidence by default; it rank-orders target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, archetype match, and not-late risk into one watch state. Set `require_target_flow:true` when you only want verified Binance/Gate/Bitget transfer rows.
 
@@ -85,6 +92,8 @@ Use `/flowblocked` to list rows where the HTML explorer path or API fallback cou
 Use `/flowhealth` to see API-key readiness and local CEX-address-label coverage. Configure `CEX_ADDRESS_LABELS` or `CEX_ADDRESS_BOOK_FILE` when API fallback rows need destination labels after explorer HTML blocks.
 
 Use `/sethflow` to run the whole checklist in one shot: verified Binance/Gate/Bitget wallet-to-CEX flow above the requested transfer floor, holder concentration, more than 50% short accounts by default, and then a dormant/early chart-structure gate. The output says `RESEARCH`, `WAIT`, or `SKIP`; it is a triage state, not an execution instruction.
+
+Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/below the selected range. The bot accepts any `1D`-`1499D` lookback; common dashboard columns such as `5D`, `20D`, `90D`, and `180D` are read directly, while custom windows are computed from live Binance daily candles. The optional `limit` parameter trims the output when the list is noisy.
 
 Use `/terminal` for slower structural evidence and `/timing` for current trigger quality. A symbol that appears on both lists is usually more interesting than a symbol that appears on only one.
 

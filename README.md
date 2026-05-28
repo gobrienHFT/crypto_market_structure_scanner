@@ -82,7 +82,7 @@ It screens for conditions such as:
 - concentration-adjusted turnover
 - abnormal participation relative to recent baseline
 - structural squeeze conditions
-- case-study analogue matching for RAVE/LAB/SIREN/RIVER/STO-style structures
+- case-study analogue matching for RAVE/LAB/SIREN/RIVER/STO-style structures, with RAVEUSDT on 2026-04-18 and LABUSDT on 2026-05-11 treated as historical anchors
 
 The output is intended to help prioritize markets for further research rather than produce standalone trade instructions.
 
@@ -180,7 +180,7 @@ Webhook alerts support:
 - Bitget/Gate venue gating by default
 - dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
 - venue-inventory stress notes when CEX deposits are large versus visible liquidity
-- case-study analogue lines for fast pattern triage
+- case-study analogue lines for fast pattern triage, including the RAVE 2026-04-18 and LAB 2026-05-11 historical anchors when matched
 - optional holder composition summaries
 - compact thesis, evidence stack, next-check, invalidation, and liquidity-risk lines
 - scheduled monitoring workflows
@@ -210,35 +210,42 @@ The repository also includes a lightweight Discord bot interface for querying ca
 Supported commands include:
 
 ```text
-/alpha
-/convex
+/alpha [limit]
+/convex [limit]
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
-/pumpwatch [min_score] [min_tokens] [limit] [require_target_flow]
-/setupscore [min_score] [min_tokens] [limit] [strict]
-/flowproof <symbol> [min_tokens]
-/coincheck <symbol> [min_score] [min_tokens]
+/precrime [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_quiet] [require_behavior_gate]
+/pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_venue_gate]
+/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict]
+/flowproof <symbol> [min_tokens] [lookback_hours]
+/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct]
 /floattrap [min_score] [limit]
 /squeezeready [min_short_pct] [min_score] [limit]
-/cextargets [min_tokens] [limit]
-/whales [min_pct] [bucket] [limit] [max_symbols] [refresh]
+/cextargets [min_tokens] [limit] [lookback_hours]
+/whales [min_pct] [bucket] [limit] [require_contract_hint] [max_symbols] [refresh]
+/high [days] [limit]
+/low [days] [limit]
 /terminal
 /timing
 /corr [threshold] [limit]
-/cexflow [min_tokens] [require_venue_gate]
-/cexdiag [min_tokens] [require_venue_gate] [symbol_limit]
-/earlyflow [min_tokens] [require_venue_gate]
-/flowcoin <symbol> [min_tokens]
-/flowstress [min_tokens] [require_venue_gate]
-/flowblocked [min_tokens]
-/flowhealth [min_tokens]
-/sethflow [min_tokens] [min_short_pct] [require_dormant]
+/cexflow [min_tokens] [limit] [lookback_hours] [require_venue_gate]
+/cexdiag [min_tokens] [lookback_hours] [require_venue_gate] [symbol_limit]
+/earlyflow [min_tokens] [limit] [lookback_hours] [require_venue_gate]
+/flowcoin <symbol> [min_tokens] [lookback_hours]
+/flowstress [min_tokens] [limit] [lookback_hours] [require_venue_gate]
+/flowblocked [min_tokens] [limit] [lookback_hours]
+/flowhealth [min_tokens] [lookback_hours] [symbol_limit]
+/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [require_dormant] [require_venue_gate]
 /dossier <symbol>
+/coin <symbol>
+/startbot [mode] [scan_mode]
+/stopbot
+/tradebot_status
 /convex_status
 /convex_scoreboard
 /convex_archive
-/coin <symbol>
 /sync_commands
+/<configured-symbol-alias>
 ```
 
 The bot can retrieve:
@@ -247,6 +254,7 @@ The bot can retrieve:
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
+- a `/precrime` radar for quiet latent setups: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, whale dominance, low float/high FDV, short crowding, and not-late structure
 - symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps
@@ -263,6 +271,7 @@ The bot can retrieve:
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full CEX-flow -> holder concentration -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
+- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries

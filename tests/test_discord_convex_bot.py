@@ -26,11 +26,14 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/funding") == ""
     assert bot._normalize_symbol_query("/fundingrates") == ""
     assert bot._normalize_symbol_query("/setupscore") == ""
+    assert bot._normalize_symbol_query("/precrime") == ""
     assert bot._normalize_symbol_query("/flowproof") == ""
     assert bot._normalize_symbol_query("/coincheck") == ""
     assert bot._normalize_symbol_query("/floattrap") == ""
     assert bot._normalize_symbol_query("/squeezeready") == ""
     assert bot._normalize_symbol_query("/cextargets") == ""
+    assert bot._normalize_symbol_query("/high") == ""
+    assert bot._normalize_symbol_query("/low") == ""
     assert bot._normalize_symbol_query("/timing") == ""
     assert bot._normalize_symbol_query("/corr") == ""
     assert bot._normalize_symbol_query("/dossier") == ""
@@ -324,7 +327,7 @@ def test_load_whale_dominance_list_ranks_top100_holder_concentration(monkeypatch
     assert "Matches: 2 | Showing: 2" in output
     assert "Candidates: /MEGAUSDT /WHALEUSDT" in output
     assert output.index("/MEGAUSDT | top100 98.0% | top10 91.0%") < output.index("/WHALEUSDT | top100 94.0% | top10 70.0%")
-    assert "LOWUSDT" not in output
+    assert "/LOWUSDT" not in output
     assert "observed contract-holder concentration" in output
 
 
@@ -397,7 +400,7 @@ def test_load_whale_dominance_list_computes_top100_when_scan_columns_missing(mon
     assert "computed holder composition" in output
     assert "Matches: 1 | Showing: 1" in output
     assert "/CALCUSDT | top100 95.0% | top10 9.5%" in output
-    assert "LOWUSDT" not in output
+    assert "/LOWUSDT" not in output
     assert (tmp_path / "whales.csv").exists()
 
 
@@ -435,6 +438,225 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
     assert "timing" in output
+
+
+def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "FASTUSDT",
+                "broke_high_20d": True,
+                "broke_low_20d": False,
+                "price_change_24h_pct": 8.2,
+                "last_price": 0.1234,
+                "range_high_break_count": 2,
+                "range_low_break_count": 0,
+                "short_account_pct": 61.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "SLOWUSDT",
+                "broke_high_20d": True,
+                "broke_low_20d": False,
+                "price_change_24h_pct": 2.1,
+                "range_high_break_count": 1,
+                "range_low_break_count": 0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "LOWUSDT",
+                "broke_high_20d": False,
+                "broke_low_20d": True,
+                "price_change_24h_pct": -6.5,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_breakout_list("high", days="20D")
+    output = "\n".join(chunks)
+
+    assert title == "HIGH breakout screen"
+    assert "20D high breakout screen" in output
+    assert "Filter: `broke_high_20d` is true" in output
+    assert "Matches: 2" in output
+    assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0%" in output
+    assert "/SLOWUSDT | broke 20D high | 24h +2.1%" in output
+    assert output.index("/FASTUSDT") < output.index("/SLOWUSDT")
+    assert "/LOWUSDT" not in output
+
+
+def test_load_low_breakout_list_uses_numeric_days(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "LOWERUSDT",
+                "broke_low_90d": True,
+                "broke_high_90d": False,
+                "price_change_24h_pct": -9.5,
+                "range_high_break_count": 0,
+                "range_low_break_count": 2,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "BOUNCEUSDT",
+                "broke_low_90d": True,
+                "broke_high_90d": False,
+                "price_change_24h_pct": -2.0,
+                "range_high_break_count": 0,
+                "range_low_break_count": 1,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "HIGHERUSDT",
+                "broke_low_90d": False,
+                "broke_high_90d": True,
+                "price_change_24h_pct": 5.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_breakout_list("low", days="90")
+    output = "\n".join(chunks)
+
+    assert title == "LOW breakout screen"
+    assert "90D low breakout screen" in output
+    assert "Filter: `broke_low_90d` is true" in output
+    assert "Matches: 2" in output
+    assert output.index("/LOWERUSDT") < output.index("/BOUNCEUSDT")
+    assert "/LOWERUSDT | broke 90D low | 24h -9.5% | breaks H0/L2" in output
+    assert "HIGHERUSDT" not in output
+
+
+def test_load_breakout_list_computes_arbitrary_high_window(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "DYNUSDT",
+                "high_24h": 15.0,
+                "low_24h": 9.0,
+                "price_change_24h_pct": 4.2,
+                "last_price": 14.8,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "YOUNGUSDT",
+                "high_24h": 5.0,
+                "low_24h": 1.0,
+                "price_change_24h_pct": 2.0,
+                "last_price": 4.9,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "MISSUSDT",
+                "high_24h": 10.0,
+                "low_24h": 8.0,
+                "price_change_24h_pct": 1.0,
+                "last_price": 9.5,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+
+    class FakeBinance:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def klines_1d(self, symbol: str, limit: int = 200, **kwargs):
+            if symbol == "DYNUSDT":
+                closed = [[0, 0, high, 1, 0] for high in range(1, 14)]
+                return [*closed, [0, 0, 15, 9, 0]]
+            if symbol == "YOUNGUSDT":
+                return [[0, 0, 2, 1, 0], [0, 0, 3, 1, 0], [0, 0, 4, 1, 0], [0, 0, 5, 1, 0]]
+            if symbol == "MISSUSDT":
+                closed = [[0, 0, high, 1, 0] for high in range(1, 14)]
+                return [*closed, [0, 0, 10, 8, 0]]
+            return []
+
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
+
+    title, chunks = bot._load_breakout_list("high", days="13D")
+    output = "\n".join(chunks)
+
+    assert title == "HIGH breakout screen"
+    assert "13D high breakout screen" in output
+    assert "computed prior 13D high from Binance daily klines" in output
+    assert "Matches: 2" in output
+    assert "/DYNUSDT | broke 13D high | 24h +4.2% | price 14.8 | prior high 13" in output
+    assert "/YOUNGUSDT | broke 13D high | 24h +2.0% | price 4.9 | used 3d | prior high 4" in output
+    assert "/MISSUSDT" not in output
+
+
+def test_load_breakout_list_computes_arbitrary_low_window(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "DUMPUSDT",
+                "high_24h": 6.0,
+                "low_24h": 0.8,
+                "price_change_24h_pct": -8.4,
+                "last_price": 0.9,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "BOUNCEUSDT",
+                "high_24h": 8.0,
+                "low_24h": 5.2,
+                "price_change_24h_pct": -1.0,
+                "last_price": 5.7,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+
+    class FakeBinance:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def klines_1d(self, symbol: str, limit: int = 200, **kwargs):
+            if symbol == "DUMPUSDT":
+                return [[0, 0, 10, low, 0] for low in range(14, 1, -1)] + [[0, 0, 6, 0.8, 0]]
+            if symbol == "BOUNCEUSDT":
+                return [[0, 0, 10, low, 0] for low in range(14, 1, -1)] + [[0, 0, 8, 5.2, 0]]
+            return []
+
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
+
+    title, chunks = bot._load_breakout_list("low", days="13")
+    output = "\n".join(chunks)
+
+    assert title == "LOW breakout screen"
+    assert "13D low breakout screen" in output
+    assert "computed prior 13D low from Binance daily klines" in output
+    assert "Matches: 1" in output
+    assert "/DUMPUSDT | broke 13D low | 24h -8.4% | price 0.9 | prior low 2" in output
+    assert "/BOUNCEUSDT" not in output
+
+
+def test_load_breakout_list_rejects_unsupported_window(monkeypatch) -> None:
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (pd.DataFrame(), "unused"))
+
+    title, chunks = bot._load_breakout_list("high", days="0D")
+
+    assert title == "HIGH breakout screen"
+    assert "Unsupported breakout window `0D`" in "\n".join(chunks)
+    assert "1D-1499D" in "\n".join(chunks)
 
 
 def test_load_corr_list_filters_high_btc_correlation(monkeypatch) -> None:
@@ -1164,6 +1386,89 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
     assert "/PRIMEUSDT | Prime early squeeze" in output
     assert "flow 94 Binance 3tx max 12.00M" in output
     assert "WEAKUSDT" not in output
+
+
+def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "SLEEPUSDT",
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 420_000,
+                "cex_deposit_24h_max_amount": 240_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Gate.io",
+                "cex_deposit_inventory_stress_score": 95,
+                "inventory_transfer_risk_score": 92,
+                "terminal_distribution_pressure_score": 95,
+                "terminal_control_plane_score": 88,
+                "venue_support_score": 70,
+                "top10_holder_pct": 90.0,
+                "top100_holder_pct": 99.0,
+                "holder_count": 7_500,
+                "centralized_ownership_score": 88.0,
+                "low_float_score": 86.0,
+                "float_trap_score": 82.0,
+                "fdv_to_market_cap": 11.0,
+                "locked_supply_pct": 70.0,
+                "short_account_pct": 48.0,
+                "short_dominance_score": 30.0,
+                "short_account_build_score": 25.0,
+                "short_account_change_max_pp": 0.1,
+                "oi_to_24h_volume_pct": 3.0,
+                "ask_depth_1pct_usdt": 45_000,
+                "ask_depth_to_24h_volume_pct": 0.03,
+                "binance_bitget_gate_share_pct": 35.0,
+                "pre_pump_precision_score": 35.0,
+                "low_volatility_coil_score": 82.0,
+                "hour_return_pct": 0.2,
+                "day_return_pct": 0.8,
+                "price_change_24h_pct": 0.8,
+                "range_24h_pct": 3.0,
+                "hour_volume_multiple": 1.0,
+                "hour_trade_count_multiple": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "HOTUSDT",
+                "cex_deposit_flow_score": 96,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_max_amount": 240_000,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
+                "low_float_score": 90.0,
+                "short_account_pct": 66.0,
+                "ask_depth_1pct_usdt": 40_000,
+                "ask_depth_to_24h_volume_pct": 0.03,
+                "hour_return_pct": 16.0,
+                "day_return_pct": 80.0,
+                "price_change_24h_pct": 80.0,
+                "range_24h_pct": 60.0,
+                "hour_volume_multiple": 12.0,
+                "hour_trade_count_multiple": 10.0,
+                "broke_high_20d": True,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_precrime_list(10, min_score=58, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "Pre-activity radar"
+    assert "Quiet required: True" in output
+    assert "Candidates: /SLEEPUSDT" in output
+    assert "/SLEEPUSDT | Stealth inventory setup" in output
+    assert "CEX-tell" in output
+    assert "Binance, Gate.io 2tx max 240.00K" in output
+    assert "anchor LABUSDT 2026-05-11" in output
+    assert "/HOTUSDT" not in output
 
 
 def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypatch) -> None:

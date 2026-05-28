@@ -4,6 +4,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from historical_examples import exemplar_for_archetype
 
 ARCHETYPE_SCORE_COLUMNS = [
     "archetype_rave_score",
@@ -14,6 +15,9 @@ ARCHETYPE_SCORE_COLUMNS = [
     "archetype_match_score",
     "archetype_best_match",
     "archetype_match_note",
+    "archetype_reference_symbol",
+    "archetype_reference_date",
+    "archetype_reference_pattern",
 ]
 
 
@@ -103,7 +107,25 @@ def _archetype_note(row: Mapping[str, Any] | pd.Series) -> str:
         detail = "target-venue support, whale/control pressure, short crowding, and early timing before chase extension"
     else:
         detail = "no single reference pattern dominates; use the component scores"
+    exemplar = exemplar_for_archetype(label)
+    if exemplar is not None:
+        detail = f"{detail}; historical anchor {exemplar.symbol} {exemplar.event_date}"
     return f"{label} {score:.0f}/100; {detail}"
+
+
+def _reference_symbol(label: Any) -> str:
+    exemplar = exemplar_for_archetype(str(label or ""))
+    return exemplar.symbol if exemplar is not None else ""
+
+
+def _reference_date(label: Any) -> str:
+    exemplar = exemplar_for_archetype(str(label or ""))
+    return exemplar.event_date if exemplar is not None else ""
+
+
+def _reference_pattern(label: Any) -> str:
+    exemplar = exemplar_for_archetype(str(label or ""))
+    return exemplar.pre_activity_fingerprint if exemplar is not None else ""
 
 
 def apply_archetype_model(frame: pd.DataFrame) -> pd.DataFrame:
@@ -219,4 +241,7 @@ def apply_archetype_model(frame: pd.DataFrame) -> pd.DataFrame:
     output["archetype_match_score"] = score_frame.max(axis=1)
     output["archetype_best_match"] = output.apply(_best_match, axis=1)
     output["archetype_match_note"] = output.apply(_archetype_note, axis=1)
+    output["archetype_reference_symbol"] = output["archetype_best_match"].map(_reference_symbol)
+    output["archetype_reference_date"] = output["archetype_best_match"].map(_reference_date)
+    output["archetype_reference_pattern"] = output["archetype_best_match"].map(_reference_pattern)
     return output

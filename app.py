@@ -38,6 +38,7 @@ from external_markets import (
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from market_structure_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
+from pre_activity_radar import PRE_ACTIVITY_RADAR_COLUMNS, apply_pre_activity_radar
 from proof_engine import archive_alerts
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
 from screener import ScreenerData, build_screener_data
@@ -4672,6 +4673,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 *CEX_DEPOSIT_FLOW_COLUMNS,
                 *ARCHETYPE_SCORE_COLUMNS,
                 *EARLY_PUMP_RADAR_COLUMNS,
+                *PRE_ACTIVITY_RADAR_COLUMNS,
                 "trade_bucket",
                 "trade_bucket_score",
                 "trade_bucket_note",
@@ -4727,6 +4729,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = apply_timing_model(all_df)
     all_df = _score_trade_buckets(all_df)
     all_df = apply_early_pump_radar(all_df)
+    all_df = apply_pre_activity_radar(all_df)
     range_events_df = all_df[pd.to_numeric(all_df["range_breakout_score"], errors="coerce").fillna(0.0) > 0.0].copy()
     range_events_df = range_events_df.sort_values(
         ["range_breakout_score", "range_high_break_count", "range_low_break_count", "carry_funding_pct", "symbol"],
@@ -5819,6 +5822,9 @@ def render_breakout_dashboard() -> None:
             "archetype_match_score": st.column_config.NumberColumn("Archetype Match", format="%.1f"),
             "archetype_best_match": st.column_config.TextColumn("Best Case-Study Analogue"),
             "archetype_match_note": st.column_config.TextColumn("Archetype Note"),
+            "archetype_reference_symbol": st.column_config.TextColumn("Historical Anchor"),
+            "archetype_reference_date": st.column_config.TextColumn("Anchor Date"),
+            "archetype_reference_pattern": st.column_config.TextColumn("Anchor Fingerprint"),
             "archetype_rave_score": st.column_config.NumberColumn("RAVE-Style", format="%.1f"),
             "archetype_lab_score": st.column_config.NumberColumn("LAB-Style", format="%.1f"),
             "archetype_siren_score": st.column_config.NumberColumn("SIREN-Style", format="%.1f"),
@@ -5848,6 +5854,29 @@ def render_breakout_dashboard() -> None:
             "early_pump_primary_signal": st.column_config.TextColumn("Pump Signal"),
             "early_pump_next_check": st.column_config.TextColumn("Pump Next Check"),
             "early_pump_note": st.column_config.TextColumn("Pump Note"),
+            "pre_activity_pump_score": st.column_config.NumberColumn(
+                "Pre-Activity Score",
+                format="%.1f",
+                help="Latent setup score for controlled float, target-CEX inventory tells, short-fuse perp positioning, thin books, and quiet tape before obvious activity.",
+            ),
+            "pre_activity_control_score": st.column_config.NumberColumn("Pre-Control", format="%.1f"),
+            "pre_activity_float_score": st.column_config.NumberColumn("Pre-Float", format="%.1f"),
+            "pre_activity_behavior_score": st.column_config.NumberColumn("Pre-CEX Tell", format="%.1f"),
+            "pre_activity_short_fuse_score": st.column_config.NumberColumn("Pre-Short Fuse", format="%.1f"),
+            "pre_activity_quiet_score": st.column_config.NumberColumn("Pre-Quiet", format="%.1f"),
+            "pre_activity_venue_score": st.column_config.NumberColumn("Pre-Venue", format="%.1f"),
+            "pre_activity_thin_book_score": st.column_config.NumberColumn("Pre-Thin Book", format="%.1f"),
+            "pre_activity_preignition_score": st.column_config.NumberColumn("Pre-Ignition Base", format="%.1f"),
+            "pre_activity_heat_score": st.column_config.NumberColumn("Activity Heat", format="%.1f"),
+            "pre_activity_confirmed_target_flow": st.column_config.CheckboxColumn("Pre Target Flow"),
+            "pre_activity_structure_gate": st.column_config.CheckboxColumn("Pre Structure"),
+            "pre_activity_behavior_gate": st.column_config.CheckboxColumn("Pre Behaviour"),
+            "pre_activity_quiet_gate": st.column_config.CheckboxColumn("Pre Quiet Gate"),
+            "pre_activity_alert_flag": st.column_config.CheckboxColumn("Pre-Activity Watch"),
+            "pre_activity_state": st.column_config.TextColumn("Pre-Activity State"),
+            "pre_activity_primary_signal": st.column_config.TextColumn("Pre-Activity Signal"),
+            "pre_activity_next_check": st.column_config.TextColumn("Pre-Activity Next Check"),
+            "pre_activity_note": st.column_config.TextColumn("Pre-Activity Note"),
             "terminal_regime_score": st.column_config.NumberColumn("Regime", format="%.1f"),
             "terminal_liquidity_score": st.column_config.NumberColumn("Liquidity Reality", format="%.1f"),
             "terminal_float_score": st.column_config.NumberColumn("Float Evidence", format="%.1f"),
@@ -6231,6 +6260,7 @@ def render_breakout_dashboard() -> None:
                 "Short Account Moves",
                 "RAVE/LAB Radar",
                 "Pump Radar",
+                "Pre-Activity Radar",
             ]
         )
 
@@ -8192,6 +8222,116 @@ def render_breakout_dashboard() -> None:
                 else:
                     st.dataframe(
                         _display_frame(pump_df, pump_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[14]:
+            st.caption(
+                "Pre-activity radar: controlled float, concentrated holders, target-CEX/venue inventory tells, "
+                "short-fuse perp positioning, and thin books, while filtering out names that already have chase heat."
+            )
+            pre_activity_cols = [
+                "symbol",
+                "base_asset",
+                "pre_activity_pump_score",
+                "pre_activity_state",
+                "pre_activity_alert_flag",
+                "pre_activity_primary_signal",
+                "pre_activity_next_check",
+                "pre_activity_note",
+                "pre_activity_confirmed_target_flow",
+                "pre_activity_structure_gate",
+                "pre_activity_behavior_gate",
+                "pre_activity_quiet_gate",
+                "pre_activity_control_score",
+                "pre_activity_float_score",
+                "pre_activity_behavior_score",
+                "pre_activity_short_fuse_score",
+                "pre_activity_quiet_score",
+                "pre_activity_heat_score",
+                "pre_activity_venue_score",
+                "pre_activity_thin_book_score",
+                "pre_activity_preignition_score",
+                "archetype_reference_symbol",
+                "archetype_reference_date",
+                "archetype_reference_pattern",
+                "cex_deposit_flow_score",
+                "cex_deposit_inventory_stress_score",
+                "cex_deposit_24h_count",
+                "cex_deposit_24h_max_amount",
+                "cex_deposit_24h_target_exchanges",
+                "top10_holder_pct",
+                "top100_holder_pct",
+                "holder_count",
+                "low_float_score",
+                "fdv_to_market_cap",
+                "ask_depth_1pct_usdt",
+                "ask_depth_to_24h_volume_pct",
+                "short_account_pct",
+                "short_account_change_max_pp",
+                "oi_to_24h_volume_pct",
+                "binance_bitget_gate_share_pct",
+                "hour_return_pct",
+                "day_return_pct",
+                "range_24h_pct",
+                "hour_volume_multiple",
+                "daily_quote_volume_multiple",
+                "cmc_mover_score",
+            ]
+            pre_df = all_df.copy()
+            if "pre_activity_pump_score" in pre_df.columns:
+                pre_df = pre_df.sort_values(
+                    [
+                        "pre_activity_alert_flag",
+                        "pre_activity_confirmed_target_flow",
+                        "pre_activity_pump_score",
+                        "pre_activity_behavior_score",
+                        "pre_activity_quiet_score",
+                        "symbol",
+                    ],
+                    ascending=[False, False, False, False, False, True],
+                )
+            pre_watch_mask = (
+                pre_df.get("pre_activity_alert_flag", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool)
+                | pd.to_numeric(pre_df.get("pre_activity_pump_score", pd.Series(0.0, index=pre_df.index)), errors="coerce").fillna(0.0).ge(58.0)
+            )
+            pre_watch_df = pre_df[pre_watch_mask].copy()
+            latent_flow_count = int(
+                pre_df.get("pre_activity_confirmed_target_flow", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool).sum()
+            )
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric(
+                "Top pre-activity score",
+                f"{float(pd.to_numeric(pre_df.get('pre_activity_pump_score', pd.Series(dtype='float64')), errors='coerce').max()):.1f}"
+                if not pre_df.empty
+                else "n/a",
+            )
+            q2.metric("Watch rows", int(len(pre_watch_df)))
+            q3.metric(
+                "Quiet-gated rows",
+                int(pre_df.get("pre_activity_quiet_gate", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool).sum()),
+            )
+            q4.metric("Target-flow rows", latent_flow_count)
+
+            st.subheader("Pre-Activity Crime-Pump Radar")
+            if pre_watch_df.empty:
+                st.info("No rows currently clear the pre-activity watch floor.")
+            else:
+                st.dataframe(
+                    _display_frame(pre_watch_df.head(60), pre_activity_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show full pre-activity radar table"):
+                if pre_df.empty:
+                    st.info("No pre-activity radar rows to show.")
+                else:
+                    st.dataframe(
+                        _display_frame(pre_df, pre_activity_cols),
                         use_container_width=True,
                         hide_index=True,
                         column_config=breakout_column_config,

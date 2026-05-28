@@ -25,6 +25,7 @@ from discord_flag_formatter import (
 )
 from early_pump_radar import apply_early_pump_radar
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord, load_contract_hints, resolve_contract_hint
+from pre_activity_radar import apply_pre_activity_radar
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 from scan_orchestrator import run_fresh_scan_frame
 from terminal_engine import apply_terminal_model, build_setup_dossier
@@ -36,6 +37,8 @@ from venue_gate import apply_bitget_gate_venue_gate, bitget_gate_venue_header
 APP_DIR = Path(__file__).resolve().parent
 SYMBOL_QUERY_RE = re.compile(r"^[!/]?\$?([A-Za-z0-9]{2,30})$")
 ACCESS_LEVELS = {"free": 0, "paid": 1, "pro": 2}
+COMMON_BREAKOUT_WINDOWS = (5, 20, 90, 180)
+MAX_DYNAMIC_BREAKOUT_DAYS = 1499
 _TRADE_BOT_TASK: asyncio.Task[Any] | None = None
 _TRADE_BOT_RUNTIME: TradeBotRuntime | None = None
 _TRADE_BOT_STOP_REQUESTED = False
@@ -221,8 +224,11 @@ def _feature_required_tier(feature: str) -> str:
         "shorts": "free",
         "whales": "paid",
         "funding": "free",
+        "high": "free",
+        "low": "free",
         "setupscore": "paid",
         "pumpwatch": "paid",
+        "precrime": "paid",
         "flowproof": "paid",
         "coincheck": "paid",
         "floattrap": "paid",
@@ -502,10 +508,13 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
         "CONVEX_ARCHIVE",
         "COIN",
         "SHORTS",
+        "HIGH",
+        "LOW",
         "WHALES",
         "FUNDING",
         "FUNDINGRATES",
         "SETUPSCORE",
+        "PRECRIME",
         "FLOWPROOF",
         "COINCHECK",
         "FLOATTRAP",
@@ -876,6 +885,213 @@ def _pct_numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(float("nan"), index=frame.index, dtype="float64")
     return frame[column].map(_safe_pct).astype("float64")
+
+
+def _parse_breakout_days(days: Any) -> int | None:
+    text = str(days or "").strip().upper()
+    match = re.fullmatch(r"([0-9]{1,4})\s*D?", text)
+    if not match:
+        return None
+    parsed = int(match.group(1))
+    return parsed if 1 <= parsed <= MAX_DYNAMIC_BREAKOUT_DAYS else None
+
+
+def _breakout_window_help() -> str:
+    common = ", ".join(f"{window}D" for window in COMMON_BREAKOUT_WINDOWS)
+    return f"any 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D window; common dashboard columns: {common}"
+
+
+def _breakout_source_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, str]:
+    mode = scan_mode or _env_value("DISCORD_BREAKOUT_SCAN_MODE", _env_value("DISCORD_COMMAND_SCAN_MODE", "Deep")).strip() or "Deep"
+    frame, source = _fresh_scanner_frame(mode)
+    if frame.empty and _source_is_unavailable(source):
+        frame = _latest_snapshot_frame()
+        source = "latest full scanner snapshot fallback"
+    if frame.empty:
+        frame = _read_csv_if_exists(_cache_path())
+        source = "latest Convex cache fallback"
+    return frame, source
+
+
+def _breakout_level_from_klines(
+    klines: list[list[Any]],
+    *,
+    days: int,
+    direction: str,
+) -> tuple[float | None, int]:
+    if len(klines) < 2:
+        return None, 0
+    closed_rows = klines[:-1]
+    highs: list[float] = []
+    lows: list[float] = []
+    for raw in closed_rows:
+        if not isinstance(raw, (list, tuple)) or len(raw) <= 3:
+            continue
+        high = _safe_float(raw[2])
+        low = _safe_float(raw[3])
+        if high is not None:
+            highs.append(high)
+        if low is not None:
+            lows.append(low)
+    values = highs if direction == "high" else lows
+    used_days = min(int(days), len(values))
+    if used_days <= 0:
+        return None, 0
+    window = values[-used_days:]
+    return (max(window) if direction == "high" else min(window)), used_days
+
+
+def _current_breakout_observation(row: pd.Series, klines: list[list[Any]], *, direction: str) -> float | None:
+    primary = "high_24h" if direction == "high" else "low_24h"
+    fallback = "highPrice" if direction == "high" else "lowPrice"
+    observed = _safe_float(row.get(primary))
+    if observed is None:
+        observed = _safe_float(row.get(fallback))
+    if observed is None and klines:
+        latest = klines[-1]
+        if isinstance(latest, (list, tuple)) and len(latest) > 3:
+            observed = _safe_float(latest[2 if direction == "high" else 3])
+    return observed
+
+
+def _apply_dynamic_breakout_window(frame: pd.DataFrame, *, direction: str, days: int) -> tuple[pd.DataFrame, dict[str, int]]:
+    out = frame.copy()
+    broke_column = f"_discord_broke_{direction}_{days}d"
+    level_column = f"_discord_{direction}_{days}d_level"
+    used_days_column = "_discord_breakout_used_days"
+    error_column = "_discord_breakout_error"
+    for column in (broke_column, level_column, used_days_column, error_column):
+        if column not in out.columns:
+            out[column] = False if column == broke_column else ""
+
+    stats = {"checked": 0, "errors": 0, "insufficient": 0}
+    if "symbol" not in out.columns:
+        stats["errors"] = len(out)
+        return out, stats
+
+    timeout = _env_int("DISCORD_BREAKOUT_HTTP_TIMEOUT_SECONDS", _env_int("HTTP_TIMEOUT", 12, minimum=3), minimum=3)
+    rps = _env_float("DISCORD_BREAKOUT_REQUESTS_PER_SECOND", 6.0, minimum=0.5)
+    client = BinanceFuturesPublic(timeout=timeout, requests_per_second=rps)
+    limit = min(MAX_DYNAMIC_BREAKOUT_DAYS + 1, max(2, int(days) + 1))
+
+    for idx, row in out.iterrows():
+        symbol = str(row.get("symbol", "")).upper().strip()
+        if not symbol:
+            out.at[idx, error_column] = "missing symbol"
+            stats["errors"] += 1
+            continue
+        try:
+            klines = client.klines_1d(symbol, limit=limit)
+            level, used_days = _breakout_level_from_klines(klines, days=days, direction=direction)
+            observed = _current_breakout_observation(row, klines, direction=direction)
+        except Exception as exc:
+            out.at[idx, error_column] = type(exc).__name__
+            stats["errors"] += 1
+            continue
+        if level is None or observed is None:
+            out.at[idx, error_column] = "insufficient klines"
+            out.at[idx, used_days_column] = int(used_days or 0)
+            stats["insufficient"] += 1
+            continue
+        broke = observed > level if direction == "high" else observed < level
+        out.at[idx, broke_column] = bool(broke)
+        out.at[idx, level_column] = float(level)
+        out.at[idx, used_days_column] = int(used_days)
+        stats["checked"] += 1
+    return out, stats
+
+
+def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0) -> tuple[str, list[str]]:
+    direction = "high" if str(side).lower().startswith("h") else "low"
+    parsed_days = _parse_breakout_days(days)
+    title = f"{direction.upper()} breakout screen"
+    window_help = _breakout_window_help()
+    if parsed_days is None:
+        return title, [f"Unsupported breakout window `{days}`. Use {window_help}."]
+
+    frame, source = _breakout_source_frame()
+    if frame.empty:
+        return title, [f"No live scan, scanner snapshot, or cache exists yet. `{source}`"]
+    frame = frame.loc[:, ~frame.columns.duplicated()].copy()
+    column = f"broke_{direction}_{parsed_days}d"
+    if "symbol" not in frame.columns:
+        return (
+            title,
+            [
+                f"{_cache_age_header(frame, source)}\n\n"
+                "The current scan source does not include a `symbol` column, so breakout rows cannot be matched."
+            ],
+        )
+
+    if column in frame.columns:
+        filter_text = f"Filter: `{column}` is true | Windows: {window_help}"
+        mask = _boolish_series(frame[column], index=frame.index)
+    else:
+        frame, dynamic_stats = _apply_dynamic_breakout_window(frame, direction=direction, days=parsed_days)
+        column = f"_discord_broke_{direction}_{parsed_days}d"
+        filter_text = (
+            f"Filter: computed prior {parsed_days}D {direction} from Binance daily klines | "
+            f"Checked: {dynamic_stats['checked']} | Errors: {dynamic_stats['errors']} | "
+            f"Insufficient: {dynamic_stats['insufficient']} | Windows: {window_help}"
+        )
+        mask = _boolish_series(frame[column], index=frame.index)
+    selected = frame[mask].copy()
+    header = (
+        f"{parsed_days}D {direction} breakout screen\n"
+        f"{_cache_age_header(frame, source)}\n"
+        f"{filter_text}"
+    )
+    if selected.empty:
+        return title, [header + f"\n\nNo symbols currently broke their {parsed_days}D {direction}."]
+
+    price_change = pd.to_numeric(
+        selected.get("price_change_24h_pct", selected.get("day_return_pct", pd.Series(0.0, index=selected.index))),
+        errors="coerce",
+    ).fillna(0.0)
+    selected["_discord_breakout_24h"] = price_change
+    score = pd.to_numeric(selected.get("range_breakout_score", pd.Series(0.0, index=selected.index)), errors="coerce").fillna(0.0)
+    selected["_discord_breakout_score"] = score
+    selected = selected.sort_values(
+        ["_discord_breakout_24h", "_discord_breakout_score", "symbol"],
+        ascending=[direction != "high", False, True],
+    )
+
+    requested_limit = int(limit or 0)
+    capped_limit = min(max(requested_limit, 0), 300)
+    visible = selected.head(capped_limit) if capped_limit > 0 else selected
+    hidden_count = max(0, len(selected) - len(visible))
+    lines = [header, "", f"Matches: {len(selected)}" + (f" | Showing: {len(visible)}" if hidden_count else ""), ""]
+    for _, row in visible.iterrows():
+        symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        line = f"/{symbol} | broke {parsed_days}D {direction}"
+        move = _safe_float(row.get("price_change_24h_pct"))
+        if move is None:
+            move = _safe_float(row.get("day_return_pct"))
+        if move is not None:
+            line += f" | 24h {move:+.1f}%"
+        last_price = _safe_float(row.get("last_price"))
+        if last_price is not None:
+            line += f" | price {_fmt_compact_number(last_price)}"
+        used_days = _safe_float(row.get("_discord_breakout_used_days"))
+        if used_days is not None and int(used_days) != parsed_days:
+            line += f" | used {int(used_days)}d"
+        level = _safe_float(row.get(f"_discord_{direction}_{parsed_days}d_level"))
+        if level is None:
+            level = _safe_float(row.get(f"{direction}_{parsed_days}d"))
+        if level is not None:
+            level_label = "prior high" if direction == "high" else "prior low"
+            line += f" | {level_label} {_fmt_compact_number(level)}"
+        high_count = _safe_float(row.get("range_high_break_count"))
+        low_count = _safe_float(row.get("range_low_break_count"))
+        if high_count is not None or low_count is not None:
+            line += f" | breaks H{int(high_count or 0)}/L{int(low_count or 0)}"
+        short_pct = _safe_float(row.get("short_account_pct"))
+        if short_pct is not None:
+            line += f" | shorts {short_pct:.1f}%"
+        lines.append(line)
+    if hidden_count:
+        lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")
+    return title, _chunk_text_lines(lines)
 
 
 def _holder_concentration_source_frame(scan_mode: str | None = None) -> tuple[pd.DataFrame, str]:
@@ -2358,6 +2574,128 @@ def _pump_watch_line(row: pd.Series) -> str:
     )
 
 
+def _precrime_line(row: pd.Series) -> str:
+    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    score = _safe_float(row.get("pre_activity_pump_score")) or 0.0
+    state = _clip_text(row.get("pre_activity_state", ""), 34) or "No latent edge"
+    signal = _clip_text(row.get("pre_activity_primary_signal", ""), 46) or "signal n/a"
+    targets = _target_cex_text(row) or "no target flow"
+    behavior = _safe_float(row.get("pre_activity_behavior_score")) or 0.0
+    control = _safe_float(row.get("pre_activity_control_score")) or 0.0
+    float_score = _safe_float(row.get("pre_activity_float_score")) or 0.0
+    quiet = _safe_float(row.get("pre_activity_quiet_score")) or 0.0
+    heat = _safe_float(row.get("pre_activity_heat_score")) or 0.0
+    thin = _safe_float(row.get("pre_activity_thin_book_score")) or 0.0
+    ref_symbol = _clip_text(row.get("archetype_reference_symbol", ""), 16)
+    ref_date = _clip_text(row.get("archetype_reference_date", ""), 16)
+    cex_count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+    max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+    top10 = _safe_pct(row.get("top10_holder_pct"))
+    top100 = _safe_pct(row.get("top100_holder_pct"))
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
+    top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
+    short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    next_check = _clip_text(row.get("pre_activity_next_check", ""), 100)
+    ref_suffix = f" | anchor {ref_symbol} {ref_date}".rstrip() if ref_symbol or ref_date else ""
+    return (
+        f"/{symbol} | {state} | latent {score:.0f}/100 | {signal} | "
+        f"CEX-tell {behavior:.0f} {targets} {cex_count}tx max {max_amount} | "
+        f"control {control:.0f} | float {float_score:.0f} | thin-book {thin:.0f} | "
+        f"quiet {quiet:.0f} heat {heat:.0f} | top10 {top10_text}, top100 {top100_text} | shorts {short_text}"
+        f"{ref_suffix}{f' | next: {next_check}' if next_check else ''}"
+    )
+
+
+def _load_precrime_list(
+    limit: int,
+    *,
+    min_score: float = 58.0,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    require_target_flow: bool = False,
+    require_quiet: bool = True,
+    require_behavior_gate: bool = True,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    header = (
+        "Pre-activity crime-pump radar\n"
+        f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
+        "Target CEX: Binance, Gate.io, Bitget | "
+        f"Min latent score: {float(min_score):.0f} | Target flow required: {require_target_flow} | "
+        f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate}"
+    )
+    if frame.empty:
+        return "Pre-activity radar", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+
+    scored = frame.loc[:, ~frame.columns.duplicated()].copy()
+    scored = apply_terminal_model(scored)
+    scored = apply_archetype_model(scored)
+    scored = apply_timing_model(scored)
+    scored = apply_early_pump_radar(scored)
+    scored = apply_pre_activity_radar(scored)
+
+    score = _num_series(scored, "pre_activity_pump_score")
+    selected = scored[score.ge(max(0.0, float(min_score)))].copy()
+    if require_target_flow:
+        target_flow = _boolish_series(selected.get("pre_activity_confirmed_target_flow"), index=selected.index)
+        selected = selected[target_flow].copy()
+    if require_quiet:
+        quiet_gate = _boolish_series(selected.get("pre_activity_quiet_gate"), index=selected.index)
+        selected = selected[quiet_gate].copy()
+    if require_behavior_gate:
+        behavior_gate = _boolish_series(selected.get("pre_activity_behavior_gate"), index=selected.index)
+        selected = selected[behavior_gate].copy()
+
+    if selected.empty:
+        nearest = scored.sort_values(
+            [
+                "pre_activity_alert_flag",
+                "pre_activity_confirmed_target_flow",
+                "pre_activity_pump_score",
+                "pre_activity_quiet_score",
+                "symbol",
+            ],
+            ascending=[False, False, False, False, True],
+        ).head(min(max(int(limit), 1), 30))
+        lines = [
+            header,
+            "",
+            "No rows passed the requested pre-activity filters. Nearest rows:",
+            "",
+            *[_precrime_line(row) for _, row in nearest.iterrows()],
+        ]
+        return "Pre-activity radar", _chunk_text_lines(lines)
+
+    selected = selected.sort_values(
+        [
+            "pre_activity_alert_flag",
+            "pre_activity_confirmed_target_flow",
+            "pre_activity_pump_score",
+            "pre_activity_behavior_score",
+            "pre_activity_quiet_score",
+            "symbol",
+        ],
+        ascending=[False, False, False, False, False, True],
+    ).head(min(max(int(limit), 1), 100))
+    target_count = int(_boolish_series(selected.get("pre_activity_confirmed_target_flow"), index=selected.index).sum())
+    quiet_count = int(_boolish_series(selected.get("pre_activity_quiet_gate"), index=selected.index).sum())
+    symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
+    lines = [
+        header,
+        f"Matches: {len(selected)} | Target-flow rows: {target_count} | Quiet-gated rows: {quiet_count} | Read: structural-risk evidence, not trade instruction.",
+        "",
+        f"Candidates: {symbols}" if symbols else "Candidates: none",
+        "",
+    ]
+    for _, row in selected.iterrows():
+        lines.append(_precrime_line(row))
+    return "Pre-activity radar", _chunk_text_lines(lines)
+
+
 def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, lookback_hours: int | None = None) -> tuple[str, str]:
     symbol = _normalize_symbol_query(symbol_query)
     if not symbol:
@@ -3075,6 +3413,64 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
+    high_kwargs = {"name": "high", "description": "Show symbols that broke above a prior-day high."}
+    if guild is not None:
+        high_kwargs["guild"] = guild
+
+    @tree.command(**high_kwargs)
+    @app_commands.describe(
+        days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
+        limit="Maximum rows to return. Use 0 for all matching rows.",
+    )
+    async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("high")):
+            await interaction.response.send_message(_access_denied_message("high"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_breakout_list,
+            "high",
+            days=days,
+            limit=min(max(int(limit), 0), 300),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x22C55E)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    low_kwargs = {"name": "low", "description": "Show symbols that broke below a prior-day low."}
+    if guild is not None:
+        low_kwargs["guild"] = guild
+
+    @tree.command(**low_kwargs)
+    @app_commands.describe(
+        days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
+        limit="Maximum rows to return. Use 0 for all matching rows.",
+    )
+    async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("low")):
+            await interaction.response.send_message(_access_denied_message("low"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_breakout_list,
+            "low",
+            days=days,
+            limit=min(max(int(limit), 0), 300),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xEF4444)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
     funding_kwargs = {"name": "funding", "description": "Rank Binance USDT perps by funding carry for longs and shorts."}
     if guild is not None:
         funding_kwargs["guild"] = guild
@@ -3208,6 +3604,53 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_venue_gate=require_venue_gate,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xEF4444)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    precrime_kwargs = {"name": "precrime", "description": "Rank quiet latent setups before price/volume activity appears."}
+    if guild is not None:
+        precrime_kwargs["guild"] = guild
+
+    @tree.command(**precrime_kwargs)
+    @app_commands.describe(
+        min_score="Minimum pre-activity score to show.",
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
+        require_quiet="Require the no-chase quiet/low-activity gate.",
+        require_behavior_gate="Require target CEX flow, venue-inventory tell, or short-fuse venue behaviour.",
+    )
+    async def precrime(
+        interaction: discord.Interaction,
+        min_score: float = 58.0,
+        min_tokens: float = 20_000.0,
+        limit: int = 20,
+        lookback_hours: int = 24,
+        require_target_flow: bool = False,
+        require_quiet: bool = True,
+        require_behavior_gate: bool = True,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("precrime")):
+            await interaction.response.send_message(_access_denied_message("precrime"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_precrime_list,
+            min(max(int(limit), 1), 100),
+            min_score=max(0.0, min(float(min_score), 100.0)),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            require_target_flow=require_target_flow,
+            require_quiet=require_quiet,
+            require_behavior_gate=require_behavior_gate,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x8B5CF6)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:
@@ -4093,7 +4536,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/alpha`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
+                    "Convex bot online. Use `/convex_status`, `/alpha`, `/precrime min_tokens:20000`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")
