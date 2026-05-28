@@ -1579,6 +1579,32 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/LABXUSDT" not in rave_output
 
 
+def test_ravelab_line_handles_missing_target_exchange_text() -> None:
+    row = pd.Series(
+        {
+            "symbol": "MISSUSDT",
+            "_ravelab_early_score": 61.0,
+            "_ravelab_side": "RAVE-like",
+            "_ravelab_rave_score": 58.0,
+            "_ravelab_lab_score": 22.0,
+            "_ravelab_early_gate": True,
+            "_ravelab_structure_gate": True,
+            "_ravelab_target_flow": False,
+            "cex_deposit_24h_target_exchanges": pd.NA,
+            "cex_deposit_24h_count": pd.NA,
+            "cex_deposit_24h_max_amount": pd.NA,
+            "top10_holder_pct": 94.0,
+            "top100_holder_pct": 99.8,
+        }
+    )
+
+    output = bot._ravelab_line(row)
+
+    assert "/MISSUSDT | RAVE-like" in output
+    assert "CEX no target flow 0tx max n/a" in output
+    assert "anchor RAVEUSDT 2026-04-18" in output
+
+
 def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [

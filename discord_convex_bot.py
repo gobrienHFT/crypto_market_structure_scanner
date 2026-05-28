@@ -164,11 +164,31 @@ def _chunk_text_lines(lines: list[str], *, max_chars: int = 1850) -> list[str]:
     return chunks
 
 
-def _clip_text(text: str, max_chars: int) -> str:
-    clean = " ".join(str(text or "").split())
+def _clean_scalar_text(text: Any) -> str:
+    if text is None:
+        return ""
+    try:
+        if pd.isna(text):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    clean = " ".join(str(text).split())
+    return "" if clean.lower() in {"nan", "none", "null", "<na>"} else clean
+
+
+def _clip_text(text: Any, max_chars: int) -> str:
+    clean = _clean_scalar_text(text)
     if len(clean) <= max_chars:
         return clean
     return f"{clean[: max_chars - 3].rstrip()}..."
+
+
+def _first_nonempty_text(*values: Any) -> str:
+    for value in values:
+        clean = _clean_scalar_text(value)
+        if clean:
+            return clean
+    return ""
 
 
 def _normalize_tier(raw_tier: str) -> str:
@@ -1333,7 +1353,7 @@ def _load_whale_dominance_list(
         terminal_text = f"{terminal_score:.0f}" if terminal_score is not None else "n/a"
         cex_score = _safe_float(row.get("cex_deposit_flow_score"))
         cex_text = f"{cex_score:.0f}" if cex_score is not None else "n/a"
-        platform = str(row.get("token_platform", "") or row.get("chain", "") or "").strip()
+        platform = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""))
         platform_text = f" | chain {platform}" if platform else ""
         lines.append(
             f"/{symbol} | top100 {top100_text} | top10 {top10_text} | holders {holder_text} | "
@@ -1944,7 +1964,7 @@ def _load_flow_stress_list(
         depth_pct = _safe_float(row.get("cex_deposit_24h_notional_to_ask_depth_pct"))
         depth_text = f" | deposits/ask {depth_pct:.1f}%" if depth_pct is not None else ""
         source_text = _clip_text(row.get("cex_deposit_flow_source", ""), 40)
-        note = _clip_text(row.get("cex_deposit_inventory_stress_note", "") or row.get("cex_deposit_flow_note", ""), 160)
+        note = _clip_text(_first_nonempty_text(row.get("cex_deposit_inventory_stress_note", ""), row.get("cex_deposit_flow_note", "")), 160)
         lines.append(
             f"/{symbol} | stress {stress_value:.0f}/100 | flow {flow_score:.0f}/100 | {targets} | "
             f"notional {notional}{depth_text} | source {source_text or 'n/a'}"
@@ -3299,7 +3319,7 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
         flow_score = max([value for value in flow_values if value is not None] or [0.0])
         short_pct = _safe_float(row.get("short_account_pct"))
         short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
-        state = str(row.get("timing_state", "") or row.get("terminal_setup_archetype", "watchlist structure")).strip()
+        state = _first_nonempty_text(row.get("timing_state", ""), row.get("terminal_setup_archetype", "watchlist structure"))
         lines.append(
             f"{symbol} | brief {brief_score:.1f} | terminal {terminal_score:.0f} | timing {timing_score:.0f} | "
             f"CEX {flow_score:.0f} | shorts {short_text} | {state}"
