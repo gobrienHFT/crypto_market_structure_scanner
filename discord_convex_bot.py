@@ -24,6 +24,7 @@ from discord_flag_formatter import (
     join_discord_flag_cards,
 )
 from early_pump_radar import apply_early_pump_radar
+from historical_examples import exemplar_for_archetype
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord, load_contract_hints, resolve_contract_hint
 from pre_activity_radar import apply_pre_activity_radar
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
@@ -229,6 +230,7 @@ def _feature_required_tier(feature: str) -> str:
         "setupscore": "paid",
         "pumpwatch": "paid",
         "precrime": "paid",
+        "ravelab": "paid",
         "flowproof": "paid",
         "coincheck": "paid",
         "floattrap": "paid",
@@ -515,6 +517,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
         "FUNDINGRATES",
         "SETUPSCORE",
         "PRECRIME",
+        "RAVELAB",
         "FLOWPROOF",
         "COINCHECK",
         "FLOATTRAP",
@@ -2696,6 +2699,252 @@ def _load_precrime_list(
     return "Pre-activity radar", _chunk_text_lines(lines)
 
 
+def _ravelab_side_from_scores(rave_score: float, lab_score: float) -> str:
+    if rave_score >= lab_score + 5.0:
+        return "RAVE-like"
+    if lab_score >= rave_score + 5.0:
+        return "LAB-like"
+    return "Mixed RAVE/LAB"
+
+
+def _ravelab_anchor_for_side(side: str, rave_score: float, lab_score: float) -> tuple[str, str]:
+    if side == "Mixed RAVE/LAB":
+        label = "RAVE-style cap-table reflexivity" if rave_score >= lab_score else "LAB-style venue-inventory stress"
+    elif side == "RAVE-like":
+        label = "RAVE-style cap-table reflexivity"
+    else:
+        label = "LAB-style venue-inventory stress"
+    exemplar = exemplar_for_archetype(label)
+    return (exemplar.symbol, exemplar.event_date) if exemplar is not None else ("", "")
+
+
+def _score_ravelab_early_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    scored = frame.loc[:, ~frame.columns.duplicated()].copy()
+    scored = apply_terminal_model(scored)
+    scored = apply_archetype_model(scored)
+    scored = apply_timing_model(scored)
+    scored = apply_early_pump_radar(scored)
+    scored = apply_pre_activity_radar(scored)
+
+    index = scored.index
+    rave = _num_series(scored, "archetype_rave_score")
+    lab = _num_series(scored, "archetype_lab_score")
+    dashboard_setup = _num_series(scored, "rave_lab_setup_score")
+    latent = _num_series(scored, "pre_activity_pump_score")
+    control = _max_series(
+        scored,
+        "pre_activity_control_score",
+        "terminal_control_plane_score",
+        "centralized_ownership_score",
+        "holder_concentration_score",
+    )
+    float_score = _max_series(scored, "pre_activity_float_score", "low_float_score", "float_trap_score", "terminal_float_score")
+    behavior = _max_series(
+        scored,
+        "pre_activity_behavior_score",
+        "cex_deposit_flow_score",
+        "cex_deposit_inventory_stress_score",
+        "inventory_transfer_risk_score",
+    )
+    quiet = _num_series(scored, "pre_activity_quiet_score")
+    heat = _num_series(scored, "pre_activity_heat_score")
+    late_penalty = _max_series(scored, "rave_lab_late_penalty_score", "timing_too_late_score", "convexity_late_penalty")
+    not_late = pd.concat(
+        [
+            _num_series(scored, "early_pump_not_late_score"),
+            (100.0 - heat).clip(lower=0.0, upper=100.0),
+            (100.0 - late_penalty).clip(lower=0.0, upper=100.0),
+            _boolish_series(scored.get("no_chase_ok_flag"), index=index).astype(float) * 100.0,
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    targets = _text_series(scored, "cex_deposit_24h_target_exchanges")
+    target_flow = (
+        _boolish_series(scored.get("pre_activity_confirmed_target_flow"), index=index)
+        | (
+            _num_series(scored, "cex_deposit_24h_count").gt(0.0)
+            & targets.str.contains(TARGET_CEX_PATTERN, regex=True, na=False)
+        )
+    )
+    major_excluded = _boolish_series(scored.get("crime_excluded_major"), index=index)
+
+    rave_component = (
+        rave * 0.52
+        + dashboard_setup * 0.12
+        + control * 0.12
+        + float_score * 0.10
+        + quiet * 0.08
+        + not_late * 0.06
+    )
+    lab_component = (
+        lab * 0.48
+        + behavior * 0.16
+        + dashboard_setup * 0.12
+        + latent * 0.10
+        + quiet * 0.08
+        + not_late * 0.06
+        + target_flow.astype(float) * 6.0
+    )
+    side_score = pd.concat([rave_component, lab_component], axis=1).max(axis=1).fillna(0.0)
+    early_score = (
+        side_score * 0.68
+        + latent * 0.16
+        + dashboard_setup * 0.10
+        + not_late * 0.06
+        - heat.sub(62.0).clip(lower=0.0) * 0.24
+    ).where(~major_excluded, other=0.0).clip(lower=0.0, upper=100.0)
+    archetype_score = pd.concat([rave, lab], axis=1).max(axis=1).fillna(0.0)
+    structure_gate = ((archetype_score >= 45.0) | (dashboard_setup >= 55.0)) & ((control >= 48.0) | (float_score >= 48.0))
+    early_gate = ((quiet >= 45.0) | (not_late >= 58.0)) & (heat < 68.0) & (~major_excluded)
+
+    scored["_ravelab_rave_score"] = rave
+    scored["_ravelab_lab_score"] = lab
+    scored["_ravelab_archetype_score"] = archetype_score
+    scored["_ravelab_side_score"] = side_score.clip(lower=0.0, upper=100.0)
+    scored["_ravelab_early_score"] = early_score
+    scored["_ravelab_structure_gate"] = structure_gate & (~major_excluded)
+    scored["_ravelab_early_gate"] = early_gate
+    scored["_ravelab_target_flow"] = target_flow & (~major_excluded)
+    scored["_ravelab_alert_flag"] = early_score.ge(62.0) & structure_gate & early_gate & (~major_excluded)
+    scored["_ravelab_side"] = [
+        _ravelab_side_from_scores(float(rave_value or 0.0), float(lab_value or 0.0))
+        for rave_value, lab_value in zip(rave.tolist(), lab.tolist())
+    ]
+    return scored
+
+
+def _ravelab_next_check(row: pd.Series) -> str:
+    side = str(row.get("_ravelab_side", "") or "")
+    if not bool(row.get("_ravelab_early_gate")):
+        return "wait for heat/late penalty to reset before treating it as early"
+    if not bool(row.get("_ravelab_structure_gate")):
+        return "verify holder concentration, low-float/FDV gap, and contract metadata"
+    if side != "RAVE-like" and not bool(row.get("_ravelab_target_flow")):
+        return "verify labelled Binance/Bitget/Gate inventory flow or venue-inventory stress"
+    if side == "RAVE-like":
+        return "watch for first volume lift/OI expansion without chase heat"
+    return "watch for absorption after target-CEX inventory movement and first perp response"
+
+
+def _ravelab_line(row: pd.Series) -> str:
+    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    score = _safe_float(row.get("_ravelab_early_score")) or 0.0
+    side = _clip_text(row.get("_ravelab_side", ""), 18) or "RAVE/LAB"
+    rave = _safe_float(row.get("_ravelab_rave_score")) or 0.0
+    lab = _safe_float(row.get("_ravelab_lab_score")) or 0.0
+    setup = _safe_float(row.get("rave_lab_setup_score")) or 0.0
+    latent = _safe_float(row.get("pre_activity_pump_score")) or 0.0
+    targets = _target_cex_text(row) or "no target flow"
+    cex_count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
+    max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+    control = _safe_float(row.get("pre_activity_control_score")) or _safe_float(row.get("centralized_ownership_score")) or 0.0
+    float_score = _safe_float(row.get("pre_activity_float_score")) or _safe_float(row.get("low_float_score")) or 0.0
+    quiet = _safe_float(row.get("pre_activity_quiet_score")) or 0.0
+    heat = _safe_float(row.get("pre_activity_heat_score")) or 0.0
+    top10 = _safe_pct(row.get("top10_holder_pct"))
+    top100 = _safe_pct(row.get("top100_holder_pct"))
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
+    top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
+    short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
+    anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
+    next_check = _clip_text(_ravelab_next_check(row), 96)
+    return (
+        f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
+        f"dashboard {setup:.0f} latent {latent:.0f} | CEX {targets} {cex_count}tx max {max_amount} | "
+        f"control {control:.0f} float {float_score:.0f} | quiet {quiet:.0f} heat {heat:.0f} | "
+        f"top10 {top10_text}, top100 {top100_text} | shorts {short_text}{anchor} | next: {next_check}"
+    )
+
+
+def _load_ravelab_list(
+    limit: int,
+    *,
+    min_score: float = 58.0,
+    min_archetype: float = 45.0,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    style: str = "both",
+    require_quiet: bool = True,
+    require_target_flow: bool = False,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    style_key = str(style or "both").strip().lower()
+    if style_key not in {"both", "rave", "lab"}:
+        style_key = "both"
+    header = (
+        "RAVE/LAB early-structure radar\n"
+        f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
+        f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
+        f"Quiet required: {require_quiet} | Target flow required: {require_target_flow}\n"
+        "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
+    )
+    if frame.empty:
+        return "RAVE/LAB early radar", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+
+    scored = _score_ravelab_early_frame(frame)
+    selected = scored[
+        _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
+        & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
+        & _boolish_series(scored.get("_ravelab_structure_gate"), index=scored.index)
+    ].copy()
+    if style_key == "rave":
+        selected = selected[selected["_ravelab_side"].astype(str).isin(["RAVE-like", "Mixed RAVE/LAB"])].copy()
+    elif style_key == "lab":
+        selected = selected[selected["_ravelab_side"].astype(str).isin(["LAB-like", "Mixed RAVE/LAB"])].copy()
+    if require_quiet:
+        selected = selected[_boolish_series(selected.get("_ravelab_early_gate"), index=selected.index)].copy()
+    if require_target_flow:
+        selected = selected[_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index)].copy()
+
+    if selected.empty:
+        nearest = scored.sort_values(
+            ["_ravelab_alert_flag", "_ravelab_early_score", "_ravelab_archetype_score", "symbol"],
+            ascending=[False, False, False, True],
+        ).head(min(max(int(limit), 1), 30))
+        lines = [
+            header,
+            "",
+            "No rows passed the requested RAVE/LAB early filters. Nearest rows:",
+            "",
+            *[_ravelab_line(row) for _, row in nearest.iterrows()],
+        ]
+        return "RAVE/LAB early radar", _chunk_text_lines(lines)
+
+    selected = selected.sort_values(
+        [
+            "_ravelab_alert_flag",
+            "_ravelab_target_flow",
+            "_ravelab_early_score",
+            "_ravelab_archetype_score",
+            "symbol",
+        ],
+        ascending=[False, False, False, False, True],
+    ).head(min(max(int(limit), 1), 100))
+    target_count = int(_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index).sum())
+    rave_count = int(selected["_ravelab_side"].astype(str).eq("RAVE-like").sum())
+    lab_count = int(selected["_ravelab_side"].astype(str).eq("LAB-like").sum())
+    mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
+    symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
+    lines = [
+        header,
+        (
+            f"Matches: {len(selected)} | RAVE-like: {rave_count} | LAB-like: {lab_count} | Mixed: {mixed_count} | "
+            f"Target-flow rows: {target_count} | Read: historical-analogue screen, not trade instruction."
+        ),
+        "",
+        f"Candidates: {symbols}" if symbols else "Candidates: none",
+        "",
+    ]
+    for _, row in selected.iterrows():
+        lines.append(_ravelab_line(row))
+    return "RAVE/LAB early radar", _chunk_text_lines(lines)
+
+
 def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, lookback_hours: int | None = None) -> tuple[str, str]:
     symbol = _normalize_symbol_query(symbol_query)
     if not symbol:
@@ -3651,6 +3900,63 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_behavior_gate=require_behavior_gate,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x8B5CF6)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    ravelab_kwargs = {"name": "ravelab", "description": "Rank early RAVE/LAB-style cap-table and venue-inventory structures."}
+    if guild is not None:
+        ravelab_kwargs["guild"] = guild
+
+    @tree.command(**ravelab_kwargs)
+    @app_commands.describe(
+        min_score="Minimum early RAVE/LAB score to show.",
+        min_archetype="Minimum RAVE or LAB historical-analogue score.",
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        style="Show both, RAVE-like, or LAB-like structures.",
+        require_quiet="Require early/no-chase heat gate.",
+        require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
+    )
+    @app_commands.choices(
+        style=[
+            app_commands.Choice(name="both", value="both"),
+            app_commands.Choice(name="RAVE-like", value="rave"),
+            app_commands.Choice(name="LAB-like", value="lab"),
+        ]
+    )
+    async def ravelab(
+        interaction: discord.Interaction,
+        min_score: float = 58.0,
+        min_archetype: float = 45.0,
+        min_tokens: float = 20_000.0,
+        limit: int = 20,
+        lookback_hours: int = 24,
+        style: str = "both",
+        require_quiet: bool = True,
+        require_target_flow: bool = False,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("ravelab")):
+            await interaction.response.send_message(_access_denied_message("ravelab"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_ravelab_list,
+            min(max(int(limit), 1), 100),
+            min_score=max(0.0, min(float(min_score), 100.0)),
+            min_archetype=max(0.0, min(float(min_archetype), 100.0)),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            style=style,
+            require_quiet=require_quiet,
+            require_target_flow=require_target_flow,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:

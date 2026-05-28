@@ -30,6 +30,7 @@ Recommended live workflow:
 ```text
 /alpha
 /precrime min_tokens:20000
+/ravelab min_tokens:20000
 /pumpwatch min_tokens:20000
 /setupscore min_tokens:20000 strict:true
 /flowproof symbol:PLAYUSDT min_tokens:20000
@@ -62,6 +63,8 @@ Use `/alpha` as the triage queue. It blends structure, timing, CEX-flow, scanner
 Use `/precrime` before `/pumpwatch` when you specifically want the quiet pre-activity version of the thesis. It rewards holder/control concentration, low-float/high-FDV structure, Binance/Bitget/Gate inventory tells, short-fuse perp positioning, and thin visible books, but it penalizes names that already have breakout, volume, CMC-mover, or high-return chase heat. Keep `require_quiet:true` when hunting before the crowd notices; use `require_target_flow:true` when you only want confirmed labelled CEX-transfer rows.
 
 Historical anchors: `RAVEUSDT` on `2026-04-18` is the RAVE-style cap-table reflexivity example; `LABUSDT` on `2026-05-11` is the LAB-style venue-inventory stress example. These are used as pattern references for review/backtesting context, not as claims about current intent.
+
+Use `/ravelab` when you specifically want the bot to hunt for early versions of those two historical structures. It ranks a RAVE-like side for cap-table concentration, hidden/opaque float, low-float FDV gaps, quiet tape, and no-chase timing; it ranks a LAB-like side for controlled float plus labelled Binance/Bitget/Gate flow or venue-inventory stress. Use `style:rave` or `style:lab` to focus the screen, and keep `require_quiet:true` for early detection rather than post-breakout review.
 
 Use `/pumpwatch` as the fastest catch board. It does not force every row to have confirmed transfer evidence by default; it rank-orders target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, archetype match, and not-late risk into one watch state. Set `require_target_flow:true` when you only want verified Binance/Gate/Bitget transfer rows.
 

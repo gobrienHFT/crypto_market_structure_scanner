@@ -66,7 +66,9 @@ def _max_num(frame: pd.DataFrame, *columns: str, default: float = 0.0) -> pd.Ser
 def _bool_score(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(0.0, index=frame.index, dtype="float64")
-    return frame[column].fillna(False).astype(bool).astype(float) * 100.0
+    values = frame[column].astype("object").where(pd.notna(frame[column]), False)
+    truthy = values.astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
+    return truthy.astype(float) * 100.0
 
 
 def _safe_float(value: Any) -> float | None:

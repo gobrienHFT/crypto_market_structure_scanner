@@ -51,7 +51,7 @@ def _num(frame: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
 def _boolish(series: Any, *, index: pd.Index) -> pd.Series:
     if not isinstance(series, pd.Series):
         series = pd.Series(series if series is not None else False, index=index)
-    return series.fillna(False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
+    return series.astype("object").where(pd.notna(series), False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
 
 
 def _text(frame: pd.DataFrame, column: str) -> pd.Series:

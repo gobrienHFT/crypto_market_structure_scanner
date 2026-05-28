@@ -34,6 +34,20 @@ Candidates: /SLEEPUSDT /COILUSDT
 /COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | top10 86.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
 ```
 
+## `/ravelab min_tokens:20000`
+
+```text
+RAVE/LAB early-structure radar
+Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Style: both | Min early score: 58 | Min RAVE/LAB archetype: 45 | Quiet required: True | Target flow required: False
+Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
+Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Target-flow rows: 1 | Read: historical-analogue screen, not trade instruction.
+
+Candidates: /LABXUSDT /CAPUSDT
+
+/LABXUSDT | LAB-like | early 79/100 | RAVE 56 LAB 88 | dashboard 0 latent 92 | CEX Binance, Gate.io 2tx max 360.00K | control 99 float 84 | quiet 86 heat 0 | top10 91.0%, top100 99.2% | shorts 49.0% | anchor LABUSDT 2026-05-11 | next: watch for absorption after target-CEX inventory movement and first perp response
+/CAPUSDT | RAVE-like | early 59/100 | RAVE 58 LAB 25 | dashboard 0 latent 63 | CEX no target flow 0tx max n/a | control 100 float 88 | quiet 85 heat 0 | top10 94.0%, top100 99.8% | shorts 54.0% | anchor RAVEUSDT 2026-04-18 | next: watch for first volume lift/OI expansion without chase heat
+```
+
 ## `/corr threshold:0.5`
 
 ```text

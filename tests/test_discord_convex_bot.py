@@ -27,6 +27,7 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/fundingrates") == ""
     assert bot._normalize_symbol_query("/setupscore") == ""
     assert bot._normalize_symbol_query("/precrime") == ""
+    assert bot._normalize_symbol_query("/ravelab") == ""
     assert bot._normalize_symbol_query("/flowproof") == ""
     assert bot._normalize_symbol_query("/coincheck") == ""
     assert bot._normalize_symbol_query("/floattrap") == ""
@@ -1469,6 +1470,113 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
     assert "Binance, Gate.io 2tx max 240.00K" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/HOTUSDT" not in output
+
+
+def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "CAPUSDT",
+                "top10_holder_pct": 94.0,
+                "top100_holder_pct": 99.8,
+                "holder_count": 6_000,
+                "terminal_hidden_float_reflexivity_score": 92,
+                "terminal_control_plane_score": 90,
+                "centralized_ownership_score": 88,
+                "low_float_score": 88,
+                "float_trap_score": 84,
+                "fdv_to_market_cap": 12.0,
+                "locked_supply_pct": 74.0,
+                "ath_multiple": 35.0,
+                "terminal_distribution_pressure_score": 62,
+                "short_account_pct": 54.0,
+                "short_dominance_score": 48.0,
+                "ask_depth_1pct_usdt": 35_000,
+                "ask_depth_to_24h_volume_pct": 0.04,
+                "low_volatility_coil_score": 84.0,
+                "hour_return_pct": 0.1,
+                "day_return_pct": 0.6,
+                "price_change_24h_pct": 0.6,
+                "range_24h_pct": 2.5,
+                "hour_volume_multiple": 0.9,
+                "hour_trade_count_multiple": 0.95,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "LABXUSDT",
+                "cex_deposit_flow_score": 94,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 620_000,
+                "cex_deposit_24h_max_amount": 360_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Gate.io",
+                "cex_deposit_inventory_stress_score": 96,
+                "inventory_transfer_risk_score": 94,
+                "terminal_distribution_pressure_score": 92,
+                "terminal_control_plane_score": 86,
+                "venue_support_score": 74,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.2,
+                "holder_count": 8_000,
+                "centralized_ownership_score": 88.0,
+                "low_float_score": 84.0,
+                "float_trap_score": 80.0,
+                "fdv_to_market_cap": 9.0,
+                "locked_supply_pct": 65.0,
+                "short_account_pct": 49.0,
+                "short_dominance_score": 35.0,
+                "short_account_build_score": 25.0,
+                "ask_depth_1pct_usdt": 50_000,
+                "ask_depth_to_24h_volume_pct": 0.05,
+                "binance_bitget_gate_share_pct": 36.0,
+                "pre_pump_precision_score": 38.0,
+                "low_volatility_coil_score": 80.0,
+                "hour_return_pct": 0.3,
+                "day_return_pct": 1.0,
+                "price_change_24h_pct": 1.0,
+                "range_24h_pct": 3.5,
+                "hour_volume_multiple": 1.0,
+                "hour_trade_count_multiple": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "HOTRAVEUSDT",
+                "top10_holder_pct": 95.0,
+                "top100_holder_pct": 99.9,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "day_return_pct": 120.0,
+                "price_change_24h_pct": 120.0,
+                "range_24h_pct": 85.0,
+                "hour_volume_multiple": 15.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=45, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "RAVE/LAB early radar"
+    assert "Anchors: RAVEUSDT 2026-04-18" in output
+    assert "Candidates: /LABXUSDT /CAPUSDT" in output
+    assert "/LABXUSDT | LAB-like" in output
+    assert "anchor LABUSDT 2026-05-11" in output
+    assert "/CAPUSDT | RAVE-like" in output
+    assert "anchor RAVEUSDT 2026-04-18" in output
+    assert "/HOTRAVEUSDT" not in output
+
+    _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=45, min_tokens=20_000, style="rave")
+    rave_output = "\n".join(rave_chunks)
+    assert "/CAPUSDT | RAVE-like" in rave_output
+    assert "/LABXUSDT" not in rave_output
 
 
 def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypatch) -> None:
