@@ -38,15 +38,15 @@ Candidates: /SLEEPUSDT /COILUSDT
 
 ```text
 Strict RAVE/LAB crime-pump early radar
-Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Style: both | Min early score: 60 | Min RAVE/LAB archetype: 0 | Whale gate: >= 90.0% | Squeeze gate: >= 50 | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False
+Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Style: both | Min early score: 60 | Min RAVE/LAB archetype: 0 | Whale gate: >= 90.0% | Squeeze gate: >= 50 | History gate: >= 60d | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Target-flow rows: 1 | Read: historical-analogue screen, not trade instruction.
-All shown rows passed whale >= 90.0%, Binance+Bitget, dormant2m, squeeze >= 50.
+All shown rows passed whale >= 90.0%, Binance+Bitget, history >= 60d and dormant2m, squeeze >= 50.
 
 Candidates: /CAPUSDT /LABXUSDT
 
-/CAPUSDT | RAVE-like | early 73/100 | RAVE 58 LAB 25 | gates whale Y venue Y dormant2m Y squeeze Y | venues Bn Y/Bg Y/Gate N | whale 99.8% (t10 94.0%, t100 99.8%) | squeeze 62 shorts 54.0% | breakout 18 | CEX no target flow 0tx max n/a | control 100 float 88 | quiet 85 heat 0 | dashboard 0 latent 66 | anchor RAVEUSDT 2026-04-18 | next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
-/LABXUSDT | LAB-like | early 82/100 | RAVE 56 LAB 88 | gates whale Y venue Y dormant2m Y squeeze Y | venues Bn Y/Bg Y/Gate Y | whale 99.2% (t10 91.0%, t100 99.2%) | squeeze 58 shorts 51.0% | breakout 18 | CEX Binance, Gate.io 2tx max 360.00K | control 99 float 84 | quiet 86 heat 0 | dashboard 0 latent 92 | anchor LABUSDT 2026-05-11 | next: watch for absorption after target-CEX inventory movement and first perp response
+/CAPUSDT | RAVE-like | early 73/100 | RAVE 58 LAB 25 | gates whale Y venue Y dormant2m Y squeeze Y | venues Bn Y/Bg Y/Gate N | whale 99.8% (t10 94.0%, t100 99.8%) | squeeze 62 shorts 54.0% | history 180d | breakout 18 | CEX no target flow 0tx max n/a | control 100 float 88 | quiet 85 heat 0 | dashboard 0 latent 66 | anchor RAVEUSDT 2026-04-18 | next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
+/LABXUSDT | LAB-like | early 82/100 | RAVE 56 LAB 88 | gates whale Y venue Y dormant2m Y squeeze Y | venues Bn Y/Bg Y/Gate Y | whale 99.2% (t10 91.0%, t100 99.2%) | squeeze 58 shorts 51.0% | history 160d | breakout 18 | CEX Binance, Gate.io 2tx max 360.00K | control 99 float 84 | quiet 86 heat 0 | dashboard 0 latent 92 | anchor LABUSDT 2026-05-11 | next: watch for absorption after target-CEX inventory movement and first perp response
 ```
 
 ## `/corr threshold:0.5`

@@ -1477,6 +1477,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
         [
             {
                 "symbol": "CAPUSDT",
+                "history_days": 180,
                 "top10_holder_pct": 94.0,
                 "top100_holder_pct": 99.8,
                 "holder_count": 6_000,
@@ -1507,6 +1508,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
             },
             {
                 "symbol": "LABXUSDT",
+                "history_days": 160,
                 "cex_deposit_flow_score": 94,
                 "cex_deposit_flow_flag": True,
                 "cex_deposit_24h_count": 2,
@@ -1547,6 +1549,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
             },
             {
                 "symbol": "HOTRAVEUSDT",
+                "history_days": 180,
                 "top10_holder_pct": 95.0,
                 "top100_holder_pct": 99.9,
                 "terminal_hidden_float_reflexivity_score": 96,
@@ -1563,6 +1566,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
             },
             {
                 "symbol": "NOBITGETUSDT",
+                "history_days": 180,
                 "top10_holder_pct": 96.0,
                 "top100_holder_pct": 99.9,
                 "terminal_hidden_float_reflexivity_score": 96,
@@ -1580,6 +1584,27 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
+            {
+                "symbol": "YOUNGUSDT",
+                "history_days": 21,
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 85.0,
+                "binance_volume_share_pct": 12.0,
+                "bitget_volume_share_pct": 2.0,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
@@ -1590,7 +1615,8 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert title == "RAVE/LAB early radar"
     assert "Anchors: RAVEUSDT 2026-04-18" in output
     assert "Whale gate: >= 90.0%" in output
-    assert "All shown rows passed whale >= 90.0%, Binance+Bitget, dormant2m, squeeze >= 50." in output
+    assert "History gate: >= 60d" in output
+    assert "All shown rows passed whale >= 90.0%, Binance+Bitget, history >= 60d and dormant2m, squeeze >= 50." in output
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
     assert "/LABXUSDT" in output
@@ -1601,6 +1627,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "anchor RAVEUSDT 2026-04-18" in output
     assert "/HOTRAVEUSDT" not in output
     assert "/NOBITGETUSDT" not in output
+    assert "/YOUNGUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)
@@ -1617,8 +1644,15 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
             "_ravelab_rave_score": 58.0,
             "_ravelab_lab_score": 22.0,
             "_ravelab_early_gate": True,
+            "_ravelab_whale_gate": True,
+            "_ravelab_venue_gate": True,
+            "_ravelab_dormant_2m_gate": pd.NA,
             "_ravelab_structure_gate": True,
             "_ravelab_target_flow": False,
+            "_ravelab_has_binance": pd.NA,
+            "_ravelab_has_bitget": pd.NA,
+            "_ravelab_has_gate": pd.NA,
+            "_ravelab_min_history_days": 42,
             "cex_deposit_24h_target_exchanges": pd.NA,
             "cex_deposit_24h_count": pd.NA,
             "cex_deposit_24h_max_amount": pd.NA,
@@ -1631,6 +1665,8 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
 
     assert "/MISSUSDT | RAVE-like" in output
     assert "CEX no target flow 0tx max n/a" in output
+    assert "venues Bn N/Bg N/Gate N" in output
+    assert "needs 42d history" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
 
 

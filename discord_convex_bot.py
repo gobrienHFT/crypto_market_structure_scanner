@@ -132,6 +132,19 @@ def _boolish_series(series: Any, *, index: pd.Index | None = None) -> pd.Series:
     return series.astype("object").where(pd.notna(series), False).astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y", "on"})
 
 
+def _boolish_scalar(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 def _text_series(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series("", index=frame.index)
@@ -2741,7 +2754,12 @@ def _ravelab_anchor_for_side(side: str, rave_score: float, lab_score: float) -> 
     return (exemplar.symbol, exemplar.event_date) if exemplar is not None else ("", "")
 
 
-def _score_ravelab_early_frame(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.DataFrame:
+def _score_ravelab_early_frame(
+    frame: pd.DataFrame,
+    *,
+    min_whale_pct: float = 90.0,
+    min_history_days: int = 60,
+) -> pd.DataFrame:
     scored = frame.loc[:, ~frame.columns.duplicated()].copy()
     scored = apply_terminal_model(scored)
     scored = apply_archetype_model(scored)
@@ -2833,7 +2851,15 @@ def _score_ravelab_early_frame(frame: pd.DataFrame, *, min_whale_pct: float = 90
     broke_180d = _boolish_series(scored.get("broke_high_180d"), index=index)
     day_return_abs = _num_series(scored, "day_return_pct", default=float("nan")).abs()
     day_return_abs = day_return_abs.fillna(_num_series(scored, "price_change_24h_pct").abs())
-    dormant_2m = (~broke_90d) & (~broke_180d) & heat.lt(62.0) & late_penalty.lt(66.0) & day_return_abs.lt(35.0)
+    history_days = _num_series(scored, "history_days", default=0.0)
+    dormant_2m = (
+        history_days.ge(max(1, int(min_history_days)))
+        & (~broke_90d)
+        & (~broke_180d)
+        & heat.lt(62.0)
+        & late_penalty.lt(66.0)
+        & day_return_abs.lt(35.0)
+    )
     broke_5d = _boolish_series(scored.get("broke_high_5d"), index=index)
     broke_20d = _boolish_series(scored.get("broke_high_20d"), index=index)
     breakout = (
@@ -2897,6 +2923,8 @@ def _score_ravelab_early_frame(frame: pd.DataFrame, *, min_whale_pct: float = 90
     scored["_ravelab_venue_score"] = venue_component
     scored["_ravelab_venue_gate"] = venue_gate & (~major_excluded)
     scored["_ravelab_squeeze_score"] = squeeze
+    scored["_ravelab_history_days"] = history_days
+    scored["_ravelab_min_history_days"] = int(min_history_days)
     scored["_ravelab_dormant_2m_gate"] = dormant_2m & (~major_excluded)
     scored["_ravelab_breakout_score"] = breakout
     scored["_ravelab_structure_gate"] = structure_gate & (~major_excluded)
@@ -2911,16 +2939,17 @@ def _score_ravelab_early_frame(frame: pd.DataFrame, *, min_whale_pct: float = 90
 
 
 def _ravelab_next_check(row: pd.Series) -> str:
-    side = str(row.get("_ravelab_side", "") or "")
-    if not bool(row.get("_ravelab_whale_gate")):
+    side = _clean_scalar_text(row.get("_ravelab_side", ""))
+    min_history_days = int(_safe_float(row.get("_ravelab_min_history_days")) or 60)
+    if not _boolish_scalar(row.get("_ravelab_whale_gate")):
         return "skip until holder concentration clears the 90% whale gate"
-    if not bool(row.get("_ravelab_venue_gate")):
+    if not _boolish_scalar(row.get("_ravelab_venue_gate")):
         return "skip until Binance and Bitget venue evidence are both present"
-    if not bool(row.get("_ravelab_dormant_2m_gate")):
-        return "wait; recent high/heat means it is not a 2-month dormant setup"
-    if not bool(row.get("_ravelab_early_gate")):
+    if not _boolish_scalar(row.get("_ravelab_dormant_2m_gate")):
+        return f"wait; needs {min_history_days}d history and no recent 90D/180D high or chase heat"
+    if not _boolish_scalar(row.get("_ravelab_early_gate")):
         return "wait for heat/late penalty to reset before treating it as early"
-    if side != "RAVE-like" and not bool(row.get("_ravelab_target_flow")):
+    if side != "RAVE-like" and not _boolish_scalar(row.get("_ravelab_target_flow")):
         return "verify labelled Binance/Bitget/Gate inventory flow or venue-inventory stress"
     if side == "RAVE-like":
         return "watch 1D-5D highs, first volume lift, and OI expansion without chase heat"
@@ -2928,7 +2957,7 @@ def _ravelab_next_check(row: pd.Series) -> str:
 
 
 def _ravelab_line(row: pd.Series) -> str:
-    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     score = _safe_float(row.get("_ravelab_early_score")) or 0.0
     side = _clip_text(row.get("_ravelab_side", ""), 18) or "RAVE/LAB"
     rave = _safe_float(row.get("_ravelab_rave_score")) or 0.0
@@ -2948,17 +2977,19 @@ def _ravelab_line(row: pd.Series) -> str:
     whale_pct = _safe_pct(row.get("_ravelab_whale_pct"))
     squeeze = _safe_float(row.get("_ravelab_squeeze_score")) or 0.0
     breakout = _safe_float(row.get("_ravelab_breakout_score")) or 0.0
-    has_binance = "Y" if bool(row.get("_ravelab_has_binance")) else "N"
-    has_bitget = "Y" if bool(row.get("_ravelab_has_bitget")) else "N"
-    has_gate = "Y" if bool(row.get("_ravelab_has_gate")) else "N"
-    dormant = "Y" if bool(row.get("_ravelab_dormant_2m_gate")) else "N"
-    whale_gate = "Y" if bool(row.get("_ravelab_whale_gate")) else "N"
-    venue_gate = "Y" if bool(row.get("_ravelab_venue_gate")) else "N"
+    history_days = _safe_float(row.get("_ravelab_history_days"))
+    has_binance = "Y" if _boolish_scalar(row.get("_ravelab_has_binance")) else "N"
+    has_bitget = "Y" if _boolish_scalar(row.get("_ravelab_has_bitget")) else "N"
+    has_gate = "Y" if _boolish_scalar(row.get("_ravelab_has_gate")) else "N"
+    dormant = "Y" if _boolish_scalar(row.get("_ravelab_dormant_2m_gate")) else "N"
+    whale_gate = "Y" if _boolish_scalar(row.get("_ravelab_whale_gate")) else "N"
+    venue_gate = "Y" if _boolish_scalar(row.get("_ravelab_venue_gate")) else "N"
     squeeze_gate = "Y" if squeeze >= 50.0 else "N"
     top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
     top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
     whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    history_text = f"{history_days:.0f}d" if history_days is not None and history_days > 0 else "n/a"
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
@@ -2966,7 +2997,7 @@ def _ravelab_line(row: pd.Series) -> str:
         f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
         f"gates whale {whale_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
         f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
-        f"squeeze {squeeze:.0f} shorts {short_text} | breakout {breakout:.0f} | "
+        f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | breakout {breakout:.0f} | "
         f"CEX {targets} {cex_count}tx max {max_amount} | control {control:.0f} float {float_score:.0f} | "
         f"quiet {quiet:.0f} heat {heat:.0f} | dashboard {setup:.0f} latent {latent:.0f}{anchor} | next: {next_check}"
     )
@@ -2979,6 +3010,7 @@ def _load_ravelab_list(
     min_archetype: float = 0.0,
     min_whale_pct: float = 90.0,
     min_squeeze_score: float = 50.0,
+    min_history_days: int = 60,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
     style: str = "both",
@@ -2999,6 +3031,7 @@ def _load_ravelab_list(
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
         f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze gate: >= {float(min_squeeze_score):.0f} | "
+        f"History gate: >= {int(min_history_days)}d | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
         f"Quiet required: {require_quiet} | Target flow required: {require_target_flow}\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
@@ -3006,7 +3039,7 @@ def _load_ravelab_list(
     if frame.empty:
         return "RAVE/LAB early radar", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
 
-    scored = _score_ravelab_early_frame(frame, min_whale_pct=min_whale_pct)
+    scored = _score_ravelab_early_frame(frame, min_whale_pct=min_whale_pct, min_history_days=min_history_days)
     selected = scored[
         _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
         & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
@@ -3030,7 +3063,7 @@ def _load_ravelab_list(
         gate_counts = (
             f"Gate counts before filters: whale {int(_boolish_series(scored.get('_ravelab_whale_gate'), index=scored.index).sum())} | "
             f"Binance+Bitget {int(_boolish_series(scored.get('_ravelab_venue_gate'), index=scored.index).sum())} | "
-            f"dormant2m {int(_boolish_series(scored.get('_ravelab_dormant_2m_gate'), index=scored.index).sum())} | "
+            f"dormant2m/history {int(_boolish_series(scored.get('_ravelab_dormant_2m_gate'), index=scored.index).sum())} | "
             f"squeeze {int(_num_series(scored, '_ravelab_squeeze_score').ge(max(0.0, float(min_squeeze_score))).sum())}"
         )
         nearest = scored.sort_values(
@@ -3073,7 +3106,7 @@ def _load_ravelab_list(
     gate_summary = (
         f"All shown rows passed whale >= {float(min_whale_pct):.1f}%"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
-        f"{', dormant2m' if require_dormant_2m else ''}"
+        f"{f', history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
         f", squeeze >= {float(min_squeeze_score):.0f}."
     )
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
@@ -4063,6 +4096,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_archetype="Optional minimum RAVE or LAB historical-analogue score. Default 0 does not force analogy.",
         min_whale_pct="Required observed top-holder concentration percentage. Default 90.",
         min_squeeze_score="Required short-squeeze/perp-fuel score. Default 50.",
+        min_history_days="Required history coverage for the dormancy/no-pump gate. Default 60.",
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
@@ -4085,6 +4119,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_archetype: float = 0.0,
         min_whale_pct: float = 90.0,
         min_squeeze_score: float = 50.0,
+        min_history_days: int = 60,
         min_tokens: float = 20_000.0,
         limit: int = 20,
         lookback_hours: int = 24,
@@ -4108,6 +4143,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_archetype=max(0.0, min(float(min_archetype), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             min_squeeze_score=max(0.0, min(float(min_squeeze_score), 100.0)),
+            min_history_days=max(1, int(min_history_days)),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             style=style,
