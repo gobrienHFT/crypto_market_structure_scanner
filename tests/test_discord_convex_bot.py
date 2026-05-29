@@ -1490,7 +1490,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "ath_multiple": 35.0,
                 "terminal_distribution_pressure_score": 62,
                 "short_account_pct": 54.0,
-                "short_dominance_score": 48.0,
+                "short_dominance_score": 62.0,
+                "binance_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 2.0,
                 "ask_depth_1pct_usdt": 35_000,
                 "ask_depth_to_24h_volume_pct": 0.04,
                 "low_volatility_coil_score": 84.0,
@@ -1524,11 +1526,13 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "float_trap_score": 80.0,
                 "fdv_to_market_cap": 9.0,
                 "locked_supply_pct": 65.0,
-                "short_account_pct": 49.0,
-                "short_dominance_score": 35.0,
+                "short_account_pct": 51.0,
+                "short_dominance_score": 58.0,
                 "short_account_build_score": 25.0,
                 "ask_depth_1pct_usdt": 50_000,
                 "ask_depth_to_24h_volume_pct": 0.05,
+                "binance_volume_share_pct": 9.0,
+                "bitget_volume_share_pct": 2.0,
                 "binance_bitget_gate_share_pct": 36.0,
                 "pre_pump_precision_score": 38.0,
                 "low_volatility_coil_score": 80.0,
@@ -1557,23 +1561,48 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
+            {
+                "symbol": "NOBITGETUSDT",
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 85.0,
+                "binance_volume_share_pct": 12.0,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
 
-    title, chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=45, min_tokens=20_000)
+    title, chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000)
     output = "\n".join(chunks)
 
     assert title == "RAVE/LAB early radar"
     assert "Anchors: RAVEUSDT 2026-04-18" in output
-    assert "Candidates: /LABXUSDT /CAPUSDT" in output
+    assert "Whale gate: >= 90.0%" in output
+    assert "All shown rows passed whale >= 90.0%, Binance+Bitget, dormant2m, squeeze >= 50." in output
+    assert "Candidates:" in output
+    assert "/CAPUSDT" in output
+    assert "/LABXUSDT" in output
     assert "/LABXUSDT | LAB-like" in output
+    assert "gates whale Y venue Y dormant2m Y squeeze Y" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
     assert "/HOTRAVEUSDT" not in output
+    assert "/NOBITGETUSDT" not in output
 
-    _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=45, min_tokens=20_000, style="rave")
+    _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)
     assert "/CAPUSDT | RAVE-like" in rave_output
     assert "/LABXUSDT" not in rave_output
