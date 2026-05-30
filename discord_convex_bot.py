@@ -33,9 +33,11 @@ from holder_composition import (
     normalize_chain,
     resolve_contract_hint,
 )
+from market_structure_scoring import apply_lifecycle_model
 from pre_activity_radar import apply_pre_activity_radar
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 from scan_orchestrator import run_fresh_scan_frame
+from short_squeeze_scoring import apply_short_squeeze_model
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
 from trade_setup_pipeline import TradeBotConfig, TradeBotRuntime
@@ -3395,6 +3397,8 @@ def _score_ravelab_early_frame(
     scored = apply_terminal_model(scored)
     scored = apply_archetype_model(scored)
     scored = apply_timing_model(scored)
+    scored = apply_lifecycle_model(scored)
+    scored = apply_short_squeeze_model(scored)
     scored = apply_early_pump_radar(scored)
     scored = apply_pre_activity_radar(scored)
 
@@ -3446,6 +3450,8 @@ def _score_ravelab_early_frame(
             _num_series(scored, "silent_oi_accumulation_score"),
             _num_series(scored, "short_liquidation_fuel_score"),
             _num_series(scored, "short_squeeze_score"),
+            _num_series(scored, "funding_flip_score"),
+            _boolish_series(scored.get("fresh_flip_flag"), index=index).astype(float) * 100.0,
             _num_series(scored, "forced_buying_setup_score"),
             _num_series(scored, "perp_squeeze_confluence_score"),
             _score_linear_series(_num_series(scored, "oi_to_24h_volume_pct"), 2.0, 18.0),
@@ -3664,6 +3670,8 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     whale_pct = _safe_pct(row.get("_ravelab_whale_pct"))
     squeeze = _safe_float(row.get("_ravelab_squeeze_score")) or 0.0
     squeeze_fuel = _safe_float(row.get("_ravelab_squeeze_fuel_score")) or 0.0
+    short_squeeze_model = _safe_float(row.get("short_squeeze_score"))
+    crime_model = _safe_float(row.get("crime_pump_score_v2"))
     breakout = _safe_float(row.get("_ravelab_breakout_score")) or 0.0
     core_count = int(_safe_float(row.get("_ravelab_core_gate_count")) or 0)
     core_total = int(_safe_float(row.get("_ravelab_core_gate_total")) or 5)
@@ -3683,6 +3691,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     venue_gate = "Y" if _boolish_scalar(row.get("_ravelab_venue_gate")) else "N"
     squeeze_gate = "Y" if _boolish_scalar(row.get("_ravelab_squeeze_gate", squeeze >= 50.0)) else "N"
     short_majority = "Y" if _boolish_scalar(row.get("_ravelab_short_majority_gate", False)) else "N"
+    fresh_flip = "Y" if _boolish_scalar(row.get("fresh_flip_flag")) else "N"
     top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
     top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
     whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
@@ -3702,14 +3711,16 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
+    crime_text = f" crime {crime_model:.0f}/100" if crime_model is not None and crime_model > 0 else ""
+    short_squeeze_text = f" ssq {short_squeeze_model:.0f}" if short_squeeze_model is not None and short_squeeze_model > 0 else ""
     headline = (
         f"/{symbol} | {side} | {state} | core {core_count}/{core_total} | "
-        f"thesis {thesis_score:.0f}/100 early {score:.0f}/100 | blockers {missing_core}{anchor}"
+        f"thesis {thesis_score:.0f}/100{crime_text} early {score:.0f}/100 | blockers {missing_core}{anchor}"
     )
     proof = (
         f"  proof: whale {whale_text} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
         f"noPump {no_pump} pump60 {pump_text} {pump_source} | hist {history_text} dormant2m {dormant} | "
-        f"squeeze {squeeze:.0f}({squeeze_gate}) fuel {squeeze_fuel:.0f} shortMaj {short_majority} shorts {short_text} | highs {breakout_windows} | "
+        f"squeeze {squeeze:.0f}({squeeze_gate}) fuel {squeeze_fuel:.0f}{short_squeeze_text} flip {fresh_flip} shortMaj {short_majority} shorts {short_text} | highs {breakout_windows} | "
         f"CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | holder {holder_evidence} | venue {venue_evidence}"
     )
     if not detail:
@@ -3721,7 +3732,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     )
     evidence = (
         f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | holder {holder_evidence} | "
-        f"venue {venue_evidence} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shortMaj {short_majority} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
+        f"venue {venue_evidence} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f}{short_squeeze_text} flip {fresh_flip} shortMaj {short_majority} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
     )
     flow = (
         f"  flow/timing: CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | "

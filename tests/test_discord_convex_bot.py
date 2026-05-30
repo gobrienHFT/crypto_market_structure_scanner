@@ -2066,6 +2066,56 @@ def test_ravelab_squeeze_gate_requires_fuel_not_short_pct_alone() -> None:
     assert float(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_fuel_score"]) < 40.0
 
 
+def test_ravelab_squeeze_gate_uses_funding_flip_model() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "FLIPUSDT",
+                "history_days": 180,
+                **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+                "top10_holder_pct": 94.0,
+                "short_account_pct": 54.0,
+                "long_short_account_ratio": 0.82,
+                "predicted_funding_pct": 0.014,
+                "carry_funding_pct": 0.012,
+                "last_settled_funding_pct": -0.016,
+                "prior_settled_funding_pct": -0.012,
+                "funding_flip_delta_pct": 0.030,
+                "premium_index_pct": 0.08,
+                "basis_rate_pct": 0.06,
+                "broke_high_5d": True,
+                "broke_high_20d": True,
+                "upside_to_ath_pct": 200.0,
+                "oi_delta_pct": 7.0,
+                "oi_to_24h_volume_pct": 40.0,
+                "oi_to_market_cap_pct": 12.0,
+                "terminal_hidden_float_reflexivity_score": 92,
+                "terminal_control_plane_score": 90,
+                "centralized_ownership_score": 88,
+                "low_float_score": 88,
+                "fdv_to_market_cap": 12.0,
+                "locked_supply_pct": 74.0,
+                "binance_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 2.0,
+            }
+        ]
+    )
+
+    scored = bot._score_ravelab_early_frame(frame)
+    holder_evidence_mask, _ = bot._ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0)
+    row = scored.iloc[0]
+
+    assert float(row["funding_flip_score"]) > 50.0
+    assert float(row["short_squeeze_score"]) > 40.0
+    assert bool(row["_ravelab_squeeze_gate"])
+    line = bot._ravelab_line(row)
+    assert "crime " in line
+    assert "ssq " in line
+    assert "flip N" in line
+
+
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
     row = pd.Series(
         {
