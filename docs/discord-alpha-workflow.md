@@ -29,6 +29,7 @@ Recommended live workflow:
 
 ```text
 /alpha
+/prime
 /precrime min_tokens:20000
 /ravelab min_tokens:20000
 /pumpwatch min_tokens:20000
@@ -59,6 +60,8 @@ Recommended live workflow:
 ```
 
 Use `/alpha` as the triage queue. It first applies the strict thesis gate, observed 90%+ holder concentration with ETH/BNB/ARB chain+contract source/count evidence plus Binance+Bitget trading evidence, then blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact watchlist.
+
+Use `/prime` as the simplest hard-gated RAVE/LAB operator queue. It uses the strict `/ravelab` gates with near misses hidden by default and exposes a short `trigger` choice: `all`, `triggered`, `flow`, `breakout`, or `core`. Start there when you want the cleanest list of names to inspect now; use `/ravelab` when you need diagnostics, near misses, style filtering, or full evidence rows.
 
 Use `/precrime` before `/pumpwatch` when you specifically want the quiet pre-activity version of the thesis. It now applies the hard gates first by default: observed holder concentration at least `min_whale_pct` (90%), ETH/BNB/ARB chain+contract holder evidence, and Binance+Bitget trading evidence. After that, it rewards holder/control concentration, low-float/high-FDV structure, Binance/Bitget/Gate inventory tells, short-fuse perp positioning, and thin visible books, but it penalizes names that already have breakout, volume, CMC-mover, or high-return chase heat. Keep `require_quiet:true` when hunting before the crowd notices; use `require_target_flow:true` when you only want confirmed labelled CEX-transfer rows. Only relax `require_holder_evidence` or `require_binance_bitget` for diagnostics.
 

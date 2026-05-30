@@ -274,6 +274,7 @@ def _feature_required_tier(feature: str) -> str:
         "pumpwatch": "paid",
         "precrime": "paid",
         "ravelab": "paid",
+        "prime": "paid",
         "flowproof": "paid",
         "coincheck": "paid",
         "floattrap": "paid",
@@ -591,6 +592,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
         "SETUPSCORE",
         "PRECRIME",
         "RAVELAB",
+        "PRIME",
         "FLOWPROOF",
         "COINCHECK",
         "FLOATTRAP",
@@ -3847,6 +3849,50 @@ def _ravelab_near_miss_rows(
     ).head(min(max(int(limit), 0), 30))
 
 
+def _normalize_ravelab_trigger_filter(trigger_filter: str) -> str:
+    normalized = str(trigger_filter or "all").strip().lower().replace("-", "_")
+    aliases = {
+        "any": "triggered",
+        "trigger": "triggered",
+        "triggers": "triggered",
+        "whale": "flow",
+        "whale_flow": "flow",
+        "cex": "target_flow",
+        "cex_flow": "target_flow",
+        "target": "target_flow",
+        "targetflow": "target_flow",
+        "breakouts": "breakout",
+        "high": "breakout",
+        "highs": "breakout",
+        "core_watch": "core",
+        "watch": "core",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in {"all", "triggered", "flow", "target_flow", "breakout", "core"} else "all"
+
+
+def _ravelab_trigger_filter_mask(frame: pd.DataFrame, trigger_filter: str) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    mode = _normalize_ravelab_trigger_filter(trigger_filter)
+    whale_flow = _boolish_series(frame.get("_ravelab_whale_origin_flow"), index=frame.index)
+    target_flow = _boolish_series(frame.get("_ravelab_target_flow"), index=frame.index)
+    breakout = _boolish_series(frame.get("_ravelab_breakout_any"), index=frame.index)
+    funding_flip = _boolish_series(frame.get("fresh_flip_flag"), index=frame.index)
+    core_full = _num_series(frame, "_ravelab_core_gate_count").ge(_num_series(frame, "_ravelab_core_gate_total", default=5.0))
+    if mode == "flow":
+        return whale_flow.fillna(False)
+    if mode == "target_flow":
+        return target_flow.fillna(False)
+    if mode == "breakout":
+        return breakout.fillna(False)
+    if mode == "triggered":
+        return (whale_flow | target_flow | breakout | funding_flip).fillna(False)
+    if mode == "core":
+        return (core_full & ~(whale_flow | target_flow | breakout | funding_flip)).fillna(False)
+    return pd.Series(True, index=frame.index)
+
+
 def _load_ravelab_list(
     limit: int,
     *,
@@ -3867,6 +3913,7 @@ def _load_ravelab_list(
     require_holder_evidence: bool = True,
     require_breakout_high: bool = False,
     require_whale_origin_flow: bool = False,
+    trigger_filter: str = "all",
     near_miss_limit: int = 5,
     detail: bool = False,
 ) -> tuple[str, list[str]]:
@@ -3877,6 +3924,7 @@ def _load_ravelab_list(
     style_key = str(style or "both").strip().lower()
     if style_key not in {"both", "rave", "lab"}:
         style_key = "both"
+    trigger_filter_key = _normalize_ravelab_trigger_filter(trigger_filter)
     breakout_days, ignored_breakout_windows = _parse_breakout_window_list(breakout_windows)
     breakout_label = ",".join(f"{days}D" for days in breakout_days) if breakout_days else "disabled"
     pump_proof_days = max(1, min(60, int(min_history_days)))
@@ -3895,7 +3943,7 @@ def _load_ravelab_list(
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
         f"Quiet required: {require_quiet} | Target flow required: {require_target_flow} | Whale-origin CEX required: {require_whale_origin_flow} | "
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
-        f"Detail: {detail}{ignored_breakout_text}\n"
+        f"Trigger filter: {trigger_filter_key} | Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
         "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
@@ -3958,6 +4006,8 @@ def _load_ravelab_list(
         selected = _ravelab_apply_thesis_columns(selected, min_squeeze_score=min_squeeze_score)
         if require_breakout_high:
             selected = selected[_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index)].copy()
+    if trigger_filter_key != "all" and not selected.empty:
+        selected = selected[_ravelab_trigger_filter_mask(selected, trigger_filter_key)].copy()
     holder_evidence_rows, holder_contract_rows, holder_pct_only_rows = _ravelab_holder_evidence_counts(selected)
 
     if selected.empty:
@@ -4092,6 +4142,46 @@ def _load_ravelab_list(
         for _, row in near_misses.iterrows():
             lines.append(_ravelab_line(row, detail=detail))
     return "RAVE/LAB early radar", _chunk_text_lines(lines)
+
+
+def _load_prime_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    trigger: str = "all",
+    breakout_windows: str = "1D,2D,3D,4D,5D,20D",
+) -> tuple[str, list[str]]:
+    trigger_key = _normalize_ravelab_trigger_filter(trigger)
+    _title, chunks = _load_ravelab_list(
+        limit,
+        min_score=0.0,
+        min_archetype=0.0,
+        min_whale_pct=90.0,
+        min_squeeze_score=50.0,
+        min_history_days=60,
+        max_recent_pump_pct=35.0,
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+        breakout_windows=breakout_windows,
+        style="both",
+        require_quiet=True,
+        require_target_flow=False,
+        require_binance_bitget=True,
+        require_dormant_2m=True,
+        require_holder_evidence=True,
+        require_breakout_high=False,
+        require_whale_origin_flow=False,
+        trigger_filter=trigger_key,
+        near_miss_limit=0,
+        detail=False,
+    )
+    intro = (
+        "Prime crime-pump operator queue\n"
+        f"Strict defaults: 90%+ ETH/BNB/ARB holder evidence, Binance+Bitget, 60D no-pump/dormancy, squeeze stack. "
+        f"Trigger filter: {trigger_key} | Near misses hidden; use `/ravelab near_miss_limit:5` for diagnostics.\n"
+    )
+    return "Prime crime-pump queue", _chunk_text_lines((intro + "\n".join(chunks)).splitlines())
 
 
 def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, lookback_hours: int | None = None) -> tuple[str, str]:
@@ -5190,6 +5280,56 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
+    prime_kwargs = {"name": "prime", "description": "Clean strict queue for hard-gated early crime-pump structures."}
+    if guild is not None:
+        prime_kwargs["guild"] = guild
+
+    @tree.command(**prime_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        trigger="Filter to all hard-gated rows, rows with catalysts, whale-CEX flow, or high breakouts.",
+        breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
+    )
+    @app_commands.choices(
+        trigger=[
+            app_commands.Choice(name="all hard-gated rows", value="all"),
+            app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="whale-CEX flow", value="flow"),
+            app_commands.Choice(name="breakout highs", value="breakout"),
+            app_commands.Choice(name="core watch only", value="core"),
+        ]
+    )
+    async def prime(
+        interaction: discord.Interaction,
+        min_tokens: float = 20_000.0,
+        limit: int = 12,
+        lookback_hours: int = 24,
+        trigger: str = "all",
+        breakout_windows: str = "1D,2D,3D,4D,5D,20D",
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("prime")):
+            await interaction.response.send_message(_access_denied_message("prime"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_prime_list,
+            min(max(int(limit), 1), 50),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            trigger=trigger,
+            breakout_windows=breakout_windows,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
     flowproof_kwargs = {"name": "flowproof", "description": "Show transfer proof and data status for one symbol."}
     if guild is not None:
         flowproof_kwargs["guild"] = guild
@@ -6100,7 +6240,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/alpha`, `/precrime min_tokens:20000`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
+                    "Convex bot online. Use `/convex_status`, `/alpha`, `/prime`, `/precrime min_tokens:20000`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")

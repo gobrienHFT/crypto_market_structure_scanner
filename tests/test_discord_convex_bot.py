@@ -39,6 +39,7 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/setupscore") == ""
     assert bot._normalize_symbol_query("/precrime") == ""
     assert bot._normalize_symbol_query("/ravelab") == ""
+    assert bot._normalize_symbol_query("/prime") == ""
     assert bot._normalize_symbol_query("/flowproof") == ""
     assert bot._normalize_symbol_query("/coincheck") == ""
     assert bot._normalize_symbol_query("/floattrap") == ""
@@ -1958,6 +1959,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Near misses: 5" in output
+    assert "Trigger filter: all" in output
     assert "Core 5/5: 2" in output
     assert "Whale-origin CEX rows: 1" in output
     assert "Near misses shown: 2" in output
@@ -2043,6 +2045,24 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "holder pct-only; needs ETH/BNB/ARB chain+contract+source/count" in diagnostic_output
     assert "/COUNTONLYUSDT" in diagnostic_output
     assert "holder holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
+
+    prime_title, prime_chunks = bot._load_prime_list(10, min_tokens=20_000)
+    prime_output = "\n".join(prime_chunks)
+    assert prime_title == "Prime crime-pump queue"
+    assert "Prime crime-pump operator queue" in prime_output
+    assert "Strict defaults: 90%+ ETH/BNB/ARB holder evidence, Binance+Bitget, 60D no-pump/dormancy, squeeze stack." in prime_output
+    assert "Trigger filter: all | Near misses hidden" in prime_output
+    assert "Near misses: 0" in prime_output
+    assert "Trigger queue:" in prime_output
+    assert "/CAPUSDT" in prime_output
+    assert "/LABXUSDT" in prime_output
+    assert "Near misses (blocked" not in prime_output
+
+    _, prime_flow_chunks = bot._load_prime_list(10, min_tokens=20_000, trigger="flow")
+    prime_flow_output = "\n".join(prime_flow_chunks)
+    assert "Trigger filter: flow | Near misses hidden" in prime_flow_output
+    assert "/LABXUSDT | LAB-like" in prime_flow_output
+    assert "/CAPUSDT" not in prime_flow_output
 
 
 def test_ravelab_squeeze_gate_requires_fuel_not_short_pct_alone() -> None:
