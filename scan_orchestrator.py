@@ -100,6 +100,8 @@ def run_scanner_scan(
         frame.insert(0, "scanned_at_utc", started_at)
     if "scan_mode" not in frame.columns:
         frame.insert(1, "scan_mode", mode)
+    if "binance_perp_universe" not in frame.columns:
+        frame["binance_perp_universe"] = True
     if write_discord_cache:
         try:
             scanner_app._write_latest_convex_longs_cache(frame, scan_mode=mode)

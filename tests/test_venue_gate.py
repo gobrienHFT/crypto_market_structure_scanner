@@ -20,6 +20,23 @@ def test_binance_bitget_venue_gate_rejects_gate_only_rows(monkeypatch) -> None:
     assert selected["symbol"].tolist() == ["BITGETUSDT"]
 
 
+def test_binance_bitget_venue_gate_can_require_explicit_binance_evidence(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
+    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "0")
+    frame = pd.DataFrame(
+        [
+            {"symbol": "SYMBOLONLYUSDT", "trade_bucket_score": 90, "bitget_volume_share_pct": 1.0},
+            {"symbol": "MARKEDUSDT", "trade_bucket_score": 89, "binance_perp_universe": True, "bitget_volume_share_pct": 1.0},
+            {"symbol": "SHAREUSDT", "trade_bucket_score": 88, "binance_volume_share_pct": 0.1, "bitget_volume_share_pct": 1.0},
+            {"symbol": "GATEUSDT", "trade_bucket_score": 87, "binance_perp_universe": True, "gate_volume_share_pct": 3.0},
+        ]
+    )
+
+    selected = apply_binance_bitget_venue_gate(frame)
+
+    assert selected["symbol"].tolist() == ["MARKEDUSDT", "SHAREUSDT"]
+
+
 def test_binance_bitget_venue_header_treats_gate_as_optional(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
 

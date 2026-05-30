@@ -133,8 +133,11 @@ DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
 DISCORD_WATCHER_TOP_N=25
 DISCORD_WATCHER_REALERT_HOURS=12
 DISCORD_REQUIRE_BITGET_OR_GATE=1
+DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
+
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` for legacy caches generated from the Binance perp universe; set it to `0` when auditing mixed rows so symbol text alone cannot satisfy Binance evidence.
 
 For a dedicated transfer monitor:
 

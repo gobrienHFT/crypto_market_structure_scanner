@@ -194,7 +194,11 @@ DISCORD_CONVEX_ALERTS_ENABLED=1
 DISCORD_CONVEX_ALERT_TOP_N=10
 DISCORD_CONVEX_ALERT_MIN_SCORE=0
 DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES=240
+DISCORD_REQUIRE_BITGET_OR_GATE=1
+DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1
 ```
+
+Fresh scans write `binance_perp_universe=true` before Discord gates run. `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` keeps older cache files compatible; set it to `0` when testing mixed non-Binance rows so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text.
 
 Per-symbol cooldown state is stored locally in:
 

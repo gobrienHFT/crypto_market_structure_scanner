@@ -55,8 +55,26 @@ def _text_column(frame: pd.DataFrame, column: str) -> pd.Series:
     return frame.get(column, pd.Series("", index=frame.index)).fillna("").astype(str)
 
 
+def _boolish_column(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(False, index=frame.index)
+    return (
+        frame[column]
+        .astype("object")
+        .where(pd.notna(frame[column]), False)
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"1", "true", "yes", "y", "on"})
+    )
+
+
 def binance_bitget_venue_gate_enabled() -> bool:
     return _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True)
+
+
+def assume_symbol_universe_is_binance_perp() -> bool:
+    return _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True)
 
 
 def binance_bitget_min_share_pct() -> float:
@@ -72,8 +90,14 @@ def binance_bitget_venue_mask(frame: pd.DataFrame, *, allow_cex_flow_targets: bo
     binance_share = _numeric_column(frame, "binance_volume_share_pct").gt(min_share)
     bitget_share = _numeric_column(frame, "bitget_volume_share_pct").gt(min_share)
     top_venue = _text_column(frame, "top_venue")
+    explicit_binance_perp = (
+        _boolish_column(frame, "binance_perp_universe")
+        | _boolish_column(frame, "is_binance_perp")
+        | _boolish_column(frame, "_ravelab_binance_perp_universe")
+    )
+    implicit_binance_perp = symbols if assume_symbol_universe_is_binance_perp() else pd.Series(False, index=frame.index)
 
-    has_binance = symbols | binance_share | top_venue.str.contains(BINANCE_RE, na=False)
+    has_binance = explicit_binance_perp | implicit_binance_perp | binance_share | top_venue.str.contains(BINANCE_RE, na=False)
     has_bitget = bitget_share | top_venue.str.contains(BITGET_RE, na=False)
     return (has_binance & has_bitget).fillna(False)
 
@@ -176,8 +200,9 @@ def binance_bitget_venue_header(*, allow_cex_flow_targets: bool = False) -> str:
         return "Venue gate: disabled"
     min_share = binance_bitget_min_share_pct()
     share_text = "any visible Bitget share" if min_share <= 0 else f"Bitget >{min_share:.2f}% share"
+    binance_text = "symbol-universe Binance perp marker/share" if assume_symbol_universe_is_binance_perp() else "explicit Binance perp marker/share"
     flow_text = "; transfer targets are supporting evidence only" if allow_cex_flow_targets else ""
-    return f"Venue gate: Binance perp + Bitget trading evidence required ({share_text}); Gate optional{flow_text}"
+    return f"Venue gate: Binance perp + Bitget trading evidence required ({binance_text}; {share_text}); Gate optional{flow_text}"
 
 
 # Backward-compatible names for older imports. Their behavior now follows the

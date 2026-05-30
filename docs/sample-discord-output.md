@@ -7,7 +7,7 @@ These examples are representative text outputs for reviewers. Live values depend
 ```text
 Alpha brief - strict thesis-gated convex watchlist
 Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Scan mode: Deep | Updated: 2026-05-16 15:40:00 UTC
-Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only
 Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel.
 
 Candidates: /FLOWUSDT /RAVEUSDT /PLAYUSDT
@@ -108,7 +108,7 @@ Matches: 3
 20D high breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_high_20d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 1
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 1
 
 Matches: 2 | Strict thesis matches: 1
 
@@ -122,7 +122,7 @@ Matches: 2 | Strict thesis matches: 1
 90D low breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_low_90d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 0
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 0
 
 Matches: 2 | Strict thesis matches: 0
 
@@ -232,7 +232,7 @@ Principle: small losses; stay exposed only while structure remains intact
 ```text
 Wallet-to-CEX flow monitor
 The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.
-Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
+Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only
 Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
 Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
@@ -279,7 +279,7 @@ Use `/flowcoin symbol:<symbol>` for single-coin detail/query URL and `/flowhealt
 ```text
 Early wallet-to-CEX flow sweep
 The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.
-Source: fresh Deep scan at 2026-05-16 15:45:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
+Source: fresh Deep scan at 2026-05-16 15:45:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only
 Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
 Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
@@ -298,7 +298,7 @@ Next check: Watch whether CEX balances keep rising, OI/volume expands, and price
 
 ```text
 CEX inventory-stress monitor
-Source: fresh Deep scan at 2026-05-16 15:47:00 UTC | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
+Source: fresh Deep scan at 2026-05-16 15:47:00 UTC | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only
 Inventory-stress rows before venue gate: 2 | After venue gate: 1
 
 Candidates: /FLOWUSDT
@@ -345,7 +345,7 @@ API fallback readiness:
 
 ```text
 Seth flow checklist
-Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only | Structure gate: dormant/early only
+Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Structure gate: dormant/early only
 Confirmed target-CEX flow rows: 2 | Whale+short+dormant pass: 1
 
 Checklist: 1 flow -> 2 whale dominated -> 3 >50% short accounts -> 4 dormant/early, not already wild -> 5 research state.

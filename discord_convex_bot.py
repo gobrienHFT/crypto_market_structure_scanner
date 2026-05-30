@@ -2474,8 +2474,15 @@ def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
         return pd.Series(False, index=frame.index)
     top_venue = _text_series(frame, "top_venue")
     symbols = _text_series(frame, "symbol")
+    explicit_binance_perp = (
+        _boolish_series(frame.get("binance_perp_universe"), index=frame.index)
+        | _boolish_series(frame.get("is_binance_perp"), index=frame.index)
+        | _boolish_series(frame.get("_ravelab_binance_perp_universe"), index=frame.index)
+    )
+    implicit_binance_perp = symbols.ne("") if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True) else pd.Series(False, index=frame.index)
     has_binance = (
-        symbols.ne("")
+        explicit_binance_perp
+        | implicit_binance_perp
         | _num_series(frame, "binance_volume_share_pct").gt(0.0)
         | top_venue.str.contains(BINANCE_PATTERN, na=False)
     )
@@ -2486,7 +2493,12 @@ def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
 def _thesis_venue_header() -> str:
     if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return "Venue gate: disabled"
-    return "Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only"
+    binance_text = (
+        "scanner symbol universe/Binance marker or Binance venue share"
+        if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True)
+        else "explicit Binance perp marker or Binance venue share"
+    )
+    return f"Venue gate: Binance perp + Bitget trading evidence required ({binance_text}); Gate is optional evidence only"
 
 
 def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
@@ -3490,7 +3502,12 @@ def _score_ravelab_early_frame(
     binance_share = _num_series(scored, "binance_volume_share_pct")
     bitget_share = _num_series(scored, "bitget_volume_share_pct")
     gate_share = _num_series(scored, "gate_volume_share_pct")
-    binance_perp_universe = symbols.ne("")
+    explicit_binance_perp = (
+        _boolish_series(scored.get("binance_perp_universe"), index=index)
+        | _boolish_series(scored.get("is_binance_perp"), index=index)
+    )
+    implicit_binance_perp = symbols.ne("") if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True) else pd.Series(False, index=index)
+    binance_perp_universe = explicit_binance_perp | implicit_binance_perp
     has_binance = binance_perp_universe | binance_share.gt(0.0) | top_venue.str.contains(BINANCE_PATTERN, na=False)
     has_bitget = bitget_share.gt(0.0) | top_venue.str.contains(BITGET_PATTERN, na=False)
     has_gate = gate_share.gt(0.0) | top_venue.str.contains(GATE_PATTERN, na=False) | targets.str.contains(GATE_PATTERN, na=False)
