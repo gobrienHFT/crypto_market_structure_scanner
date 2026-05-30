@@ -34,6 +34,7 @@ def test_terminal_timing_alert_source_requires_both_scores(monkeypatch) -> None:
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
             },
             {
@@ -111,6 +112,7 @@ def test_timing_alert_source_excludes_fragile_states(monkeypatch) -> None:
                 "token_platform": "ethereum",
                 "token_contract": "0x2222222222222222222222222222222222222222",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
             },
             {
@@ -150,6 +152,7 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "token_platform": "ethereum",
                 "token_contract": "0x3333333333333333333333333333333333333333",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 95.0,
             },
             {
@@ -165,6 +168,7 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "token_platform": "bsc",
                 "token_contract": "0x4444444444444444444444444444444444444444",
                 "holder_source": "BscScan holder endpoint",
+                "top10_holder_pct": 92.0,
                 "top100_holder_pct": 99.0,
             },
         ]
@@ -197,6 +201,7 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
                 "token_platform": "ethereum",
                 "token_contract": "0x5555555555555555555555555555555555555555",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
             },
             {
@@ -260,6 +265,7 @@ def test_terminal_alert_source_requires_binance_bitget_by_default(monkeypatch) -
                 "token_platform": "arbitrum",
                 "token_contract": "0x6666666666666666666666666666666666666666",
                 "holder_source": "Arbiscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
             },
         ]

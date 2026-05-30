@@ -23,6 +23,17 @@ def test_select_convex_long_candidates_applies_score_holder_and_venue_gates(monk
                 "top100_holder_pct": 99.0,
             },
             {
+                "symbol": "TOP100ONLYUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 89,
+                "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 55.0,
+                "top100_holder_pct": 99.0,
+            },
+            {
                 "symbol": "GOODUSDT",
                 "trade_bucket": "Convex Long",
                 "trade_bucket_score": 80,
@@ -30,6 +41,7 @@ def test_select_convex_long_candidates_applies_score_holder_and_venue_gates(monk
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
             },
             {"symbol": "WATCHUSDT", "trade_bucket": "Watch", "trade_bucket_score": 95, "bitget_volume_share_pct": 5.0},
@@ -72,6 +84,7 @@ def test_run_scanner_scan_temporarily_overrides_cex_flow_threshold(monkeypatch) 
                     "token_platform": "ethereum",
                     "token_contract": "0x1111111111111111111111111111111111111111",
                     "holder_source": "Etherscan holder endpoint",
+                    "top10_holder_pct": 91.0,
                     "top100_holder_pct": 99.0,
                 }
             ]

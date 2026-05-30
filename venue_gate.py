@@ -12,6 +12,7 @@ BINANCE_RE = re.compile(r"\bbinance\b", re.IGNORECASE)
 BITGET_RE = re.compile(r"\bbitget\b", re.IGNORECASE)
 THESIS_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 THESIS_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
+THESIS_MIN_TOP10_HOLDER_PCT = 90.0
 
 
 def _env_value(name: str, default: str = "") -> str:
@@ -103,6 +104,14 @@ def binance_bitget_venue_mask(frame: pd.DataFrame, *, allow_cex_flow_targets: bo
     return (has_binance & has_bitget).fillna(False)
 
 
+def _binance_bitget_required_header(*, allow_cex_flow_targets: bool = False) -> str:
+    min_share = binance_bitget_min_share_pct()
+    share_text = "any visible Bitget share" if min_share <= 0 else f"Bitget >{min_share:.2f}% share"
+    binance_text = "symbol-universe Binance perp marker/share" if assume_symbol_universe_is_binance_perp() else "explicit Binance perp marker/share"
+    flow_text = "; transfer targets are supporting evidence only" if allow_cex_flow_targets else ""
+    return f"Venue gate: Binance perp + Bitget trading evidence required ({binance_text}; {share_text}); Gate optional{flow_text}"
+
+
 def apply_binance_bitget_venue_gate(frame: pd.DataFrame, *, allow_cex_flow_targets: bool = True) -> pd.DataFrame:
     if frame.empty or not binance_bitget_venue_gate_enabled():
         return frame.copy()
@@ -158,9 +167,8 @@ def holder_concentration_mask(
     if frame.empty:
         return pd.Series(False, index=frame.index)
     top10 = _pct_column(frame, "top10_holder_pct").fillna(0.0)
-    top100 = _pct_column(frame, "top100_holder_pct").fillna(0.0)
-    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
-    gate = whale_pct.ge(max(0.0, float(min_whale_pct)))
+    threshold = max(THESIS_MIN_TOP10_HOLDER_PCT, float(min_whale_pct))
+    gate = top10.ge(threshold)
     if require_holder_evidence:
         gate = gate & holder_evidence_mask(frame)
     return gate.fillna(False)
@@ -179,7 +187,7 @@ def apply_thesis_alert_gate(
     gated = frame[holder_concentration_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=require_holder_evidence)].copy()
     if gated.empty or not require_venue:
         return gated
-    return apply_binance_bitget_venue_gate(gated, allow_cex_flow_targets=allow_cex_flow_targets)
+    return gated[binance_bitget_venue_mask(gated, allow_cex_flow_targets=allow_cex_flow_targets)].copy()
 
 
 def thesis_alert_header(
@@ -189,24 +197,21 @@ def thesis_alert_header(
     require_venue: bool = True,
     allow_cex_flow_targets: bool = False,
 ) -> str:
-    holder = f"Holder gate: observed top-holder concentration >= {float(min_whale_pct):.1f}%"
+    threshold = max(THESIS_MIN_TOP10_HOLDER_PCT, float(min_whale_pct))
+    holder = f"Holder gate: observed top10 holder concentration >= {threshold:.1f}%"
     if require_holder_evidence:
         holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence"
     else:
         holder = f"{holder}; holder evidence diagnostic relaxed"
     if not require_venue:
         return f"{holder} | Venue gate: disabled"
-    return f"{holder} | {binance_bitget_venue_header(allow_cex_flow_targets=allow_cex_flow_targets)}"
+    return f"{holder} | {_binance_bitget_required_header(allow_cex_flow_targets=allow_cex_flow_targets)}"
 
 
 def binance_bitget_venue_header(*, allow_cex_flow_targets: bool = False) -> str:
     if not binance_bitget_venue_gate_enabled():
         return "Venue gate: disabled"
-    min_share = binance_bitget_min_share_pct()
-    share_text = "any visible Bitget share" if min_share <= 0 else f"Bitget >{min_share:.2f}% share"
-    binance_text = "symbol-universe Binance perp marker/share" if assume_symbol_universe_is_binance_perp() else "explicit Binance perp marker/share"
-    flow_text = "; transfer targets are supporting evidence only" if allow_cex_flow_targets else ""
-    return f"Venue gate: Binance perp + Bitget trading evidence required ({binance_text}; {share_text}); Gate optional{flow_text}"
+    return _binance_bitget_required_header(allow_cex_flow_targets=allow_cex_flow_targets)
 
 
 # Backward-compatible names for older imports. Their behavior now follows the

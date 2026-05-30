@@ -52,7 +52,7 @@ def test_thesis_alert_header_names_holder_and_venue_gates(monkeypatch) -> None:
 
     header = thesis_alert_header(allow_cex_flow_targets=True)
 
-    assert "Holder gate: observed top-holder concentration >= 90.0%" in header
+    assert "Holder gate: observed top10 holder concentration >= 90.0%" in header
     assert "ETH/BNB/ARB chain+contract holder-source snapshot evidence" in header
     assert "Binance perp + Bitget trading evidence required" in header
     assert "Gate optional" in header
@@ -69,6 +69,7 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
             },
             {
@@ -78,12 +79,23 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
                 "top100_holder_pct": 99.0,
             },
             {
+                "symbol": "TOP100ONLYUSDT",
+                "trade_bucket_score": 95,
+                "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x6666666666666666666666666666666666666666",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 55.0,
+                "top100_holder_pct": 99.0,
+            },
+            {
                 "symbol": "SOURCELESSUSDT",
                 "trade_bucket_score": 94.5,
                 "bitget_volume_share_pct": 1.0,
                 "token_platform": "ethereum",
                 "token_contract": "0x5555555555555555555555555555555555555555",
                 "holder_count": 6_000,
+                "top10_holder_pct": 95.0,
                 "top100_holder_pct": 99.0,
             },
             {
@@ -93,6 +105,7 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
                 "token_platform": "base",
                 "token_contract": "0x2222222222222222222222222222222222222222",
                 "holder_source": "BaseScan holder endpoint",
+                "top10_holder_pct": 95.0,
                 "top100_holder_pct": 99.0,
             },
             {
@@ -102,6 +115,7 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
                 "token_platform": "ethereum",
                 "token_contract": "0x3333333333333333333333333333333333333333",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 89.9,
                 "top100_holder_pct": 89.9,
             },
             {
@@ -111,6 +125,7 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
                 "token_platform": "ethereum",
                 "token_contract": "0x4444444444444444444444444444444444444444",
                 "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 95.0,
                 "top100_holder_pct": 99.0,
             },
         ]
@@ -119,3 +134,36 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
     selected = apply_thesis_alert_gate(frame)
 
     assert selected["symbol"].tolist() == ["GOODUSDT"]
+
+
+def test_thesis_alert_gate_ignores_disabled_generic_venue_env(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "GOODUSDT",
+                "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+            },
+            {
+                "symbol": "GATEONLYUSDT",
+                "gate_volume_share_pct": 3.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 95.0,
+                "top100_holder_pct": 99.0,
+            },
+        ]
+    )
+
+    selected = apply_thesis_alert_gate(frame)
+    header = thesis_alert_header()
+
+    assert selected["symbol"].tolist() == ["GOODUSDT"]
+    assert "Venue gate: disabled" not in header
+    assert "Binance perp + Bitget trading evidence required" in header
