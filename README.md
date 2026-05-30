@@ -215,7 +215,7 @@ Supported commands include:
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_quiet] [require_behavior_gate]
-/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_breakout_high]
+/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_venue_gate]
 /setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict]
 /flowproof <symbol> [min_tokens] [lookback_hours]

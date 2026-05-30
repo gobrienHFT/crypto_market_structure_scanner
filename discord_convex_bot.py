@@ -2158,7 +2158,7 @@ def _short_contract_text(contract: Any) -> str:
 
 def _holder_evidence_text(row: pd.Series) -> str:
     chain = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""), row.get("token_chain", ""))
-    source = _first_nonempty_text(row.get("holder_source", ""), row.get("holder_data_source", ""), row.get("scan_mode", ""))
+    source = _first_nonempty_text(row.get("holder_source", ""), row.get("holder_data_source", ""))
     contract = _first_nonempty_text(row.get("token_contract", ""), row.get("contract_address", ""), row.get("contract", ""))
     holders = _safe_float(row.get("holder_count"))
 
@@ -3103,6 +3103,7 @@ def _ravelab_line(row: pd.Series) -> str:
     has_gate = "Y" if _boolish_scalar(row.get("_ravelab_has_gate")) else "N"
     dormant = "Y" if _boolish_scalar(row.get("_ravelab_dormant_2m_gate")) else "N"
     whale_gate = "Y" if _boolish_scalar(row.get("_ravelab_whale_gate")) else "N"
+    holder_evidence_gate = "Y" if _boolish_scalar(row.get("_ravelab_holder_evidence_gate")) else "N"
     venue_gate = "Y" if _boolish_scalar(row.get("_ravelab_venue_gate")) else "N"
     squeeze_gate = "Y" if squeeze >= 50.0 else "N"
     top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
@@ -3116,7 +3117,7 @@ def _ravelab_line(row: pd.Series) -> str:
     next_check = _clip_text(_ravelab_next_check(row), 96)
     return (
         f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
-        f"gates whale {whale_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
+        f"gates whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
         f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
         f"holder ev {holder_evidence} | "
         f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
@@ -3128,6 +3129,14 @@ def _ravelab_line(row: pd.Series) -> str:
 def _ravelab_holder_evidence_counts(frame: pd.DataFrame) -> tuple[int, int, int]:
     if frame.empty:
         return 0, 0, 0
+    evidence_mask, contract_mask = _ravelab_holder_evidence_masks(frame)
+    return int(evidence_mask.sum()), int(contract_mask.sum()), int((~evidence_mask).sum())
+
+
+def _ravelab_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    if frame.empty:
+        empty = pd.Series(False, index=frame.index)
+        return empty, empty
     contract_cols = [column for column in ("token_contract", "contract_address", "contract") if column in frame.columns]
     source_cols = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
     if contract_cols:
@@ -3140,7 +3149,7 @@ def _ravelab_holder_evidence_counts(frame: pd.DataFrame) -> tuple[int, int, int]
         source_mask = pd.Series(False, index=frame.index)
     holder_count = _num_series(frame, "holder_count", default=0.0).gt(0.0)
     evidence_mask = contract_mask | source_mask | holder_count
-    return int(evidence_mask.sum()), int(contract_mask.sum()), int((~evidence_mask).sum())
+    return evidence_mask.fillna(False), contract_mask.fillna(False)
 
 
 def _load_ravelab_list(
@@ -3159,6 +3168,7 @@ def _load_ravelab_list(
     require_target_flow: bool = False,
     require_binance_bitget: bool = True,
     require_dormant_2m: bool = True,
+    require_holder_evidence: bool = True,
     require_breakout_high: bool = False,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
@@ -3181,6 +3191,7 @@ def _load_ravelab_list(
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
         f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | "
+        f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
         f"Quiet required: {require_quiet} | Target flow required: {require_target_flow} | "
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high}{ignored_breakout_text}\n"
@@ -3190,12 +3201,16 @@ def _load_ravelab_list(
         return "RAVE/LAB early radar", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
 
     scored = _score_ravelab_early_frame(frame, min_whale_pct=min_whale_pct, min_history_days=min_history_days)
+    holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
     selected = scored[
         _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
         & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
         & _boolish_series(scored.get("_ravelab_whale_gate"), index=scored.index)
         & _num_series(scored, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
     ].copy()
+    if require_holder_evidence:
+        selected = selected[_boolish_series(selected.get("_ravelab_holder_evidence_gate"), index=selected.index)].copy()
     if require_binance_bitget:
         selected = selected[_boolish_series(selected.get("_ravelab_venue_gate"), index=selected.index)].copy()
     if require_dormant_2m:
@@ -3218,6 +3233,7 @@ def _load_ravelab_list(
     if selected.empty:
         gate_counts = (
             f"Gate counts before filters: whale {int(_boolish_series(scored.get('_ravelab_whale_gate'), index=scored.index).sum())} | "
+            f"holder evidence {int(_boolish_series(scored.get('_ravelab_holder_evidence_gate'), index=scored.index).sum())} | "
             f"Binance+Bitget {int(_boolish_series(scored.get('_ravelab_venue_gate'), index=scored.index).sum())} | "
             f"dormant2m/history {int(_boolish_series(scored.get('_ravelab_dormant_2m_gate'), index=scored.index).sum())} | "
             f"squeeze {int(_num_series(scored, '_ravelab_squeeze_score').ge(max(0.0, float(min_squeeze_score))).sum())}"
@@ -3225,13 +3241,14 @@ def _load_ravelab_list(
         nearest = scored.sort_values(
             [
                 "_ravelab_whale_gate",
+                "_ravelab_holder_evidence_gate",
                 "_ravelab_venue_gate",
                 "_ravelab_dormant_2m_gate",
                 "_ravelab_squeeze_score",
                 "_ravelab_early_score",
                 "symbol",
             ],
-            ascending=[False, False, False, False, False, True],
+            ascending=[False, False, False, False, False, False, True],
         ).head(min(max(int(limit), 1), 30))
         lines = [
             header,
@@ -3255,6 +3272,7 @@ def _load_ravelab_list(
         [
             "_ravelab_alert_flag",
             "_ravelab_target_flow",
+            "_ravelab_holder_evidence_gate",
             "_ravelab_breakout_any",
             "_ravelab_whale_pct",
             "_ravelab_early_score",
@@ -3262,7 +3280,7 @@ def _load_ravelab_list(
             "_ravelab_archetype_score",
             "symbol",
         ],
-        ascending=[False, False, False, False, False, False, False, True],
+        ascending=[False, False, False, False, False, False, False, False, True],
     ).head(min(max(int(limit), 1), 100))
     target_count = int(_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index).sum())
     rave_count = int(selected["_ravelab_side"].astype(str).eq("RAVE-like").sum())
@@ -3270,6 +3288,7 @@ def _load_ravelab_list(
     mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
     gate_summary = (
         f"All shown rows passed whale >= {float(min_whale_pct):.1f}%"
+        f"{', holder evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         f"{f', history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
         f", squeeze >= {float(min_squeeze_score):.0f}."
@@ -4279,6 +4298,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_binance_bitget="Require both Binance and Bitget venue evidence.",
         require_dormant_2m="Require no 90D/180D high break and low recent heat.",
+        require_holder_evidence="Require source/contract/count evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
     )
     @app_commands.choices(
@@ -4304,6 +4324,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow: bool = False,
         require_binance_bitget: bool = True,
         require_dormant_2m: bool = True,
+        require_holder_evidence: bool = True,
         require_breakout_high: bool = False,
     ) -> None:
         if not _channel_allowed(interaction):
@@ -4329,6 +4350,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_target_flow=require_target_flow,
             require_binance_bitget=require_binance_bitget,
             require_dormant_2m=require_dormant_2m,
+            require_holder_evidence=require_holder_evidence,
             require_breakout_high=require_breakout_high,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
