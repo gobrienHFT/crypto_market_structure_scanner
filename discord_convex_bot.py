@@ -1237,14 +1237,11 @@ def _ravelab_refresh_activity_gates(
     pump_observed = recent_pump.notna() & observed_days.ge(required_pump_days)
     no_large_recent_pump = pump_observed & recent_pump.lt(max(0.0, float(max_recent_pump_pct)))
     history_days = _num_series(out, "_ravelab_history_days", default=0.0)
-    broke_90d = _boolish_series(out.get("broke_high_90d"), index=index)
-    broke_180d = _boolish_series(out.get("broke_high_180d"), index=index)
-    heat = _num_series(out, "pre_activity_heat_score")
+    heat = _num_series(out, "_ravelab_heat_score", default=float("nan"))
+    heat = heat.fillna(_num_series(out, "pre_activity_heat_score"))
     late_penalty = _max_series(out, "rave_lab_late_penalty_score", "timing_too_late_score", "convexity_late_penalty")
     dormant_2m = (
         history_days.ge(max(1, int(min_history_days)))
-        & (~broke_90d)
-        & (~broke_180d)
         & heat.lt(62.0)
         & late_penalty.lt(66.0)
         & no_large_recent_pump
@@ -3577,6 +3574,10 @@ def _score_ravelab_early_frame(
     short_drop_pp = (-_num_series(scored, "short_account_change_min_pp")).clip(lower=0.0)
     oi_delta = _num_series(scored, "oi_delta_pct")
     volume_multiple = _max_series(scored, "hour_volume_multiple", "daily_quote_volume_multiple", "hour_trade_count_multiple")
+    day_return_abs = _num_series(scored, "day_return_pct", default=float("nan")).abs()
+    day_return_abs = day_return_abs.fillna(_num_series(scored, "price_change_24h_pct").abs())
+    hour_return_abs = _num_series(scored, "hour_return_pct").abs()
+    range_pct = _num_series(scored, "range_24h_pct")
     forced_flow = (
         short_crowd_score * 0.30
         + squeeze_fuel * 0.30
@@ -3585,8 +3586,21 @@ def _score_ravelab_early_frame(
         + _score_linear_series(volume_multiple, 1.2, 5.0) * 0.08
     ).clip(lower=0.0, upper=100.0)
     quiet = _num_series(scored, "pre_activity_quiet_score")
-    heat = _num_series(scored, "pre_activity_heat_score")
     late_penalty = _max_series(scored, "rave_lab_late_penalty_score", "timing_too_late_score", "convexity_late_penalty")
+    heat = pd.concat(
+        [
+            _score_linear_series(day_return_abs, 20.0, 90.0),
+            _score_linear_series(hour_return_abs, 5.0, 18.0),
+            _score_linear_series(range_pct, 12.0, 45.0),
+            _score_linear_series(volume_multiple, 3.0, 12.0),
+            _score_linear_series(_num_series(scored, "daily_quote_volume_multiple"), 3.0, 12.0),
+            _score_linear_series(_num_series(scored, "hour_trade_count_multiple"), 3.0, 12.0),
+            _num_series(scored, "cmc_mover_score") * 0.85,
+            _num_series(scored, "crime_exhaustion_score") * 0.75,
+            late_penalty,
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0).clip(lower=0.0, upper=100.0)
     short_fade_risk = pd.concat(
         [
             _score_linear_series(short_drop_pp, 1.0, 6.0),
@@ -3640,10 +3654,6 @@ def _score_ravelab_early_frame(
         + _num_series(scored, "binance_bitget_gate_share_pct").clip(lower=0.0, upper=100.0) * 0.10
     ).clip(lower=0.0, upper=100.0)
     target_flow = _confirmed_cex_flow_mask(scored, min_transfer_tokens=min_transfer_tokens, target_only=True)
-    broke_90d = _boolish_series(scored.get("broke_high_90d"), index=index)
-    broke_180d = _boolish_series(scored.get("broke_high_180d"), index=index)
-    day_return_abs = _num_series(scored, "day_return_pct", default=float("nan")).abs()
-    day_return_abs = day_return_abs.fillna(_num_series(scored, "price_change_24h_pct").abs())
     history_days = _num_series(scored, "history_days", default=0.0)
     recent_pump = _num_series(scored, "recent_max_pump_60d_pct", default=float("nan"))
     recent_pump_days = _num_series(scored, "recent_pump_60d_days", default=0.0)
@@ -3652,8 +3662,6 @@ def _score_ravelab_early_frame(
     no_large_recent_pump = recent_pump_or_current.lt(max(0.0, float(max_recent_pump_pct)))
     dormant_2m = (
         history_days.ge(max(1, int(min_history_days)))
-        & (~broke_90d)
-        & (~broke_180d)
         & heat.lt(62.0)
         & late_penalty.lt(66.0)
         & no_large_recent_pump
@@ -3730,6 +3738,7 @@ def _score_ravelab_early_frame(
     scored["_ravelab_squeeze_fuel_score"] = squeeze_fuel
     scored["_ravelab_forced_flow_score"] = forced_flow
     scored["_ravelab_exhaustion_score"] = exhaustion
+    scored["_ravelab_heat_score"] = heat
     scored["_ravelab_short_build_pp"] = short_build_pp
     scored["_ravelab_short_drop_pp"] = short_drop_pp
     scored["_ravelab_oi_delta_pct"] = oi_delta
@@ -3809,7 +3818,7 @@ def _ravelab_next_check(row: pd.Series) -> str:
         max_pump = _safe_float(row.get("_ravelab_max_recent_pump_pct")) or 35.0
         return f"wait; recent daily pump exceeded {max_pump:.0f}% no-pump gate"
     if not _boolish_scalar(row.get("_ravelab_dormant_2m_gate")):
-        return f"wait; needs {min_history_days}d history, no 90D/180D high, and no chase heat"
+        return f"wait; needs {min_history_days}d history, 60D no-large-pump proof, and no chase heat"
     if not _boolish_scalar(row.get("_ravelab_early_gate")):
         return "wait for heat/late penalty to reset before treating it as early"
     if side != "RAVE-like" and not _boolish_scalar(row.get("_ravelab_target_flow")):
@@ -3939,7 +3948,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     ravelab_float_score = _safe_float(row.get("_ravelab_float_score")) or float_score
     fdv_ratio = _safe_float(row.get("_ravelab_fdv_to_mcap"))
     quiet = _safe_float(row.get("pre_activity_quiet_score")) or 0.0
-    heat = _safe_float(row.get("pre_activity_heat_score")) or 0.0
+    heat = _safe_float(row.get("_ravelab_heat_score")) or _safe_float(row.get("pre_activity_heat_score")) or 0.0
     top10 = _safe_pct(row.get("top10_holder_pct"))
     top100 = _safe_pct(row.get("top100_holder_pct"))
     short_pct = _safe_pct(row.get("short_account_pct"))
@@ -5614,7 +5623,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_quiet="Require early/no-chase heat gate.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_binance_bitget="Require both Binance and Bitget venue evidence.",
-        require_dormant_2m="Require no 90D/180D high break and low recent heat.",
+        require_dormant_2m="Require 60D no-large-pump proof, enough history, and low recent heat.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears min_tokens.",

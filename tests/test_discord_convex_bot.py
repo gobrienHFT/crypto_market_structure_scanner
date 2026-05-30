@@ -2359,6 +2359,56 @@ def test_ravelab_whale_gate_requires_top10_control_not_top100_only() -> None:
     assert bool(scored.loc["TOP10CONTROLUSDT", "_ravelab_whale_gate"])
 
 
+def test_ravelab_dormant_gate_allows_slow_high_break_without_large_pump() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "SLOWBREAKUSDT",
+                "history_days": 180,
+                **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
+                "holder_count": 6_000,
+                "binance_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 2.0,
+                "short_account_pct": 58.0,
+                "short_dominance_score": 65.0,
+                "short_account_build_score": 58.0,
+                "silent_oi_accumulation_score": 56.0,
+                "low_float_score": 88.0,
+                "float_trap_score": 82.0,
+                "fdv_to_market_cap": 8.0,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "broke_high_20d": True,
+                "broke_high_90d": True,
+                "broke_high_180d": True,
+                "day_return_pct": 1.2,
+                "price_change_24h_pct": 1.2,
+                "hour_return_pct": 0.2,
+                "range_24h_pct": 4.0,
+                "hour_volume_multiple": 1.1,
+                "hour_trade_count_multiple": 1.0,
+            }
+        ]
+    )
+
+    scored = bot._score_ravelab_early_frame(frame, min_whale_pct=90, min_history_days=60, max_recent_pump_pct=35)
+    holder_evidence_mask, _ = bot._ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0)
+    row = scored.iloc[0]
+
+    assert bool(row["_ravelab_no_large_pump_gate"])
+    assert bool(row["_ravelab_dormant_2m_gate"])
+    assert float(row["_ravelab_heat_score"]) < 62.0
+    assert float(row["pre_activity_heat_score"]) >= 100.0
+    assert int(row["_ravelab_core_gate_count"]) == 6
+
+    refreshed = bot._ravelab_refresh_activity_gates(scored, min_history_days=60, max_recent_pump_pct=35)
+    assert bool(refreshed.iloc[0]["_ravelab_dormant_2m_gate"])
+
+
 def test_ravelab_squeeze_gate_uses_funding_flip_model() -> None:
     frame = pd.DataFrame(
         [
