@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concentration_scanner.chains import ChainRegistry
 from concentration_scanner.classifier import HolderClassifier, ManualOverride
+from concentration_scanner.clients import ExplorerClient
 from concentration_scanner.concentration import ConcentrationEngine
 from concentration_scanner.fixtures import (
     binance_false_positive_fixture,
@@ -24,8 +25,19 @@ def test_chain_adapter_selection() -> None:
     assert registry.get("eth").name == "Ethereum"
     assert registry.get("BNB Chain").explorer_name == "BscScan"
     assert registry.get("arb").explorer_name == "Arbiscan"
+    assert registry.get("arbscan").explorer_name == "Arbiscan"
     assert registry.platform_to_chain("binance-smart-chain") == "bsc"
     assert registry.platform_to_chain("arbitrum-one") == "arbitrum"
+
+
+def test_explorer_client_uses_etherscan_family_api_key_fallbacks(monkeypatch) -> None:
+    for env_name in ("ETHERSCAN_API_KEY", "ETHERSCAN_V2_API_KEY", "BSCSCAN_API_KEY", "ARBISCAN_API_KEY", "ARBSCAN_API_KEY"):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("ARBSCAN_API_KEY", "arbscan-alias-key")
+
+    client = ExplorerClient(ChainRegistry().get("arbitrum"))
+
+    assert client.api_key == "arbscan-alias-key"
 
 
 def test_coingecko_contract_resolution_from_platforms() -> None:

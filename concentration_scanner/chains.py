@@ -100,5 +100,6 @@ class ChainRegistry:
             "arb": "arbitrum",
             "arbitrum-one": "arbitrum",
             "arbiscan": "arbitrum",
+            "arbscan": "arbitrum",
         }
         return aliases.get(value, value)

@@ -335,7 +335,7 @@ CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 2 | raw
 CEX-flow source paths: token_transfer_api x1; advanced_filter_blocked_api_fallback x2
 
 API fallback readiness:
-- arbitrum: no key (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or ARBISCAN_API_KEY)
+- arbitrum: no key (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or ARBISCAN_API_KEY or ARBSCAN_API_KEY)
 - base: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or BASESCAN_API_KEY)
 - bsc: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or BSCSCAN_API_KEY)
 - ethereum: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY)

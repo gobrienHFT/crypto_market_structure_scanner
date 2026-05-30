@@ -1208,6 +1208,7 @@ def test_load_flow_health_reports_api_keys_and_address_labels(monkeypatch) -> No
 
     assert title == "CEX-flow health"
     assert "API fallback readiness:" in description
+    assert "- arbitrum: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or ARBISCAN_API_KEY or ARBSCAN_API_KEY)" in description
     assert "- base: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or BASESCAN_API_KEY)" in description
     assert "CEX address labels loaded: 1" in description
     assert "Configure CEX_ADDRESS_LABELS or CEX_ADDRESS_BOOK_FILE" in description

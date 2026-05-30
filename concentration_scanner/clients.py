@@ -185,6 +185,21 @@ class ExplorerFetchResult:
     partial: bool = False
 
 
+EXPLORER_API_KEY_FALLBACK_ENVS: dict[str, tuple[str, ...]] = {
+    "ETHERSCAN_API_KEY": ("ETHERSCAN_API_KEY", "ETHERSCAN_V2_API_KEY"),
+    "BSCSCAN_API_KEY": ("BSCSCAN_API_KEY", "ETHERSCAN_API_KEY", "ETHERSCAN_V2_API_KEY"),
+    "ARBISCAN_API_KEY": ("ARBISCAN_API_KEY", "ARBSCAN_API_KEY", "ETHERSCAN_API_KEY", "ETHERSCAN_V2_API_KEY"),
+}
+
+
+def _explorer_api_key(primary_env: str) -> str:
+    for env_name in EXPLORER_API_KEY_FALLBACK_ENVS.get(primary_env, (primary_env,)):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 class ExplorerClient:
     """Etherscan-family explorer client.
 
@@ -202,7 +217,7 @@ class ExplorerClient:
         requests_per_second: float = 2.0,
     ) -> None:
         self.adapter = adapter
-        self.api_key = api_key if api_key is not None else os.environ.get(adapter.api_key_env, "")
+        self.api_key = api_key if api_key is not None else _explorer_api_key(adapter.api_key_env)
         self.timeout = int(timeout)
         self.min_gap = 1.0 / max(0.2, float(requests_per_second))
         self._last_at = 0.0

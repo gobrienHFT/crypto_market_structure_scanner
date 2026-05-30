@@ -439,6 +439,17 @@ def test_build_token_transfer_api_url_uses_etherscan_v2_chainid() -> None:
     assert "apikey=example" in url
 
 
+def test_token_transfer_api_key_accepts_arbscan_alias(monkeypatch) -> None:
+    for env_name in cex.token_transfer_api_key_envs("arbitrum"):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("ARBSCAN_API_KEY", "arbscan-alias-key")
+
+    api_key, env_name = cex._token_transfer_api_key("arbitrum")
+
+    assert api_key == "arbscan-alias-key"
+    assert env_name == "ARBSCAN_API_KEY"
+
+
 def test_enrich_cex_deposit_flows_with_zero_limit_scans_all_contract_rows(monkeypatch) -> None:
     calls: list[str] = []
 

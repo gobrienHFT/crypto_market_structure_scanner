@@ -91,7 +91,7 @@ ETHERSCAN_V2_API_URL = "https://api.etherscan.io/v2/api"
 TOKEN_TRANSFER_API_CONFIGS: dict[str, dict[str, Any]] = {
     "ethereum": {"chainid": "1", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY")},
     "bsc": {"chainid": "56", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "BSCSCAN_API_KEY")},
-    "arbitrum": {"chainid": "42161", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "ARBISCAN_API_KEY")},
+    "arbitrum": {"chainid": "42161", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "ARBISCAN_API_KEY", "ARBSCAN_API_KEY")},
     "base": {"chainid": "8453", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "BASESCAN_API_KEY")},
     "polygon": {"chainid": "137", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "POLYGONSCAN_API_KEY")},
     "optimism": {"chainid": "10", "api_key_envs": ("ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "OPTIMISTIC_ETHERSCAN_API_KEY")},
