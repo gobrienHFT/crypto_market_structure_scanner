@@ -3267,7 +3267,7 @@ def _ravelab_apply_thesis_columns(frame: pd.DataFrame, *, min_squeeze_score: flo
     early_gate = _boolish_series(output.get("_ravelab_early_gate"), index=index)
     target_flow = _boolish_series(output.get("_ravelab_target_flow"), index=index)
     breakout_any = _boolish_series(output.get("_ravelab_breakout_any"), index=index)
-    squeeze_gate = _num_series(output, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
+    squeeze_gate = _ravelab_squeeze_gate_series(output, min_squeeze_score=min_squeeze_score)
     whale_origin_flow = (
         _num_series(output, "cex_deposit_24h_whale_sender_count").gt(0.0)
         & _num_series(output, "cex_deposit_24h_count").gt(0.0)
@@ -3324,6 +3324,30 @@ def _ravelab_apply_thesis_columns(frame: pd.DataFrame, *, min_squeeze_score: flo
     return output
 
 
+def _ravelab_squeeze_gate_series(frame: pd.DataFrame, *, min_squeeze_score: float) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    threshold = max(0.0, float(min_squeeze_score))
+    short_pct = _safe_pct_series(frame, "short_account_pct").fillna(_num_series(frame, "short_account_pct"))
+    short_crowd_score = _num_series(frame, "_ravelab_short_crowd_score")
+    if "_ravelab_short_crowd_score" not in frame.columns:
+        short_crowd_score = pd.concat(
+            [
+                _score_linear_series(short_pct.fillna(0.0), 50.0, 72.0),
+                _num_series(frame, "short_dominance_score"),
+            ],
+            axis=1,
+        ).max(axis=1).fillna(0.0)
+    fuel_score = _num_series(frame, "_ravelab_squeeze_fuel_score")
+    squeeze_score = _num_series(frame, "_ravelab_squeeze_score")
+    paired_fuel_floor = max(40.0, threshold * 0.75)
+    independent_fuel_floor = max(75.0, threshold + 20.0)
+    short_majority = short_pct.ge(50.0) | short_crowd_score.ge(threshold)
+    paired_stack = short_majority & squeeze_score.ge(threshold) & fuel_score.ge(paired_fuel_floor)
+    independent_stack = fuel_score.ge(independent_fuel_floor) & squeeze_score.ge(threshold)
+    return (paired_stack | independent_stack).fillna(False)
+
+
 def _score_ravelab_early_frame(
     frame: pd.DataFrame,
     *,
@@ -3372,16 +3396,33 @@ def _score_ravelab_early_frame(
         "inventory_transfer_risk_score",
     )
     short_pct = _safe_pct_series(scored, "short_account_pct").fillna(_num_series(scored, "short_account_pct"))
-    squeeze = pd.concat(
+    short_crowd_score = pd.concat(
         [
-            _num_series(scored, "early_pump_short_squeeze_score"),
             _num_series(scored, "short_dominance_score"),
+            _num_series(scored, "short_crowding_score"),
+            _score_linear_series(short_pct, 50.0, 72.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    squeeze_fuel = pd.concat(
+        [
             _num_series(scored, "short_account_build_score"),
-            _num_series(scored, "terminal_short_pressure_score"),
             _num_series(scored, "silent_oi_accumulation_score"),
             _num_series(scored, "short_liquidation_fuel_score"),
-            _score_linear_series(short_pct, 48.0, 70.0),
+            _num_series(scored, "short_squeeze_score"),
+            _num_series(scored, "forced_buying_setup_score"),
+            _num_series(scored, "perp_squeeze_confluence_score"),
             _score_linear_series(_num_series(scored, "oi_to_24h_volume_pct"), 2.0, 18.0),
+            _score_linear_series(_num_series(scored, "oi_delta_pct"), 0.5, 7.5),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    squeeze = pd.concat(
+        [
+            _num_series(scored, "early_pump_short_squeeze_score") * 0.55 + squeeze_fuel * 0.45,
+            short_crowd_score * 0.60 + squeeze_fuel * 0.40,
+            squeeze_fuel,
+            short_crowd_score * 0.45 + _num_series(scored, "terminal_short_pressure_score") * 0.55,
         ],
         axis=1,
     ).max(axis=1).fillna(0.0)
@@ -3502,6 +3543,10 @@ def _score_ravelab_early_frame(
     scored["_ravelab_venue_score"] = venue_component
     scored["_ravelab_venue_gate"] = venue_gate & (~major_excluded)
     scored["_ravelab_squeeze_score"] = squeeze
+    scored["_ravelab_short_crowd_score"] = short_crowd_score
+    scored["_ravelab_squeeze_fuel_score"] = squeeze_fuel
+    scored["_ravelab_short_majority_gate"] = short_pct.ge(50.0) & (~major_excluded)
+    scored["_ravelab_squeeze_gate"] = _ravelab_squeeze_gate_series(scored, min_squeeze_score=50.0) & (~major_excluded)
     scored["_ravelab_history_days"] = history_days
     scored["_ravelab_min_history_days"] = int(min_history_days)
     scored["_ravelab_recent_max_pump_pct"] = recent_pump_or_current
@@ -3582,6 +3627,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     short_pct = _safe_pct(row.get("short_account_pct"))
     whale_pct = _safe_pct(row.get("_ravelab_whale_pct"))
     squeeze = _safe_float(row.get("_ravelab_squeeze_score")) or 0.0
+    squeeze_fuel = _safe_float(row.get("_ravelab_squeeze_fuel_score")) or 0.0
     breakout = _safe_float(row.get("_ravelab_breakout_score")) or 0.0
     core_count = int(_safe_float(row.get("_ravelab_core_gate_count")) or 0)
     core_total = int(_safe_float(row.get("_ravelab_core_gate_total")) or 5)
@@ -3599,7 +3645,8 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     whale_gate = "Y" if _boolish_scalar(row.get("_ravelab_whale_gate")) else "N"
     holder_evidence_gate = "Y" if _boolish_scalar(row.get("_ravelab_holder_evidence_gate")) else "N"
     venue_gate = "Y" if _boolish_scalar(row.get("_ravelab_venue_gate")) else "N"
-    squeeze_gate = "Y" if squeeze >= 50.0 else "N"
+    squeeze_gate = "Y" if _boolish_scalar(row.get("_ravelab_squeeze_gate", squeeze >= 50.0)) else "N"
+    short_majority = "Y" if _boolish_scalar(row.get("_ravelab_short_majority_gate", False)) else "N"
     top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
     top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
     whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
@@ -3626,7 +3673,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     proof = (
         f"  proof: whale {whale_text} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
         f"noPump {no_pump} pump60 {pump_text} {pump_source} | hist {history_text} dormant2m {dormant} | "
-        f"squeeze {squeeze:.0f}({squeeze_gate}) shorts {short_text} | highs {breakout_windows} | "
+        f"squeeze {squeeze:.0f}({squeeze_gate}) fuel {squeeze_fuel:.0f} shortMaj {short_majority} shorts {short_text} | highs {breakout_windows} | "
         f"CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | holder {holder_evidence} | venue {venue_evidence}"
     )
     if not detail:
@@ -3638,7 +3685,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     )
     evidence = (
         f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | holder {holder_evidence} | "
-        f"venue {venue_evidence} | squeeze {squeeze:.0f} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
+        f"venue {venue_evidence} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shortMaj {short_majority} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
     )
     flow = (
         f"  flow/timing: CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | "
@@ -3684,7 +3731,7 @@ def _ravelab_near_miss_rows(
         _num_series(candidates, "_ravelab_early_score").ge(max(0.0, float(min_score)))
         & _num_series(candidates, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
         & _boolish_series(candidates.get("_ravelab_whale_gate"), index=candidates.index)
-        & _num_series(candidates, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
+        & _boolish_series(candidates.get("_ravelab_squeeze_gate"), index=candidates.index)
         & _num_series(candidates, "_ravelab_core_gate_count").ge(3.0)
     )
     candidates = candidates[base_mask].copy()
@@ -3760,7 +3807,7 @@ def _load_ravelab_list(
         "Strict RAVE/LAB crime-pump early radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
-        f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze gate: >= {float(min_squeeze_score):.0f} | "
+        f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | Max recent pump: < {float(max_recent_pump_pct):.0f}% over 60d | "
         f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
@@ -3768,7 +3815,7 @@ def _load_ravelab_list(
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
         f"Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
-        "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase.\n"
+        "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
     if frame.empty:
@@ -3782,11 +3829,12 @@ def _load_ravelab_list(
     )
     holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
     scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    scored["_ravelab_squeeze_gate"] = _ravelab_squeeze_gate_series(scored, min_squeeze_score=min_squeeze_score)
     pump_check_mask = (
         _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
         & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
         & _boolish_series(scored.get("_ravelab_whale_gate"), index=scored.index)
-        & _num_series(scored, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
+        & _boolish_series(scored.get("_ravelab_squeeze_gate"), index=scored.index)
     )
     if require_holder_evidence:
         pump_check_mask = pump_check_mask & _boolish_series(scored.get("_ravelab_holder_evidence_gate"), index=scored.index)
@@ -3804,7 +3852,7 @@ def _load_ravelab_list(
         _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
         & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
         & _boolish_series(scored.get("_ravelab_whale_gate"), index=scored.index)
-        & _num_series(scored, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
+        & _boolish_series(scored.get("_ravelab_squeeze_gate"), index=scored.index)
     ].copy()
     if require_holder_evidence:
         selected = selected[_boolish_series(selected.get("_ravelab_holder_evidence_gate"), index=selected.index)].copy()
@@ -3837,7 +3885,7 @@ def _load_ravelab_list(
             f"Binance+Bitget {int(_boolish_series(scored.get('_ravelab_venue_gate'), index=scored.index).sum())} | "
             f"no-pump {int(_boolish_series(scored.get('_ravelab_no_large_pump_gate'), index=scored.index).sum())} | "
             f"dormant2m/history {int(_boolish_series(scored.get('_ravelab_dormant_2m_gate'), index=scored.index).sum())} | "
-            f"squeeze {int(_num_series(scored, '_ravelab_squeeze_score').ge(max(0.0, float(min_squeeze_score))).sum())} | "
+            f"squeeze {int(_boolish_series(scored.get('_ravelab_squeeze_gate'), index=scored.index).sum())} | "
             f"core 5/5 {int(_num_series(scored, '_ravelab_core_gate_count').ge(5.0).sum())} | "
             f"whale-origin CEX {int(_boolish_series(scored.get('_ravelab_whale_origin_flow'), index=scored.index).sum())}"
         )
@@ -3917,7 +3965,7 @@ def _load_ravelab_list(
         f"{', holder evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         f"{f', no recent pump >= {float(max_recent_pump_pct):.0f}%, history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
-        f", squeeze >= {float(min_squeeze_score):.0f}."
+        f", squeeze stack >= {float(min_squeeze_score):.0f}."
     )
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
     lines = [

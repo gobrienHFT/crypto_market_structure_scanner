@@ -1621,6 +1621,8 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "terminal_distribution_pressure_score": 62,
                 "short_account_pct": 54.0,
                 "short_dominance_score": 62.0,
+                "short_account_build_score": 52.0,
+                "short_liquidation_fuel_score": 48.0,
                 "binance_volume_share_pct": 8.0,
                 "bitget_volume_share_pct": 2.0,
                 "ask_depth_1pct_usdt": 35_000,
@@ -1668,6 +1670,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "short_account_pct": 51.0,
                 "short_dominance_score": 58.0,
                 "short_account_build_score": 25.0,
+                "silent_oi_accumulation_score": 56.0,
                 "ask_depth_1pct_usdt": 50_000,
                 "ask_depth_to_24h_volume_pct": 0.05,
                 "binance_volume_share_pct": 9.0,
@@ -1714,6 +1717,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
                 "binance_volume_share_pct": 12.0,
                 "day_return_pct": 0.4,
                 "price_change_24h_pct": 0.4,
@@ -1734,6 +1738,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
                 "binance_volume_share_pct": 12.0,
                 "bitget_volume_share_pct": 2.0,
                 "day_return_pct": 0.4,
@@ -1755,6 +1760,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
                 "binance_volume_share_pct": 12.0,
                 "bitget_volume_share_pct": 2.0,
                 "day_return_pct": 0.4,
@@ -1777,6 +1783,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
                 "binance_volume_share_pct": 12.0,
                 "bitget_volume_share_pct": 2.0,
                 "day_return_pct": 0.4,
@@ -1801,6 +1808,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
                 "binance_volume_share_pct": 12.0,
                 "cex_deposit_flow_score": 90,
                 "cex_deposit_flow_flag": True,
@@ -1830,6 +1838,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
                 "binance_volume_share_pct": 12.0,
                 "bitget_volume_share_pct": 2.0,
                 "recent_max_pump_60d_pct": 82.0,
@@ -1858,6 +1867,31 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "fdv_to_market_cap": 15,
                 "short_account_pct": 66.0,
                 "short_dominance_score": 85.0,
+                "short_account_build_score": 58.0,
+                "binance_volume_share_pct": 12.0,
+                "bitget_volume_share_pct": 2.0,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "SHORTONLYUSDT",
+                "history_days": 180,
+                "token_platform": "ethereum",
+                "token_contract": "0x7777777777777777777777777777777777777777",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "holder_count": 9_000,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 72.0,
                 "binance_volume_share_pct": 12.0,
                 "bitget_volume_share_pct": 2.0,
                 "day_return_pct": 0.4,
@@ -1899,7 +1933,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence required: True" in output
     assert "Whale-origin CEX required: False" in output
     assert "No-pump proof: requires 60D closed daily-candle pump history" in output
-    assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase." in output
+    assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Near misses: 5" in output
     assert "Core 5/5: 2" in output
@@ -1908,7 +1942,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "Daily pump checks:" in output
-    assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze >= 50." in output
+    assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
@@ -1938,6 +1972,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/PCTONLYUSDT" not in output
     assert "/COUNTONLYUSDT" not in output
     assert "/TARGETONLYUSDT" not in output
+    assert "/SHORTONLYUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)
@@ -1982,6 +2017,31 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "holder pct-only; needs ETH/BNB/ARB chain+contract+source/count" in diagnostic_output
     assert "/COUNTONLYUSDT" in diagnostic_output
     assert "holder holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
+
+
+def test_ravelab_squeeze_gate_requires_fuel_not_short_pct_alone() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "STACKUSDT",
+                "short_account_pct": 54.0,
+                "short_dominance_score": 62.0,
+                "short_account_build_score": 52.0,
+            },
+            {
+                "symbol": "SHORTONLYUSDT",
+                "short_account_pct": 72.0,
+            },
+        ]
+    )
+
+    scored = bot._score_ravelab_early_frame(frame)
+    scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0).set_index("symbol")
+
+    assert bool(scored.loc["STACKUSDT", "_ravelab_squeeze_gate"])
+    assert not bool(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_gate"])
+    assert float(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_score"]) >= 50.0
+    assert float(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_fuel_score"]) < 40.0
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:

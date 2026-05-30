@@ -39,12 +39,12 @@ Candidates: /SLEEPUSDT /COILUSDT
 
 ```text
 Strict RAVE/LAB crime-pump early radar
-Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Style: both | Min early score: 0 | Min RAVE/LAB archetype: 0 | Whale gate: >= 90.0% | Squeeze gate: >= 50 | History gate: >= 60d | Max recent pump: < 35% over 60d | Holder evidence required: True | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False | Whale-origin CEX required: False | High breakout windows: 1D,2D,3D,4D,5D,20D | Breakout required: False | Near misses: 5 | Detail: False
+Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Style: both | Min early score: 0 | Min RAVE/LAB archetype: 0 | Whale gate: >= 90.0% | Squeeze stack gate: >= 50 | History gate: >= 60d | Max recent pump: < 35% over 60d | Holder evidence required: True | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False | Whale-origin CEX required: False | High breakout windows: 1D,2D,3D,4D,5D,20D | Breakout required: False | Near misses: 5 | Detail: False
 No-pump proof: requires 60D closed daily-candle pump history; missing/insufficient proof fails dormant2m.
-Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase.
+Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 5/5: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
-All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze >= 50.
+All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
 Holder evidence rows: 2 with ETH/BNB/ARB chain+contract source/count | contract rows 2 | pct-only rows 0
 Breakout high checks: 1D,2D,3D,4D,5D,20D | dynamic checks 8 | cached flags 4 | errors 0 | insufficient 0
 Daily pump checks: cached 0 | Binance checked 2 | errors 0 | insufficient 0 | skipped 0
