@@ -8,14 +8,30 @@ from market_structure_scoring import apply_lifecycle_model as apply_market_struc
 from scan_orchestrator import run_scanner_scan, select_convex_long_candidates
 
 
-def test_select_convex_long_candidates_applies_score_and_venue_gate(monkeypatch) -> None:
+def test_select_convex_long_candidates_applies_score_holder_and_venue_gates(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     frame = pd.DataFrame(
         [
             {"symbol": "LOWUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 15, "bitget_volume_share_pct": 2.0},
             {"symbol": "NOGATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 99},
             {"symbol": "GATEONLYUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 85, "gate_volume_share_pct": 1.0},
-            {"symbol": "GOODUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 80, "bitget_volume_share_pct": 1.0},
+            {
+                "symbol": "PCTONLYUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 90,
+                "bitget_volume_share_pct": 1.0,
+                "top100_holder_pct": 99.0,
+            },
+            {
+                "symbol": "GOODUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 80,
+                "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "top100_holder_pct": 99.0,
+            },
             {"symbol": "WATCHUSDT", "trade_bucket": "Watch", "trade_bucket_score": 95, "bitget_volume_share_pct": 5.0},
         ]
     )
@@ -53,6 +69,10 @@ def test_run_scanner_scan_temporarily_overrides_cex_flow_threshold(monkeypatch) 
                     "trade_bucket": "Convex Long",
                     "trade_bucket_score": 80,
                     "bitget_volume_share_pct": 1.0,
+                    "token_platform": "ethereum",
+                    "token_contract": "0x1111111111111111111111111111111111111111",
+                    "holder_source": "Etherscan holder endpoint",
+                    "top100_holder_pct": 99.0,
                 }
             ]
         )

@@ -44,7 +44,7 @@ from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squee
 from screener import ScreenerData, build_screener_data
 from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
 from timing_engine import TIMING_SCORE_COLUMNS, apply_timing_model, build_timing_card
-from venue_gate import apply_binance_bitget_venue_gate
+from venue_gate import apply_thesis_alert_gate, thesis_alert_header
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
@@ -3176,7 +3176,7 @@ def _discord_convex_candidates(all_df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
     if candidates.empty:
         return candidates
-    candidates = apply_binance_bitget_venue_gate(candidates, allow_cex_flow_targets=False)
+    candidates = apply_thesis_alert_gate(candidates, allow_cex_flow_targets=False)
     if candidates.empty:
         return candidates
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
@@ -3297,8 +3297,10 @@ def _discord_candidate_line(row: pd.Series) -> str:
 
 def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> None:
     lines = [_discord_candidate_line(row) for _, row in candidates.iterrows()]
-    card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
+    alert_header = thesis_alert_header()
+    description_prefix = f"{DISCORD_PRODUCT_IDENTITY}\n\n{alert_header}\n\n"
+    card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(description_prefix)
+    description = f"{description_prefix}{join_discord_flag_cards(lines, max_chars=card_budget)}"
     payload = {
         "username": "Convex Scanner",
         "embeds": [

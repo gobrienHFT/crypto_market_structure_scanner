@@ -177,6 +177,7 @@ Webhook alerts support:
 - configurable top-N filtering
 - configurable score thresholds
 - per-symbol cooldowns
+- strict 90%+ holder-concentration evidence gate with ETH/BNB/ARB chain+contract source/count backing
 - Binance+Bitget thesis venue gating by default, with Gate treated as optional supporting evidence
 - dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
 - venue-inventory stress notes when CEX deposits are large versus visible liquidity

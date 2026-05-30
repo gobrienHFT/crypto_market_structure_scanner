@@ -31,6 +31,10 @@ def test_terminal_timing_alert_source_requires_both_scores(monkeypatch) -> None:
                 "hour_close_location_pct": 78,
                 "distance_to_high_5d_pct": 1.5,
                 "bitget_volume_share_pct": 6.5,
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "top100_holder_pct": 99.0,
             },
             {
                 "symbol": "TERMONLYUSDT",
@@ -104,6 +108,10 @@ def test_timing_alert_source_excludes_fragile_states(monkeypatch) -> None:
                 "hour_close_location_pct": 82,
                 "gate_volume_share_pct": 4.0,
                 "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "Etherscan holder endpoint",
+                "top100_holder_pct": 99.0,
             },
             {
                 "symbol": "BADUSDT",
@@ -139,6 +147,10 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "float_trap_score": 60,
                 "short_dominance_score": 55,
                 "bitget_volume_share_pct": 2.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "holder_source": "Etherscan holder endpoint",
+                "top100_holder_pct": 95.0,
             },
             {
                 "symbol": "HIGHUSDT",
@@ -150,6 +162,10 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "pre_pump_precision_flag": True,
                 "gate_volume_share_pct": 8.0,
                 "bitget_volume_share_pct": 2.0,
+                "token_platform": "bsc",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "holder_source": "BscScan holder endpoint",
+                "top100_holder_pct": 99.0,
             },
         ]
     )
@@ -178,6 +194,10 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
                 "cex_deposit_24h_count": 3,
                 "cex_deposit_24h_target_exchanges": "Bitget",
                 "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x5555555555555555555555555555555555555555",
+                "holder_source": "Etherscan holder endpoint",
+                "top100_holder_pct": 99.0,
             },
             {
                 "symbol": "WATCHUSDT",
@@ -233,7 +253,15 @@ def test_terminal_alert_source_requires_binance_bitget_by_default(monkeypatch) -
         [
             {"symbol": "NOBITGETUSDT", "terminal_edge_score": 90},
             {"symbol": "GATEONLYUSDT", "terminal_edge_score": 85, "gate_volume_share_pct": 1.0},
-            {"symbol": "BITGETUSDT", "terminal_edge_score": 80, "bitget_volume_share_pct": 0.1},
+            {
+                "symbol": "BITGETUSDT",
+                "terminal_edge_score": 80,
+                "bitget_volume_share_pct": 0.1,
+                "token_platform": "arbitrum",
+                "token_contract": "0x6666666666666666666666666666666666666666",
+                "holder_source": "Arbiscan holder endpoint",
+                "top100_holder_pct": 99.0,
+            },
         ]
     )
 
