@@ -1520,6 +1520,11 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "cex_deposit_24h_count": 2,
                 "cex_deposit_24h_token_amount": 620_000,
                 "cex_deposit_24h_max_amount": 360_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 360_000,
+                "cex_deposit_24h_top_sender_address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
                 "cex_deposit_24h_target_exchanges": "Binance, Gate.io",
                 "cex_deposit_inventory_stress_score": 96,
                 "inventory_transfer_risk_score": 94,
@@ -1738,7 +1743,11 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "History gate: >= 60d" in output
     assert "Max recent pump: < 35% over 60d" in output
     assert "Holder evidence required: True" in output
+    assert "Whale-origin CEX required: False" in output
+    assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
+    assert "Core 5/5: 2" in output
+    assert "Whale-origin CEX rows: 1" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze >= 50." in output
@@ -1751,6 +1760,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "holder ev chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
     assert "venue ev Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
+    assert "WHALE-FLOW PRIMED" in output
+    assert "core 5/5 miss none" in output
+    assert "whaleCEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
     assert "gates whale Y holderEv Y venue Y noPump Y dormant2m Y squeeze Y" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
@@ -1778,6 +1790,18 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     breakout_output = "\n".join(breakout_chunks)
     assert "/CAPUSDT | RAVE-like" in breakout_output
     assert "/LABXUSDT" not in breakout_output
+
+    _, whale_flow_chunks = bot._load_ravelab_list(
+        10,
+        min_score=58,
+        min_archetype=0,
+        min_tokens=20_000,
+        require_whale_origin_flow=True,
+    )
+    whale_flow_output = "\n".join(whale_flow_chunks)
+    assert "Whale-origin CEX required: True" in whale_flow_output
+    assert "/LABXUSDT | LAB-like" in whale_flow_output
+    assert "/CAPUSDT" not in whale_flow_output
 
     _, diagnostic_chunks = bot._load_ravelab_list(
         10,
