@@ -35,20 +35,23 @@ Candidates: /SLEEPUSDT /COILUSDT
 /COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | top10 86.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
 ```
 
-## `/prime`
+## `/crimepump`
 
 ```text
-Prime crime-pump operator queue
-Strict defaults: 90%+ ETH/BNB/ARB holder evidence, Binance+Bitget, 60D no-pump/dormancy, squeeze stack. Trigger filter: all | Near misses hidden; use `/ravelab near_miss_limit:5` for diagnostics.
-Strict RAVE/LAB crime-pump early radar
-Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Style: both | Min early score: 0 | Min RAVE/LAB archetype: 0 | Whale gate: >= 90.0% | Squeeze stack gate: >= 50 | History gate: >= 60d | Max recent pump: < 35% over 60d | Holder evidence required: True | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False | Whale-origin CEX required: False | High breakout windows: 1D,2D,3D,4D,5D,20D | Breakout required: False | Near misses: 0 | Trigger filter: all | Detail: False
-Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 5/5: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 0 | Read: historical-analogue screen, not trade instruction.
+Crime-pump early queue
+Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
+Hard gates: 90%+ ETH/BNB/ARB holder evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.
+Matches: 2 | Core 5/5: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1
 Trigger queue: /LABXUSDT A3 (whaleCEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 
 Candidates: /CAPUSDT /LABXUSDT
 
-/CAPUSDT | RAVE-like | A2 BREAKOUT PRIME | core 5/5 | thesis 86/100 crime 36/100 early 73/100 | blockers none | anchor RAVEUSDT 2026-04-18
-/LABXUSDT | LAB-like | A3 WHALE-CEX PRIME | core 5/5 | thesis 90/100 crime 42/100 early 82/100 | blockers none | anchor LABUSDT 2026-05-11
+/CAPUSDT | A2 BREAKOUT | RAVE-like | thesis 86/100 | whale 99.8% holderEv Y | venues Bn/Bg/Gate Y/Y/N | hist 180d pump60 8.4%/60d | squeeze 62 fuel 52 shorts 54.0% | highs 1D,2D,3D,4D,5D,20D | CEX no target flow max n/a
+  next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
+/LABXUSDT | A3 WHALE-CEX | LAB-like | thesis 90/100 | whale 99.2% holderEv Y | venues Bn/Bg/Gate Y/Y/Y | hist 160d pump60 11.2%/60d | squeeze 58 fuel 56 shorts 51.0% | highs none | CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K
+  next: watch for absorption after target-CEX inventory movement and first perp response
+
+Use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence.
 ```
 
 ## `/ravelab min_tokens:20000`

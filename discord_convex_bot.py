@@ -275,6 +275,7 @@ def _feature_required_tier(feature: str) -> str:
         "precrime": "paid",
         "ravelab": "paid",
         "prime": "paid",
+        "crimepump": "paid",
         "flowproof": "paid",
         "coincheck": "paid",
         "floattrap": "paid",
@@ -593,6 +594,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
         "PRECRIME",
         "RAVELAB",
         "PRIME",
+        "CRIMEPUMP",
         "FLOWPROOF",
         "COINCHECK",
         "FLOATTRAP",
@@ -3684,6 +3686,51 @@ def _ravelab_queue_summary_lines(frame: pd.DataFrame, *, limit: int = 8) -> list
     return lines
 
 
+def _crime_pump_operator_line(row: pd.Series) -> str:
+    symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+    stage = _ravelab_stage_label(row)
+    stage = {
+        "A1 CORE PRIME": "A1 CORE",
+        "A2 BREAKOUT PRIME": "A2 BREAKOUT",
+        "A3 WHALE-CEX PRIME": "A3 WHALE-CEX",
+        "A4 PRIME+FLOW+BREAKOUT": "A4 FLOW+BREAKOUT",
+    }.get(stage, stage)
+    side = _clip_text(row.get("_ravelab_side", ""), 18) or "RAVE/LAB"
+    thesis = _safe_float(row.get("_ravelab_thesis_score")) or 0.0
+    whale_pct = _safe_pct(row.get("_ravelab_whale_pct"))
+    whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
+    has_binance = "Y" if _boolish_scalar(row.get("_ravelab_has_binance")) else "N"
+    has_bitget = "Y" if _boolish_scalar(row.get("_ravelab_has_bitget")) else "N"
+    has_gate = "Y" if _boolish_scalar(row.get("_ravelab_has_gate")) else "N"
+    holder_evidence_gate = "Y" if _boolish_scalar(row.get("_ravelab_holder_evidence_gate")) else "N"
+    history_days = _safe_float(row.get("_ravelab_history_days"))
+    history_text = f"{history_days:.0f}d" if history_days is not None and history_days > 0 else "n/a"
+    recent_pump = _safe_float(row.get("_ravelab_recent_max_pump_pct"))
+    recent_pump_days = _safe_float(row.get("_ravelab_recent_pump_days"))
+    pump_text = "n/a"
+    if recent_pump is not None:
+        pump_text = f"{recent_pump:.1f}%"
+        if recent_pump_days is not None and recent_pump_days > 0:
+            pump_text += f"/{recent_pump_days:.0f}d"
+    squeeze = _safe_float(row.get("_ravelab_squeeze_score")) or 0.0
+    squeeze_fuel = _safe_float(row.get("_ravelab_squeeze_fuel_score")) or 0.0
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    breakout_windows = _clip_text(row.get("_ravelab_breakout_windows", ""), 32) or "none"
+    targets = _target_cex_text(row) or "no target flow"
+    max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
+    whale_flow = _whale_sender_text(row, include_amount=True)
+    flow_text = f"{targets} max {max_amount}"
+    if whale_flow:
+        flow_text += f" | {whale_flow}"
+    return (
+        f"/{symbol} | {stage} | {side} | thesis {thesis:.0f}/100 | whale {whale_text} holderEv {holder_evidence_gate} | "
+        f"venues Bn/Bg/Gate {has_binance}/{has_bitget}/{has_gate} | hist {history_text} pump60 {pump_text} | "
+        f"squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shorts {short_text} | highs {breakout_windows} | CEX {flow_text}\n"
+        f"  next: {_clip_text(_ravelab_next_check(row), 120)}"
+    )
+
+
 def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     score = _safe_float(row.get("_ravelab_early_score")) or 0.0
@@ -3916,6 +3963,7 @@ def _load_ravelab_list(
     trigger_filter: str = "all",
     near_miss_limit: int = 5,
     detail: bool = False,
+    compact: bool = False,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
@@ -4021,6 +4069,20 @@ def _load_ravelab_list(
             f"core 5/5 {int(_num_series(scored, '_ravelab_core_gate_count').ge(5.0).sum())} | "
             f"whale-origin CEX {int(_boolish_series(scored.get('_ravelab_whale_origin_flow'), index=scored.index).sum())}"
         )
+        if compact:
+            lines = [
+                "Crime-pump early queue",
+                (
+                    f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
+                    f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
+                ),
+                "Hard gates: 90%+ ETH/BNB/ARB holder evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+                gate_counts,
+                "",
+                "No hard-gated early crime-pump candidates passed the current operator filters.",
+                "Use `/ravelab near_miss_limit:5 detail:true` for blockers and data-coverage diagnostics.",
+            ]
+            return "Crime-pump early queue", _chunk_text_lines(lines)
         nearest = scored.sort_values(
             [
                 "_ravelab_core_gate_count",
@@ -4101,6 +4163,28 @@ def _load_ravelab_list(
     )
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
     queue_summary = _ravelab_queue_summary_lines(selected)
+    if compact:
+        triggered_count = int(_ravelab_trigger_filter_mask(selected, "triggered").sum())
+        breakout_count = int(_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index).sum())
+        lines = [
+            "Crime-pump early queue",
+            (
+                f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
+                f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
+            ),
+            "Hard gates: 90%+ ETH/BNB/ARB holder evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+            (
+                f"Matches: {len(selected)} | Core 5/5: {core_count} | Triggered: {triggered_count} | "
+                f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | Breakout highs: {breakout_count}"
+            ),
+        ]
+        if queue_summary:
+            lines.extend(queue_summary)
+        lines.extend(["", f"Candidates: {symbols}" if symbols else "Candidates: none", ""])
+        for _, row in selected.iterrows():
+            lines.append(_crime_pump_operator_line(row))
+        lines.extend(["", "Use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence."])
+        return "Crime-pump early queue", _chunk_text_lines(lines)
     lines = [
         header,
         (
@@ -4144,7 +4228,7 @@ def _load_ravelab_list(
     return "RAVE/LAB early radar", _chunk_text_lines(lines)
 
 
-def _load_prime_list(
+def _load_crimepump_list(
     limit: int,
     *,
     min_tokens: float | None = None,
@@ -4153,7 +4237,7 @@ def _load_prime_list(
     breakout_windows: str = "1D,2D,3D,4D,5D,20D",
 ) -> tuple[str, list[str]]:
     trigger_key = _normalize_ravelab_trigger_filter(trigger)
-    _title, chunks = _load_ravelab_list(
+    return _load_ravelab_list(
         limit,
         min_score=0.0,
         min_archetype=0.0,
@@ -4175,13 +4259,26 @@ def _load_prime_list(
         trigger_filter=trigger_key,
         near_miss_limit=0,
         detail=False,
+        compact=True,
     )
-    intro = (
-        "Prime crime-pump operator queue\n"
-        f"Strict defaults: 90%+ ETH/BNB/ARB holder evidence, Binance+Bitget, 60D no-pump/dormancy, squeeze stack. "
-        f"Trigger filter: {trigger_key} | Near misses hidden; use `/ravelab near_miss_limit:5` for diagnostics.\n"
+
+
+def _load_prime_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    trigger: str = "all",
+    breakout_windows: str = "1D,2D,3D,4D,5D,20D",
+) -> tuple[str, list[str]]:
+    _title, chunks = _load_crimepump_list(
+        limit,
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+        trigger=trigger,
+        breakout_windows=breakout_windows,
     )
-    return "Prime crime-pump queue", _chunk_text_lines((intro + "\n".join(chunks)).splitlines())
+    return "Prime crime-pump queue", chunks
 
 
 def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, lookback_hours: int | None = None) -> tuple[str, str]:
@@ -5280,6 +5377,56 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
+    crimepump_kwargs = {"name": "crimepump", "description": "Clean hard-gated early crime-pump queue."}
+    if guild is not None:
+        crimepump_kwargs["guild"] = guild
+
+    @tree.command(**crimepump_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per confirmed transfer.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        trigger="Filter to all hard-gated rows, rows with catalysts, whale-CEX flow, or high breakouts.",
+        breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
+    )
+    @app_commands.choices(
+        trigger=[
+            app_commands.Choice(name="all hard-gated rows", value="all"),
+            app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="whale-CEX flow", value="flow"),
+            app_commands.Choice(name="breakout highs", value="breakout"),
+            app_commands.Choice(name="core watch only", value="core"),
+        ]
+    )
+    async def crimepump(
+        interaction: discord.Interaction,
+        min_tokens: float = 20_000.0,
+        limit: int = 12,
+        lookback_hours: int = 24,
+        trigger: str = "all",
+        breakout_windows: str = "1D,2D,3D,4D,5D,20D",
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("crimepump")):
+            await interaction.response.send_message(_access_denied_message("crimepump"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_crimepump_list,
+            min(max(int(limit), 1), 50),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            trigger=trigger,
+            breakout_windows=breakout_windows,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
     prime_kwargs = {"name": "prime", "description": "Clean strict queue for hard-gated early crime-pump structures."}
     if guild is not None:
         prime_kwargs["guild"] = guild
@@ -6240,7 +6387,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/alpha`, `/prime`, `/precrime min_tokens:20000`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
+                    "Convex bot online. Use `/convex_status`, `/alpha`, `/crimepump`, `/prime`, `/precrime min_tokens:20000`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")

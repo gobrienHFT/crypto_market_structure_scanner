@@ -40,6 +40,7 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/precrime") == ""
     assert bot._normalize_symbol_query("/ravelab") == ""
     assert bot._normalize_symbol_query("/prime") == ""
+    assert bot._normalize_symbol_query("/crimepump") == ""
     assert bot._normalize_symbol_query("/flowproof") == ""
     assert bot._normalize_symbol_query("/coincheck") == ""
     assert bot._normalize_symbol_query("/floattrap") == ""
@@ -2046,22 +2047,31 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/COUNTONLYUSDT" in diagnostic_output
     assert "holder holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
 
+    crime_title, crime_chunks = bot._load_crimepump_list(10, min_tokens=20_000)
+    crime_output = "\n".join(crime_chunks)
+    assert crime_title == "Crime-pump early queue"
+    assert "Crime-pump early queue" in crime_output
+    assert "Hard gates: 90%+ ETH/BNB/ARB holder evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
+    assert "Trigger: all" in crime_output
+    assert "Matches: 2 | Core 5/5: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in crime_output
+    assert "Trigger queue:" in crime_output
+    assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in crime_output
+    assert "venues Bn/Bg/Gate Y/Y/N | hist 180d pump60" in crime_output
+    assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in crime_output
+    assert "CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K" in crime_output
+    assert "Strict RAVE/LAB crime-pump early radar" not in crime_output
+    assert "Near misses (blocked" not in crime_output
+
     prime_title, prime_chunks = bot._load_prime_list(10, min_tokens=20_000)
     prime_output = "\n".join(prime_chunks)
     assert prime_title == "Prime crime-pump queue"
-    assert "Prime crime-pump operator queue" in prime_output
-    assert "Strict defaults: 90%+ ETH/BNB/ARB holder evidence, Binance+Bitget, 60D no-pump/dormancy, squeeze stack." in prime_output
-    assert "Trigger filter: all | Near misses hidden" in prime_output
-    assert "Near misses: 0" in prime_output
-    assert "Trigger queue:" in prime_output
-    assert "/CAPUSDT" in prime_output
-    assert "/LABXUSDT" in prime_output
-    assert "Near misses (blocked" not in prime_output
+    assert "Crime-pump early queue" in prime_output
+    assert "Strict RAVE/LAB crime-pump early radar" not in prime_output
 
     _, prime_flow_chunks = bot._load_prime_list(10, min_tokens=20_000, trigger="flow")
     prime_flow_output = "\n".join(prime_flow_chunks)
-    assert "Trigger filter: flow | Near misses hidden" in prime_flow_output
-    assert "/LABXUSDT | LAB-like" in prime_flow_output
+    assert "Trigger: flow" in prime_flow_output
+    assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in prime_flow_output
     assert "/CAPUSDT" not in prime_flow_output
 
 

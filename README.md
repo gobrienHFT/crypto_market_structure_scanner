@@ -216,6 +216,7 @@ Supported commands include:
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_quiet] [require_behavior_gate]
+/crimepump [min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [near_miss_limit] [detail]
 /prime [min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_venue_gate]
@@ -258,8 +259,9 @@ The bot can retrieve:
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups after the hard holder and Binance+Bitget thesis gates: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
+- a compact `/crimepump` operator queue for the main thesis: 90%+ ETH/BNB/ARB holder evidence, Binance+Bitget, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for whale-CEX flow, breakout highs, triggered-only, or core-watch rows
 - a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration with ETH/BNB/ARB chain+contract holder evidence, Binance+Bitget trading evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, holder source/count/chain/contract evidence, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
-- a `/prime` operator queue that runs the same strict RAVE/LAB hard gates with near misses hidden by default, and exposes a short `trigger` choice for all hard-gated rows, triggered-only rows, whale-CEX flow, breakout highs, or core-watch rows
+- `/prime` as a short alias for the same compact crime-pump queue
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ holder-evidence and Binance+Bitget gates
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ holder dominance with optional ETH/BNB/ARB chain+contract evidence, Binance+Bitget trading evidence by default, low float/high FDV, short crowding, and not-late structure
 - symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate by default and showing top-holder sender provenance when the transfer origin matches a scanned holder wallet
