@@ -18,6 +18,12 @@ class BreakoutLevels:
 
 
 @dataclass(frozen=True)
+class RecentPumpStats:
+    max_pump_pct: float
+    used_days: int
+
+
+@dataclass(frozen=True)
 class BreakoutRow:
     symbol: str
     base_asset: str
@@ -25,6 +31,9 @@ class BreakoutRow:
     last_price: float
     quote_volume_24h: float
     history_days: int
+    recent_max_pump_60d_pct: float
+    recent_pump_60d_days: int
+    no_large_pump_60d_flag: bool
     corr_to_btc_6m: float
     corr_window_days: int
     high_24h: float
@@ -163,3 +172,40 @@ def levels_from_klines(klines: list[list[Any]]) -> BreakoutLevels:
         low_180d=_rolling_level(lows, 180, fn=min),
         ath_scanned=float(max(highs)),
     )
+
+
+def recent_pump_stats_from_klines(klines: list[list[Any]], *, lookback_days: int = 60) -> RecentPumpStats:
+    """Measure the largest recent daily high expansion from closed candles."""
+    if len(klines) < 2:
+        return RecentPumpStats(float("nan"), 0)
+
+    closed_only = [row for row in klines[:-1] if isinstance(row, (list, tuple)) and len(row) > 4]
+    if not closed_only:
+        return RecentPumpStats(float("nan"), 0)
+
+    lookback = max(1, int(lookback_days))
+    start = max(0, len(closed_only) - lookback)
+    max_pump = 0.0
+    valid_days = 0
+    for idx in range(start, len(closed_only)):
+        row = closed_only[idx]
+        open_price = _to_float(row[1])
+        high_price = _to_float(row[2])
+        close_price = _to_float(row[4])
+        candidates: list[float] = []
+        if open_price > 0 and high_price > 0:
+            candidates.append((high_price / open_price - 1.0) * 100.0)
+        if idx > 0:
+            prev_close = _to_float(closed_only[idx - 1][4])
+            if prev_close > 0:
+                if high_price > 0:
+                    candidates.append((high_price / prev_close - 1.0) * 100.0)
+                if close_price > 0:
+                    candidates.append((close_price / prev_close - 1.0) * 100.0)
+        if candidates:
+            valid_days += 1
+            max_pump = max(max_pump, max(candidates))
+
+    if valid_days <= 0:
+        return RecentPumpStats(float("nan"), 0)
+    return RecentPumpStats(max(0.0, float(max_pump)), valid_days)

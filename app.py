@@ -13,7 +13,7 @@ import streamlit as st
 
 from archetype_scoring import ARCHETYPE_SCORE_COLUMNS, apply_archetype_model
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic
-from breakouts import BreakoutRow, levels_from_klines
+from breakouts import BreakoutRow, levels_from_klines, recent_pump_stats_from_klines
 from cmc_movers import fetch_cmc_movers
 from concentration_scanner import HolderRecord, ManualOverride, ScanCache, ScannerInput, TokenConcentrationScanner
 from concentration_scanner.fixtures import acceptance_fixture_results
@@ -2890,6 +2890,8 @@ FAST_MAX_SYMBOLS = int(_env_value("FAST_MAX_SYMBOLS", default="12"))
 DEEP_MAX_TOTAL_SYMBOLS_TO_SCAN = int(_env_value("DEEP_MAX_TOTAL_SYMBOLS_TO_SCAN", default="28"))
 CRIME_SYMBOLS_TO_SCAN = int(_env_value("MARKET_STRUCTURE_SYMBOLS_TO_SCAN", "CRIME_SYMBOLS_TO_SCAN", default="10"))
 DAILY_KLINE_LIMIT = int(_env_value("DAILY_KLINE_LIMIT", default="1500"))
+NO_LARGE_PUMP_LOOKBACK_DAYS = 60
+NO_LARGE_PUMP_THRESHOLD_PCT = float(_env_value("NO_LARGE_PUMP_THRESHOLD_PCT", default="35.0"))
 INCLUDE_TRADFI_BREAKOUTS = _env_value("INCLUDE_TRADFI_BREAKOUTS", default="0").strip().lower() in {
     "1",
     "true",
@@ -3202,6 +3204,9 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "broke_low_20d",
         "broke_low_90d",
         "broke_low_180d",
+        "recent_max_pump_60d_pct",
+        "recent_pump_60d_days",
+        "no_large_pump_60d_flag",
         "last_price",
         "price_change_24h_pct",
         "change_24h_pct",
@@ -4281,6 +4286,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
             else []
         )
         levels = levels_from_klines(klines)
+        recent_pump = recent_pump_stats_from_klines(klines, lookback_days=NO_LARGE_PUMP_LOOKBACK_DAYS)
         corr_to_btc, corr_window_days = _latest_btc_correlation(symbol, klines, btc_klines)
         funding_snapshot = funding_by_symbol.get(symbol, {})
         funding_info_snapshot = funding_info_by_symbol.get(symbol, {})
@@ -4542,6 +4548,13 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 last_price=last_price,
                 quote_volume_24h=quote_volume_24h,
                 history_days=max(0, len(klines) - 1),
+                recent_max_pump_60d_pct=recent_pump.max_pump_pct,
+                recent_pump_60d_days=recent_pump.used_days,
+                no_large_pump_60d_flag=(
+                    recent_pump.used_days >= NO_LARGE_PUMP_LOOKBACK_DAYS
+                    and not math.isnan(recent_pump.max_pump_pct)
+                    and recent_pump.max_pump_pct < NO_LARGE_PUMP_THRESHOLD_PCT
+                ),
                 corr_to_btc_6m=corr_to_btc,
                 corr_window_days=corr_window_days,
                 high_24h=high_24h,

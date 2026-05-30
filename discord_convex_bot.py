@@ -2934,6 +2934,7 @@ def _score_ravelab_early_frame(
     *,
     min_whale_pct: float = 90.0,
     min_history_days: int = 60,
+    max_recent_pump_pct: float = 35.0,
 ) -> pd.DataFrame:
     scored = frame.loc[:, ~frame.columns.duplicated()].copy()
     scored = apply_terminal_model(scored)
@@ -3029,13 +3030,18 @@ def _score_ravelab_early_frame(
     day_return_abs = _num_series(scored, "day_return_pct", default=float("nan")).abs()
     day_return_abs = day_return_abs.fillna(_num_series(scored, "price_change_24h_pct").abs())
     history_days = _num_series(scored, "history_days", default=0.0)
+    recent_pump = _num_series(scored, "recent_max_pump_60d_pct", default=float("nan"))
+    recent_pump_days = _num_series(scored, "recent_pump_60d_days", default=0.0)
+    recent_pump_observed = recent_pump.notna() & recent_pump_days.ge(max(1, min(60, int(min_history_days))))
+    recent_pump_or_current = pd.concat([recent_pump, day_return_abs], axis=1).max(axis=1).fillna(0.0)
+    no_large_recent_pump = recent_pump_or_current.lt(max(0.0, float(max_recent_pump_pct)))
     dormant_2m = (
         history_days.ge(max(1, int(min_history_days)))
         & (~broke_90d)
         & (~broke_180d)
         & heat.lt(62.0)
         & late_penalty.lt(66.0)
-        & day_return_abs.lt(35.0)
+        & no_large_recent_pump
     )
     broke_5d = _boolish_series(scored.get("broke_high_5d"), index=index)
     broke_20d = _boolish_series(scored.get("broke_high_20d"), index=index)
@@ -3103,6 +3109,10 @@ def _score_ravelab_early_frame(
     scored["_ravelab_squeeze_score"] = squeeze
     scored["_ravelab_history_days"] = history_days
     scored["_ravelab_min_history_days"] = int(min_history_days)
+    scored["_ravelab_recent_max_pump_pct"] = recent_pump_or_current
+    scored["_ravelab_recent_pump_days"] = recent_pump_days.where(recent_pump_observed, other=0.0)
+    scored["_ravelab_max_recent_pump_pct"] = float(max_recent_pump_pct)
+    scored["_ravelab_no_large_pump_gate"] = no_large_recent_pump & (~major_excluded)
     scored["_ravelab_dormant_2m_gate"] = dormant_2m & (~major_excluded)
     scored["_ravelab_breakout_score"] = breakout
     scored["_ravelab_structure_gate"] = structure_gate & (~major_excluded)
@@ -3123,8 +3133,12 @@ def _ravelab_next_check(row: pd.Series) -> str:
         return "skip until holder concentration clears the 90% whale gate"
     if not _boolish_scalar(row.get("_ravelab_venue_gate")):
         return "skip until Binance and Bitget venue evidence are both present"
+    has_no_pump_gate = hasattr(row, "index") and "_ravelab_no_large_pump_gate" in row.index
+    if has_no_pump_gate and not _boolish_scalar(row.get("_ravelab_no_large_pump_gate")):
+        max_pump = _safe_float(row.get("_ravelab_max_recent_pump_pct")) or 35.0
+        return f"wait; recent daily pump exceeded {max_pump:.0f}% no-pump gate"
     if not _boolish_scalar(row.get("_ravelab_dormant_2m_gate")):
-        return f"wait; needs {min_history_days}d history and no recent 90D/180D high or chase heat"
+        return f"wait; needs {min_history_days}d history, no 90D/180D high, and no chase heat"
     if not _boolish_scalar(row.get("_ravelab_early_gate")):
         return "wait for heat/late penalty to reset before treating it as early"
     if side != "RAVE-like" and not _boolish_scalar(row.get("_ravelab_target_flow")):
@@ -3156,11 +3170,15 @@ def _ravelab_line(row: pd.Series) -> str:
     squeeze = _safe_float(row.get("_ravelab_squeeze_score")) or 0.0
     breakout = _safe_float(row.get("_ravelab_breakout_score")) or 0.0
     history_days = _safe_float(row.get("_ravelab_history_days"))
+    recent_pump = _safe_float(row.get("_ravelab_recent_max_pump_pct"))
+    recent_pump_days = _safe_float(row.get("_ravelab_recent_pump_days"))
     breakout_windows = _clip_text(row.get("_ravelab_breakout_windows", ""), 44) or "n/a"
     has_binance = "Y" if _boolish_scalar(row.get("_ravelab_has_binance")) else "N"
     has_bitget = "Y" if _boolish_scalar(row.get("_ravelab_has_bitget")) else "N"
     has_gate = "Y" if _boolish_scalar(row.get("_ravelab_has_gate")) else "N"
     dormant = "Y" if _boolish_scalar(row.get("_ravelab_dormant_2m_gate")) else "N"
+    has_no_pump_gate = hasattr(row, "index") and "_ravelab_no_large_pump_gate" in row.index
+    no_pump = "Y" if _boolish_scalar(row.get("_ravelab_no_large_pump_gate")) else "N" if has_no_pump_gate else "?"
     whale_gate = "Y" if _boolish_scalar(row.get("_ravelab_whale_gate")) else "N"
     holder_evidence_gate = "Y" if _boolish_scalar(row.get("_ravelab_holder_evidence_gate")) else "N"
     venue_gate = "Y" if _boolish_scalar(row.get("_ravelab_venue_gate")) else "N"
@@ -3170,6 +3188,12 @@ def _ravelab_line(row: pd.Series) -> str:
     whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
     history_text = f"{history_days:.0f}d" if history_days is not None and history_days > 0 else "n/a"
+    if recent_pump is not None:
+        pump_text = f"{recent_pump:.1f}%"
+        if recent_pump_days is not None and recent_pump_days > 0:
+            pump_text += f"/{recent_pump_days:.0f}d"
+    else:
+        pump_text = "n/a"
     holder_evidence = _holder_evidence_text(row)
     venue_evidence = _venue_evidence_text(row)
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
@@ -3177,11 +3201,11 @@ def _ravelab_line(row: pd.Series) -> str:
     next_check = _clip_text(_ravelab_next_check(row), 96)
     return (
         f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
-        f"gates whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
+        f"gates whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} noPump {no_pump} dormant2m {dormant} squeeze {squeeze_gate} | "
         f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | venue ev {venue_evidence} | "
         f"whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
         f"holder ev {holder_evidence} | "
-        f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
+        f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | pump60 {pump_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
         f"CEX {targets} {cex_count}tx max {max_amount} | control {control:.0f} float {float_score:.0f} | "
         f"quiet {quiet:.0f} heat {heat:.0f} | dashboard {setup:.0f} latent {latent:.0f}{anchor} | next: {next_check}"
     )
@@ -3218,6 +3242,7 @@ def _load_ravelab_list(
     min_whale_pct: float = 90.0,
     min_squeeze_score: float = 50.0,
     min_history_days: int = 60,
+    max_recent_pump_pct: float = 35.0,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
     breakout_windows: str = "1D,2D,3D,4D,5D,20D",
@@ -3248,7 +3273,7 @@ def _load_ravelab_list(
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
         f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze gate: >= {float(min_squeeze_score):.0f} | "
-        f"History gate: >= {int(min_history_days)}d | "
+        f"History gate: >= {int(min_history_days)}d | Max recent pump: < {float(max_recent_pump_pct):.0f}% over 60d | "
         f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
         f"Quiet required: {require_quiet} | Target flow required: {require_target_flow} | "
@@ -3258,7 +3283,12 @@ def _load_ravelab_list(
     if frame.empty:
         return "RAVE/LAB early radar", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
 
-    scored = _score_ravelab_early_frame(frame, min_whale_pct=min_whale_pct, min_history_days=min_history_days)
+    scored = _score_ravelab_early_frame(
+        frame,
+        min_whale_pct=min_whale_pct,
+        min_history_days=min_history_days,
+        max_recent_pump_pct=max_recent_pump_pct,
+    )
     holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
     scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
     selected = scored[
@@ -3293,6 +3323,7 @@ def _load_ravelab_list(
             f"Gate counts before filters: whale {int(_boolish_series(scored.get('_ravelab_whale_gate'), index=scored.index).sum())} | "
             f"holder evidence {int(_boolish_series(scored.get('_ravelab_holder_evidence_gate'), index=scored.index).sum())} | "
             f"Binance+Bitget {int(_boolish_series(scored.get('_ravelab_venue_gate'), index=scored.index).sum())} | "
+            f"no-pump {int(_boolish_series(scored.get('_ravelab_no_large_pump_gate'), index=scored.index).sum())} | "
             f"dormant2m/history {int(_boolish_series(scored.get('_ravelab_dormant_2m_gate'), index=scored.index).sum())} | "
             f"squeeze {int(_num_series(scored, '_ravelab_squeeze_score').ge(max(0.0, float(min_squeeze_score))).sum())}"
         )
@@ -3348,7 +3379,7 @@ def _load_ravelab_list(
         f"All shown rows passed whale >= {float(min_whale_pct):.1f}%"
         f"{', holder evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
-        f"{f', history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
+        f"{f', no recent pump >= {float(max_recent_pump_pct):.0f}%, history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
         f", squeeze >= {float(min_squeeze_score):.0f}."
     )
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
@@ -4347,6 +4378,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_whale_pct="Required observed top-holder concentration percentage. Default 90.",
         min_squeeze_score="Required short-squeeze/perp-fuel score. Default 50.",
         min_history_days="Required history coverage for the dormancy/no-pump gate. Default 60.",
+        max_recent_pump_pct="Reject rows with a daily high expansion above this in the last 60d. Default 35.",
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
@@ -4373,6 +4405,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_whale_pct: float = 90.0,
         min_squeeze_score: float = 50.0,
         min_history_days: int = 60,
+        max_recent_pump_pct: float = 35.0,
         min_tokens: float = 20_000.0,
         limit: int = 20,
         lookback_hours: int = 24,
@@ -4400,6 +4433,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             min_squeeze_score=max(0.0, min(float(min_squeeze_score), 100.0)),
             min_history_days=max(1, int(min_history_days)),
+            max_recent_pump_pct=max(0.0, float(max_recent_pump_pct)),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             breakout_windows=breakout_windows,

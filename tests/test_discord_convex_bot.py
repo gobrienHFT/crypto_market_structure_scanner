@@ -1682,6 +1682,34 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
+            {
+                "symbol": "RECENTPUMPUSDT",
+                "history_days": 180,
+                "token_platform": "ethereum",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "holder_count": 9_000,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 85.0,
+                "binance_volume_share_pct": 12.0,
+                "bitget_volume_share_pct": 2.0,
+                "recent_max_pump_60d_pct": 82.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": False,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
@@ -1708,11 +1736,12 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Anchors: RAVEUSDT 2026-04-18" in output
     assert "Whale gate: >= 90.0%" in output
     assert "History gate: >= 60d" in output
+    assert "Max recent pump: < 35% over 60d" in output
     assert "Holder evidence required: True" in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
-    assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, history >= 60d and dormant2m, squeeze >= 50." in output
+    assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze >= 50." in output
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
@@ -1722,7 +1751,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "holder ev chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
     assert "venue ev Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
-    assert "gates whale Y holderEv Y venue Y dormant2m Y squeeze Y" in output
+    assert "gates whale Y holderEv Y venue Y noPump Y dormant2m Y squeeze Y" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
@@ -1732,6 +1761,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/PCTONLYUSDT" not in output
     assert "/COUNTONLYUSDT" not in output
     assert "/TARGETONLYUSDT" not in output
+    assert "/RECENTPUMPUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)
