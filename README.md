@@ -225,8 +225,8 @@ Supported commands include:
 /squeezeready [min_short_pct] [min_score] [limit]
 /cextargets [min_tokens] [limit] [lookback_hours]
 /whales [min_pct] [bucket] [limit] [require_contract_hint] [max_symbols] [refresh]
-/high [days] [limit]
-/low [days] [limit]
+/high [days] [limit] [thesis_only]
+/low [days] [limit] [thesis_only]
 /terminal
 /timing
 /corr [threshold] [limit]

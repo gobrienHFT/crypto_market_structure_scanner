@@ -465,6 +465,8 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
                 "range_high_break_count": 2,
                 "range_low_break_count": 0,
                 "short_account_pct": 61.0,
+                "bitget_volume_share_pct": 2.0,
+                **_holder_evidence("ethereum", "0x9999999999999999999999999999999999999999"),
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -496,11 +498,19 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     assert title == "HIGH breakout screen"
     assert "20D high breakout screen" in output
     assert "Filter: `broke_high_20d` is true" in output
+    assert "Thesis breakout matches: 1" in output
     assert "Matches: 2" in output
-    assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0%" in output
-    assert "/SLOWUSDT | broke 20D high | 24h +2.1%" in output
+    assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | thesis Y" in output
+    assert "/SLOWUSDT | broke 20D high | 24h +2.1% | breaks H1/L0 | thesis N" in output
     assert output.index("/FASTUSDT") < output.index("/SLOWUSDT")
     assert "/LOWUSDT" not in output
+
+    _, thesis_chunks = bot._load_breakout_list("high", days="20D", thesis_only=True)
+    thesis_output = "\n".join(thesis_chunks)
+    assert "Thesis-only: True" in thesis_output
+    assert "Matches: 1 | Strict thesis matches: 1" in thesis_output
+    assert "/FASTUSDT" in thesis_output
+    assert "/SLOWUSDT" not in thesis_output
 
 
 def test_load_low_breakout_list_uses_numeric_days(monkeypatch) -> None:

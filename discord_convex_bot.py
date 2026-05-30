@@ -515,7 +515,7 @@ def _cex_flow_attempt_symbol_lines(
     capped_limit = min(max(int(limit), 1), 50)
     lines = ["Attempted symbols (not confirmed transfers unless status starts FLOW):"]
     for _, row in rows.head(capped_limit).iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         row_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
         is_flow = bool(row_score > 0.0) or str(row.get("cex_deposit_flow_flag", "")).strip().lower() in {"1", "true", "yes"}
         error = _clip_text(row.get("cex_deposit_flow_error", ""), 70)
@@ -1071,7 +1071,7 @@ def _apply_dynamic_breakout_window(frame: pd.DataFrame, *, direction: str, days:
     limit = min(MAX_DYNAMIC_BREAKOUT_DAYS + 1, max(2, int(days) + 1))
 
     for idx, row in out.iterrows():
-        symbol = str(row.get("symbol", "")).upper().strip()
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip()
         if not symbol:
             out.at[idx, error_column] = "missing symbol"
             stats["errors"] += 1
@@ -1294,7 +1294,7 @@ def _apply_ravelab_recent_pump_window(
     return out, stats
 
 
-def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0) -> tuple[str, list[str]]:
+def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_only: bool = False) -> tuple[str, list[str]]:
     direction = "high" if str(side).lower().startswith("h") else "low"
     parsed_days = _parse_breakout_days(days)
     title = f"{direction.upper()} breakout screen"
@@ -1329,13 +1329,20 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0) -> tupl
         )
         mask = _boolish_series(frame[column], index=frame.index)
     selected = frame[mask].copy()
+    if not selected.empty:
+        selected["_discord_thesis_gate"] = _thesis_candidate_gate_mask(selected)
+    thesis_match_count = int(_boolish_series(selected.get("_discord_thesis_gate"), index=selected.index).sum()) if not selected.empty else 0
+    if thesis_only and not selected.empty:
+        selected = selected[_boolish_series(selected.get("_discord_thesis_gate"), index=selected.index)].copy()
     header = (
         f"{parsed_days}D {direction} breakout screen\n"
         f"{_cache_age_header(frame, source)}\n"
-        f"{filter_text}"
+        f"{filter_text}\n"
+        f"{_thesis_candidate_header()} | Thesis-only: {bool(thesis_only)} | Thesis breakout matches: {thesis_match_count}"
     )
     if selected.empty:
-        return title, [header + f"\n\nNo symbols currently broke their {parsed_days}D {direction}."]
+        qualifier = " and passed the strict thesis gate" if thesis_only else ""
+        return title, [header + f"\n\nNo symbols currently broke their {parsed_days}D {direction}{qualifier}."]
 
     price_change = pd.to_numeric(
         selected.get("price_change_24h_pct", selected.get("day_return_pct", pd.Series(0.0, index=selected.index))),
@@ -1345,17 +1352,22 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0) -> tupl
     score = pd.to_numeric(selected.get("range_breakout_score", pd.Series(0.0, index=selected.index)), errors="coerce").fillna(0.0)
     selected["_discord_breakout_score"] = score
     selected = selected.sort_values(
-        ["_discord_breakout_24h", "_discord_breakout_score", "symbol"],
-        ascending=[direction != "high", False, True],
+        ["_discord_thesis_gate", "_discord_breakout_24h", "_discord_breakout_score", "symbol"],
+        ascending=[False, direction != "high", False, True],
     )
 
     requested_limit = int(limit or 0)
     capped_limit = min(max(requested_limit, 0), 300)
     visible = selected.head(capped_limit) if capped_limit > 0 else selected
     hidden_count = max(0, len(selected) - len(visible))
-    lines = [header, "", f"Matches: {len(selected)}" + (f" | Showing: {len(visible)}" if hidden_count else ""), ""]
+    lines = [
+        header,
+        "",
+        f"Matches: {len(selected)} | Strict thesis matches: {thesis_match_count}" + (f" | Showing: {len(visible)}" if hidden_count else ""),
+        "",
+    ]
     for _, row in visible.iterrows():
-        symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         line = f"/{symbol} | broke {parsed_days}D {direction}"
         move = _safe_float(row.get("price_change_24h_pct"))
         if move is None:
@@ -1381,6 +1393,8 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0) -> tupl
         short_pct = _safe_float(row.get("short_account_pct"))
         if short_pct is not None:
             line += f" | shorts {short_pct:.1f}%"
+        thesis_gate = "Y" if _boolish_scalar(row.get("_discord_thesis_gate")) else "N"
+        line += f" | thesis {thesis_gate}"
         lines.append(line)
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")
@@ -1612,7 +1626,7 @@ def _load_whale_dominance_list(
         "",
     ]
     for _, row in visible.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         top10_text = f"{float(row['_whale_top10']):.1f}%" if pd.notna(row.get("_whale_top10")) else "n/a"
         top100_text = f"{float(row['_whale_top100']):.1f}%" if pd.notna(row.get("_whale_top100")) else "n/a"
         short_pct = _safe_float(row.get("short_account_pct"))
@@ -1698,7 +1712,7 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
 
     lines = [header, "", f"Matches: {len(selected)}" + (f" | Showing: {len(visible)}" if hidden_count else ""), ""]
     for _, row in visible.iterrows():
-        symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         corr_value = _safe_float(row.get("_discord_corr_to_btc"))
         window_days = int(_safe_float(row.get("_discord_corr_window_days")) or 0)
         window_text = f"used {window_days}d" if window_days > 0 else "used n/a"
@@ -1713,7 +1727,7 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
             day_return = _safe_float(row.get("price_change_24h_pct"))
         if day_return is not None:
             line += f" | 24h {day_return:.1f}%"
-        market_type = str(row.get("market_type", "") or "").strip()
+        market_type = _clean_scalar_text(row.get("market_type", "")).strip()
         if market_type:
             line += f" | {market_type}"
         lines.append(line)
@@ -1892,7 +1906,7 @@ def _load_funding_leaderboard(
 
     if _env_bool("DISCORD_FUNDING_INCLUDE_ACCOUNT_RATIO", True):
         for row in selected_rows:
-            long_pct, short_pct = _funding_account_percentages(client, str(row.get("symbol", "")), period=ratio_period)
+            long_pct, short_pct = _funding_account_percentages(client, _clean_scalar_text(row.get("symbol", "")), period=ratio_period)
             row["long_account_pct"] = long_pct
             row["short_account_pct"] = short_pct
 
@@ -2257,7 +2271,7 @@ def _load_flow_stress_list(
     rows = rows.sort_values(["_flow_stress", "_flow_score", "symbol"], ascending=[False, False, True]).head(min(max(int(limit), 1), 100))
     lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
     for _, row in rows.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         stress_value = _safe_float(row.get("cex_deposit_inventory_stress_score")) or 0.0
         flow_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
         targets = _clip_text(row.get("cex_deposit_24h_target_exchanges", ""), 50) or "labelled CEX"
@@ -2300,7 +2314,7 @@ def _load_flow_blocked_list(
     rows = rows.sort_values(["_http403", "_symbol"], ascending=[False, True]).head(min(max(int(limit), 1), 100))
     lines = [header, f"Blocked/error rows: {len(frame[error_text.ne('')])}", ""]
     for _, row in rows.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         source_url = _clip_text(row.get("cex_deposit_24h_source_url", ""), 90)
         source_kind = _clip_text(row.get("cex_deposit_flow_source", ""), 50)
         error = _clip_text(row.get("cex_deposit_flow_error", ""), 170)
@@ -2482,13 +2496,19 @@ def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[_binance_bitget_trading_gate_mask(frame)].copy()
 
 
+def _thesis_candidate_gate_mask(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    holder_gate = _strict_cex_holder_gate_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=True)
+    if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
+        return holder_gate.fillna(False)
+    return (holder_gate & _binance_bitget_trading_gate_mask(frame)).fillna(False)
+
+
 def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
-    holder_gated = frame[_strict_cex_holder_gate_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=True)].copy()
-    if holder_gated.empty:
-        return holder_gated
-    return _apply_thesis_venue_gate(holder_gated)
+    return frame[_thesis_candidate_gate_mask(frame, min_whale_pct=min_whale_pct)].copy()
 
 
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
@@ -2638,7 +2658,7 @@ def _load_seth_flow_playbook(
         "",
     ]
     for _, row in visible.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         flow_score = _safe_float(row.get("cex_deposit_flow_score")) or 0.0
         cex_count = int(_safe_float(row.get("cex_deposit_24h_count")) or 0)
         total_amount = _fmt_compact_number(row.get("cex_deposit_24h_token_amount"))
@@ -2878,7 +2898,7 @@ def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
 
 
 def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
-    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     status = _goal_row_status(row, min_score=min_score)
     score = _safe_float(row.get("_goal_setup_score")) or 0.0
     targets = _target_cex_text(row) or _clip_text(row.get("cex_deposit_24h_target_exchanges", ""), 36) or "no target CEX"
@@ -3078,7 +3098,7 @@ def _load_pump_watch_list(
 
 
 def _pump_watch_line(row: pd.Series) -> str:
-    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     radar = _safe_float(row.get("early_pump_radar_score")) or 0.0
     state = _clip_text(row.get("early_pump_state", ""), 32) or "No edge"
     signal = _clip_text(row.get("early_pump_primary_signal", ""), 44) or "signal n/a"
@@ -3109,7 +3129,7 @@ def _pump_watch_line(row: pd.Series) -> str:
 
 
 def _precrime_line(row: pd.Series) -> str:
-    symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+    symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     score = _safe_float(row.get("pre_activity_pump_score")) or 0.0
     state = _clip_text(row.get("pre_activity_state", ""), 34) or "No latent edge"
     signal = _clip_text(row.get("pre_activity_primary_signal", ""), 46) or "signal n/a"
@@ -4191,7 +4211,7 @@ def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, 
     )
     lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()), ""]
     for _, row in selected.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         lines.append(
             f"/{symbol} | float {(_safe_float(row.get('_floattrap_rank_score')) or 0.0):.0f}/100 | "
             f"low-float {(_safe_float(row.get('low_float_score')) or 0.0):.0f} | trap {(_safe_float(row.get('float_trap_score')) or 0.0):.0f} | "
@@ -4254,7 +4274,7 @@ def _load_squeeze_ready_list(limit: int, *, min_short_pct: float = 50.0, min_sco
     )
     lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()), ""]
     for _, row in selected.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         funding = _funding_pressure_value(row)
         target_flow = "target CEX flow" if bool(row.get("_goal_target_flow")) else "no target CEX flow"
         lines.append(
@@ -4303,7 +4323,7 @@ def _load_cex_targets_list(
     counts = " | ".join(f"{exchange} {count}" for exchange, count in exchange_counts.items() if count)
     lines = [header, f"Rows: {len(rows)}" + (f" | {counts}" if counts else ""), "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
     for _, row in rows.iterrows():
-        symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         whale_sender = _whale_sender_text(row)
         lines.append(
             f"/{symbol} | {_target_cex_text(row)} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.0f}/100 | "
@@ -4380,7 +4400,7 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype="object")).tolist())
     lines = [header, "", f"Candidates: {symbols}" if symbols else "Candidates: none", ""]
     for _, row in selected.iterrows():
-        symbol = str(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         brief_score = _safe_float(row.get("_discord_alpha_brief_score")) or 0.0
         terminal_score = _safe_float(row.get("terminal_edge_score")) or 0.0
         timing_score = _safe_float(row.get("timing_score")) or 0.0
@@ -4763,8 +4783,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
+        thesis_only="Only show rows passing 90% holder evidence plus Binance+Bitget thesis gates.",
     )
-    async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0) -> None:
+    async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
@@ -4777,6 +4798,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             "high",
             days=days,
             limit=min(max(int(limit), 0), 300),
+            thesis_only=thesis_only,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -4792,8 +4814,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
+        thesis_only="Only show rows passing 90% holder evidence plus Binance+Bitget thesis gates.",
     )
-    async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0) -> None:
+    async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
@@ -4806,6 +4829,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             "low",
             days=days,
             limit=min(max(int(limit), 0), 300),
+            thesis_only=thesis_only,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xEF4444)
         embed.set_footer(text=DISCORD_FOOTER)
