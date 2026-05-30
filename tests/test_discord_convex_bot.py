@@ -40,6 +40,7 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/setupscore") == ""
     assert bot._normalize_symbol_query("/precrime") == ""
     assert bot._normalize_symbol_query("/ravelab") == ""
+    assert bot._normalize_symbol_query("/radar") == ""
     assert bot._normalize_symbol_query("/prime") == ""
     assert bot._normalize_symbol_query("/crimepump") == ""
     assert bot._normalize_symbol_query("/flowproof") == ""
@@ -2351,10 +2352,20 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Strict RAVE/LAB crime-pump early radar" not in crime_output
     assert "Near misses (blocked" not in crime_output
 
+    radar_title, radar_chunks = bot._load_radar_list(10, min_tokens=20_000)
+    radar_output = "\n".join(radar_chunks)
+    assert radar_title == "Early structure radar"
+    assert "Early structure radar" in radar_output
+    assert "Crime-pump early queue" not in radar_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in radar_output
+    assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in radar_output
+    assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in radar_output
+
     prime_title, prime_chunks = bot._load_prime_list(10, min_tokens=20_000)
     prime_output = "\n".join(prime_chunks)
     assert prime_title == "Prime crime-pump queue"
-    assert "Crime-pump early queue" in prime_output
+    assert "Prime crime-pump queue" in prime_output
+    assert "Crime-pump early queue" not in prime_output
     assert "Strict RAVE/LAB crime-pump early radar" not in prime_output
 
     _, prime_flow_chunks = bot._load_prime_list(10, min_tokens=20_000, trigger="flow")

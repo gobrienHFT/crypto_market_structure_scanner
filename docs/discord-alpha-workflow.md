@@ -29,7 +29,7 @@ Recommended live workflow:
 
 ```text
 /alpha
-/crimepump
+/radar
 /prime
 /precrime min_tokens:20000
 /ravelab min_tokens:20000
@@ -62,7 +62,7 @@ Recommended live workflow:
 
 Use `/alpha` as the triage queue. It first applies the strict thesis gate, observed top-10 holder concentration at or above 90% with ETH/BNB/ARB chain+contract holder-source snapshot evidence plus Binance+Bitget trading evidence, then blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact watchlist.
 
-Use `/crimepump` as the simplest hard-gated operator queue. It uses the strict `/ravelab` gates with near misses hidden by default, then prints only the live queue and concise evidence per symbol. The `trigger` choice accepts `all`, `triggered`, `flow`, `target_flow`, `breakout`, or `core`. Generic target-CEX tells use `min_tokens`; the higher-conviction `flow`/`whale-CEX` lane uses `whale_flow_min_tokens`, defaulting to `DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS` or 100k tokens. Start there when you want the cleanest list of names to inspect now; `/prime` is a short alias, and `/ravelab` is the diagnostic microscope for near misses, style filtering, blockers, and full evidence rows.
+Use `/radar` as the simplest hard-gated operator queue and the default place to start. It uses the strict `/ravelab` gates with near misses hidden by default, then prints only the live queue and concise evidence per symbol. The `trigger` choice accepts `all`, `triggered`, `flow`, `target_flow`, `breakout`, or `core`. Generic target-CEX tells use `min_tokens`; the higher-conviction `flow`/`whale-CEX` lane uses `whale_flow_min_tokens`, defaulting to `DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS` or 100k tokens. `/prime` is the short alias, `/crimepump` is the legacy blunt-name alias, and `/ravelab` is the diagnostic microscope for near misses, style filtering, blockers, and full evidence rows.
 
 Use `/precrime` before `/pumpwatch` when you specifically want the quiet pre-activity version of the thesis. It applies the hard gates first: observed top-10 holder concentration at least `min_whale_pct` with a hard floor of 90%, ETH/BNB/ARB chain+contract holder-source snapshot evidence, and Binance+Bitget trading evidence. After that, it rewards holder/control concentration, low-float/high-FDV structure, Binance/Bitget/Gate inventory tells, short-fuse perp positioning, and thin visible books, but it penalizes names that already have breakout, volume, CMC-mover, or high-return chase heat. Keep `require_quiet:true` when hunting before the crowd notices; use `require_target_flow:true` when you only want confirmed labelled CEX-transfer rows. Use `/cexdiag`, `/earlyflow`, or `/whales` for looser data-coverage diagnostics instead of weakening this queue.
 
@@ -137,7 +137,7 @@ DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
 
-Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` for legacy broad-dashboard caches generated from the Binance perp universe; set it to `0` when auditing mixed rows so symbol text alone cannot satisfy Binance evidence. Discord thesis screens such as `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` do not use symbol text as Binance proof: they require the explicit Binance perp marker, Binance venue share, or Binance top-venue text.
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` for legacy broad-dashboard caches generated from the Binance perp universe; set it to `0` when auditing mixed rows so symbol text alone cannot satisfy Binance evidence. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` do not use symbol text as Binance proof: they require the explicit Binance perp marker, Binance venue share, or Binance top-venue text.
 
 For a dedicated transfer monitor:
 

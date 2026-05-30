@@ -35,10 +35,10 @@ Candidates: /SLEEPUSDT /COILUSDT
 /COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | top10 91.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
 ```
 
-## `/crimepump`
+## `/radar`
 
 ```text
-Crime-pump early queue
+Early structure radar
 Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Whale-CEX >= 100.00K | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
 Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.
 Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1

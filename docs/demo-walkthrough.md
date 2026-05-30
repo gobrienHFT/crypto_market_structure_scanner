@@ -70,6 +70,7 @@ Recommended command sequence:
 
 ```text
 /alpha
+/radar
 /cexflow min_tokens:20000
 /earlyflow
 /flowcoin symbol:FLOWUSDT min_tokens:20000
