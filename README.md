@@ -258,7 +258,7 @@ Supported commands include:
 
 The bot can retrieve:
 
-- a strict thesis-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence and Binance+Bitget gates
+- a strict thesis-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract holder-source snapshot evidence and Binance+Bitget gates
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
@@ -280,7 +280,7 @@ The bot can retrieve:
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
 - blocked/error rows when explorer HTML or API fallback cannot verify labelled CEX destinations
 - CEX-flow health checks covering API keys and local address-label coverage
-- a full CEX-flow -> 90%+ holder concentration/evidence -> short crowd -> dormant-structure checklist via `/sethflow`
+- a full CEX-flow -> 90%+ top-10 holder concentration/evidence -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
 - high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows
 - symbol-level market structure metrics

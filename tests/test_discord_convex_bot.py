@@ -17,6 +17,7 @@ def _holder_evidence(chain: str = "ethereum", contract: str = "0x111111111111111
         "token_contract": contract,
         "holder_source": f"{source} holder endpoint",
         "holder_count": 6_000,
+        "top10_holder_pct": 91.0,
         "top100_holder_pct": 99.0,
     }
 
@@ -1323,7 +1324,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
 
     assert title == "Seth flow checklist"
     assert "Confirmed target-CEX flow rows: 2 | Whale+short+dormant pass: 1" in output
-    assert "Whale gate: observed holder >= 90.0%" in output
+    assert "Whale gate: top10 holder >= 90.0%" in output
     assert "Holder evidence required: True" in output
     assert "/SETUPUSDT | RESEARCH: dormant candidate" in output
     assert "2 tx into Bitget | total 22.00M, max 12.00M" in output
@@ -1458,11 +1459,11 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
 
     assert title == "Insider-structure setup score"
     assert "Target CEX: Binance, Gate.io, Bitget" in output
-    assert "Gates: observed holder >= 90.0%, holder evidence required True" in output
+    assert "Gates: top10 holder >= 90.0%, holder evidence required True" in output
     assert "Binance+Bitget required True" in output
     assert "Candidates: /PRIMEUSDT" in output
     assert "/PRIMEUSDT | PASS | score" in output
-    assert "whale 99.0% | holderEv Y | venueBnBg Y" in output
+    assert "whale 91.0% | holderEv Y | venueBnBg Y" in output
     assert "flow 92 Bitget, GateIO 3tx max 12.00M" in output
     assert "shorts 64.0%" in output
     assert "GATEONLYUSDT" not in output
@@ -1503,6 +1504,86 @@ def test_goal_score_requires_explicit_binance_bitget_evidence(monkeypatch) -> No
     assert bool(scored.loc["MARKEDUSDT", "_goal_all_pass"])
     assert bool(scored.loc["SHAREUSDT", "_goal_venue_pass"])
     assert bool(scored.loc["SHAREUSDT", "_goal_all_pass"])
+
+
+def test_goal_score_hard_floors_top10_whale_gate() -> None:
+    base = {
+        "cex_deposit_flow_score": 92,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 1,
+        "cex_deposit_24h_max_amount": 30_000,
+        "cex_deposit_24h_target_exchanges": "Binance",
+        **_holder_evidence(),
+        "short_account_pct": 64.0,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "dormant_short_fuse_score": 80.0,
+        "pre_pump_precision_score": 75.0,
+        "binance_volume_share_pct": 2.0,
+        "bitget_volume_share_pct": 1.5,
+    }
+    scored = bot._goal_score_frame(
+        pd.DataFrame(
+            [
+                {**base, "symbol": "TOP100ONLYUSDT", "top10_holder_pct": 55.0, "top100_holder_pct": 99.0},
+                {**base, "symbol": "TOP10USDT", "top10_holder_pct": 91.0, "top100_holder_pct": 94.0},
+            ]
+        ),
+        min_transfer_tokens=20_000,
+        min_whale_pct=50.0,
+    ).set_index("symbol")
+
+    assert float(scored.loc["TOP100ONLYUSDT", "_goal_min_whale_pct"]) == 90.0
+    assert not bool(scored.loc["TOP100ONLYUSDT", "_goal_whale_concentration_pass"])
+    assert not bool(scored.loc["TOP100ONLYUSDT", "_goal_whale_pass"])
+    assert bool(scored.loc["TOP10USDT", "_goal_whale_concentration_pass"])
+
+
+def test_pumpwatch_holder_gate_requires_top10_even_when_min_whale_lowered(monkeypatch) -> None:
+    base = {
+        **_holder_evidence(),
+        "cex_deposit_flow_score": 70,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 1,
+        "cex_deposit_24h_token_amount": 40_000,
+        "cex_deposit_24h_max_amount": 40_000,
+        "cex_deposit_24h_target_exchanges": "Binance",
+        "centralized_ownership_score": 86.0,
+        "low_float_score": 82.0,
+        "float_trap_score": 78.0,
+        "fdv_to_market_cap": 8.0,
+        "short_account_pct": 64.0,
+        "short_dominance_score": 80.0,
+        "short_account_build_score": 74.0,
+        "dormant_short_fuse_score": 82.0,
+        "pre_pump_precision_score": 76.0,
+        "binance_volume_share_pct": 6.0,
+        "bitget_volume_share_pct": 2.4,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "now",
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "TOP100ONLYUSDT", "top10_holder_pct": 55.0, "top100_holder_pct": 99.0},
+            {**base, "symbol": "TOP10USDT", "top10_holder_pct": 91.0, "top100_holder_pct": 94.0},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_pump_watch_list(
+        10,
+        min_score=0,
+        min_tokens=20_000,
+        min_whale_pct=50.0,
+        require_venue_gate=False,
+    )
+    output = "\n".join(chunks)
+
+    assert title == "Early pump watch"
+    assert "Holder gate: top10 >= 90.0%" in output
+    assert "Gate rows: strict holder 1 | Binance+Bitget 1" in output
+    assert "/TOP10USDT" in output
+    assert "/TOP100ONLYUSDT" not in output
 
 
 def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(monkeypatch) -> None:
@@ -1565,7 +1646,7 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
 
     assert title == "Early pump watch"
     assert "Target CEX: Binance, Gate.io, Bitget" in output
-    assert "Holder gate: >= 90.0%" in output
+    assert "Holder gate: top10 >= 90.0%" in output
     assert "Holder evidence required: True" in output
     assert "Binance+Bitget required: True" in output
     assert "Gate rows: strict holder 1 | Binance+Bitget 1" in output
@@ -1696,7 +1777,7 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
 
     assert title == "Pre-activity radar"
     assert "Quiet required: True" in output
-    assert "Holder gate: >= 90.0%" in output
+    assert "Holder gate: top10 >= 90.0%" in output
     assert "Holder evidence required: True" in output
     assert "Binance+Bitget required: True" in output
     assert "Gate rows: strict holder 1 | Binance+Bitget 1" in output
@@ -3014,7 +3095,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Verdict: PASS" in check
     assert "PASS target CEX flow" in check
     assert "PASS Binance+Bitget trading venue" in check
-    assert "PASS whale dominance" in check
+    assert "PASS top10 whale dominance" in check
     assert "holder chain ethereum, holders 8500" in check
 
     gate_title, gate_check = bot._load_coin_check("GATECHECK", min_tokens=10_000_000)
@@ -3187,7 +3268,7 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
 
     assert title == "Alpha brief"
     assert "Alpha brief - strict thesis-gated convex watchlist" in output
-    assert "Thesis gate: observed holder >= 90.0%" in output
+    assert "Thesis gate: observed top10 holder >= 90.0%" in output
     assert "FLOWUSDT | brief" in output
     assert "evidence:" in output
     assert "next:" in output

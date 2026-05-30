@@ -56,6 +56,7 @@ COMMON_BREAKOUT_WINDOWS = (5, 20, 90, 180)
 MAX_DYNAMIC_BREAKOUT_DAYS = 1499
 RAVELAB_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
+THESIS_MIN_TOP10_WHALE_PCT = 90.0
 RAVELAB_DEFAULT_WHALE_FLOW_MIN_TOKENS = 100_000.0
 _TRADE_BOT_TASK: asyncio.Task[Any] | None = None
 _TRADE_BOT_RUNTIME: TradeBotRuntime | None = None
@@ -150,6 +151,13 @@ def _safe_pct(value: Any) -> float | None:
     if parsed != 0.0 and abs(parsed) <= 1.0:
         return parsed * 100.0
     return parsed
+
+
+def _strict_thesis_min_whale_pct(value: Any = None) -> float:
+    parsed = _safe_float(value)
+    if parsed is None:
+        parsed = THESIS_MIN_TOP10_WHALE_PCT
+    return max(THESIS_MIN_TOP10_WHALE_PCT, min(float(parsed), 100.0))
 
 
 def _safe_holder_pct(value: Any) -> float | None:
@@ -2515,6 +2523,22 @@ def _strict_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Se
     return evidence_mask.fillna(False), contract_mask.fillna(False)
 
 
+def _strict_top10_thesis_holder_gate_mask(
+    frame: pd.DataFrame,
+    *,
+    min_whale_pct: float = THESIS_MIN_TOP10_WHALE_PCT,
+    require_holder_evidence: bool = True,
+) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    threshold = _strict_thesis_min_whale_pct(min_whale_pct)
+    gate = _safe_pct_series(frame, "top10_holder_pct").fillna(0.0).ge(threshold)
+    if require_holder_evidence:
+        holder_evidence_mask, _ = _strict_holder_evidence_masks(frame)
+        gate = gate & holder_evidence_mask
+    return gate.fillna(False)
+
+
 def _strict_cex_holder_gate_mask(
     frame: pd.DataFrame,
     *,
@@ -2574,8 +2598,9 @@ def _thesis_venue_header() -> str:
 
 
 def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
+    threshold = _strict_thesis_min_whale_pct(min_whale_pct)
     return (
-        f"Thesis gate: observed holder >= {float(min_whale_pct):.1f}% with "
+        f"Thesis gate: observed top10 holder >= {threshold:.1f}% with "
         f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence | {_thesis_venue_header()}"
     )
 
@@ -2589,7 +2614,11 @@ def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
 def _thesis_candidate_gate_mask(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.Series:
     if frame.empty:
         return pd.Series(False, index=frame.index)
-    holder_gate = _strict_cex_holder_gate_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=True)
+    holder_gate = _strict_top10_thesis_holder_gate_mask(
+        frame,
+        min_whale_pct=min_whale_pct,
+        require_holder_evidence=True,
+    )
     if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return holder_gate.fillna(False)
     return (holder_gate & _explicit_binance_bitget_trading_gate_mask(frame)).fillna(False)
@@ -2648,10 +2677,11 @@ def _load_seth_flow_playbook(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
     )
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     header = (
         "Seth flow checklist\n"
         f"Source: {source} | Confirmed target-CEX flow only | Min transfer: >= {_fmt_compact_number(effective_min_transfer)} tokens | "
-        f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= {float(min_whale_pct):.1f}% | "
+        f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Short gate: >= {min_short_pct:.1f}% | "
         f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'} | "
         f"Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
@@ -2690,10 +2720,10 @@ def _load_seth_flow_playbook(
     top100 = pd.to_numeric(rows.get("top100_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     shorts = pd.to_numeric(rows.get("short_account_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     holder_evidence_mask, _ = _strict_holder_evidence_masks(rows)
-    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
+    whale_pct = top10.fillna(0.0)
     rows["_seth_whale_pct"] = whale_pct
     rows["_seth_holder_evidence_pass"] = holder_evidence_mask
-    rows["_seth_whale_concentration_pass"] = whale_pct.ge(float(min_whale_pct))
+    rows["_seth_whale_concentration_pass"] = whale_pct.ge(effective_min_whale_pct)
     rows["_seth_whale_pass"] = rows["_seth_whale_concentration_pass"] & (
         rows["_seth_holder_evidence_pass"] if require_holder_evidence else True
     )
@@ -2864,6 +2894,7 @@ def _goal_score_frame(
 ) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     output = apply_timing_model(apply_terminal_model(frame.loc[:, ~frame.columns.duplicated()].copy()))
     target_flow = _confirmed_cex_flow_mask(output, min_transfer_tokens=min_transfer_tokens, target_only=True)
     any_flow = _confirmed_cex_flow_mask(output, min_transfer_tokens=min_transfer_tokens, target_only=False)
@@ -2921,9 +2952,9 @@ def _goal_score_frame(
     not_late_component = (100.0 - late_risk).clip(lower=0.0, upper=100.0)
     top10 = _safe_pct_series(output, "top10_holder_pct").fillna(0.0)
     top100 = _safe_pct_series(output, "top100_holder_pct").fillna(0.0)
-    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
+    whale_pct = top10.fillna(0.0)
     holder_evidence_mask, _ = _strict_holder_evidence_masks(output)
-    whale_concentration_pass = whale_pct.ge(float(min_whale_pct))
+    whale_concentration_pass = whale_pct.ge(effective_min_whale_pct)
     whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
     venue_pass = _explicit_binance_bitget_trading_gate_mask(output)
     short_pass = short_pct.ge(min_short_pct)
@@ -2949,6 +2980,7 @@ def _goal_score_frame(
     output["_goal_any_flow"] = any_flow
     output["_goal_whale_component"] = whale_component
     output["_goal_whale_pct"] = whale_pct
+    output["_goal_min_whale_pct"] = effective_min_whale_pct
     output["_goal_whale_concentration_pass"] = whale_concentration_pass
     output["_goal_holder_evidence_pass"] = holder_evidence_mask
     output["_goal_holder_evidence_required"] = bool(require_holder_evidence)
@@ -3042,11 +3074,12 @@ def _load_setup_score_list(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
     )
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     header = (
         "Insider-structure setup score\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
-        f"Gates: observed holder >= {min_whale_pct:.1f}%, holder evidence required {require_holder_evidence}, "
+        f"Gates: top10 holder >= {effective_min_whale_pct:.1f}%, holder evidence required {require_holder_evidence}, "
         f"Binance+Bitget required {require_binance_bitget}, shorts >= {min_short_pct:.1f}%, low-float/FDV, not-late structure | Strict: {strict}"
     )
     if frame.empty:
@@ -3055,7 +3088,7 @@ def _load_setup_score_list(
         frame,
         min_transfer_tokens=effective_min_transfer,
         min_short_pct=min_short_pct,
-        min_whale_pct=min_whale_pct,
+        min_whale_pct=effective_min_whale_pct,
         require_holder_evidence=require_holder_evidence,
         require_binance_bitget=require_binance_bitget,
     )
@@ -3105,11 +3138,12 @@ def _load_pump_watch_list(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
     )
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     header = (
         "Early pump watch\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
-        f"Min radar: {float(min_score):.0f} | Holder gate: >= {float(min_whale_pct):.1f}% | "
+        f"Min radar: {float(min_score):.0f} | Holder gate: top10 >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
         f"{'Additional venue gate: target-CEX/venue-support check enabled' if require_venue_gate else 'Additional venue gate: disabled for this command'}"
@@ -3122,9 +3156,9 @@ def _load_pump_watch_list(
     scored = apply_archetype_model(scored)
     scored = apply_timing_model(scored)
     scored = apply_early_pump_radar(scored, min_transfer_tokens=effective_min_transfer)
-    holder_gate = _strict_cex_holder_gate_mask(
+    holder_gate = _strict_top10_thesis_holder_gate_mask(
         scored,
-        min_whale_pct=max(0.0, float(min_whale_pct)),
+        min_whale_pct=effective_min_whale_pct,
         require_holder_evidence=require_holder_evidence,
     )
     holder_count = int(holder_gate.sum())
@@ -3268,11 +3302,12 @@ def _load_precrime_list(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
     )
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     header = (
         "Pre-activity crime-pump radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
-        f"Min latent score: {float(min_score):.0f} | Holder gate: >= {float(min_whale_pct):.1f}% | "
+        f"Min latent score: {float(min_score):.0f} | Holder gate: top10 >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
         f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate}"
@@ -3286,9 +3321,9 @@ def _load_precrime_list(
     scored = apply_timing_model(scored)
     scored = apply_early_pump_radar(scored, min_transfer_tokens=effective_min_transfer)
     scored = apply_pre_activity_radar(scored, min_transfer_tokens=effective_min_transfer)
-    holder_gate = _strict_cex_holder_gate_mask(
+    holder_gate = _strict_top10_thesis_holder_gate_mask(
         scored,
-        min_whale_pct=max(0.0, float(min_whale_pct)),
+        min_whale_pct=effective_min_whale_pct,
         require_holder_evidence=require_holder_evidence,
     )
     holder_count = int(holder_gate.sum())
@@ -4073,7 +4108,7 @@ def _ravelab_whale_control_series(frame: pd.DataFrame) -> pd.Series:
 
 
 def _ravelab_whale_gate_series(frame: pd.DataFrame, *, min_whale_pct: float) -> pd.Series:
-    return _ravelab_whale_control_series(frame).ge(float(min_whale_pct)).fillna(False)
+    return _ravelab_whale_control_series(frame).ge(_strict_thesis_min_whale_pct(min_whale_pct)).fillna(False)
 
 
 def _ravelab_near_miss_rows(
@@ -4302,6 +4337,7 @@ def _load_ravelab_list(
         lookback_hours=lookback_hours,
     )
     effective_whale_flow_floor = _ravelab_whale_flow_floor(effective_min_transfer, whale_flow_min_tokens)
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     style_key = str(style or "both").strip().lower()
     if style_key not in {"both", "rave", "lab"}:
         style_key = "both"
@@ -4319,7 +4355,7 @@ def _load_ravelab_list(
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         f"Whale-CEX floor: {_fmt_compact_number(effective_whale_flow_floor)} tokens | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
-        f"Whale gate: top10 >= {float(min_whale_pct):.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
+        f"Whale gate: top10 >= {effective_min_whale_pct:.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | Max recent pump: < {float(max_recent_pump_pct):.0f}% over 60d | "
         f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
@@ -4335,7 +4371,7 @@ def _load_ravelab_list(
 
     scored = _score_ravelab_early_frame(
         frame,
-        min_whale_pct=min_whale_pct,
+        min_whale_pct=effective_min_whale_pct,
         min_history_days=min_history_days,
         max_recent_pump_pct=max_recent_pump_pct,
         min_transfer_tokens=effective_min_transfer,
@@ -4507,7 +4543,7 @@ def _load_ravelab_list(
     lab_count = int(selected["_ravelab_side"].astype(str).eq("LAB-like").sum())
     mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
     gate_summary = (
-        f"All shown rows passed top10 whale-control >= {float(min_whale_pct):.1f}%"
+        f"All shown rows passed top10 whale-control >= {effective_min_whale_pct:.1f}%"
         f"{', holder-source snapshot evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         ", float/FDV trap"
@@ -4722,11 +4758,12 @@ def _load_coin_check(
     row = _row_for_symbol(frame, symbol)
     if row is None:
         return f"{symbol} checklist", f"No scan row found for {symbol}. Source: {source or 'unavailable'}"
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     scored = _goal_score_frame(
         pd.DataFrame([row.to_dict()]),
         min_transfer_tokens=effective_min_transfer,
         min_short_pct=min_short_pct,
-        min_whale_pct=min_whale_pct,
+        min_whale_pct=effective_min_whale_pct,
         require_holder_evidence=require_holder_evidence,
         require_binance_bitget=require_binance_bitget,
     )
@@ -4747,15 +4784,15 @@ def _load_coin_check(
     lines = [
         f"{symbol} manipulation-structure checklist",
         f"Verdict: {status} | setup score {score:.0f}/100 | Source: {source}",
-        f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h",
+        f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | Top10 whale floor: >= {effective_min_whale_pct:.1f}%",
         "",
         gate_line("target CEX flow", _boolish_scalar(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),
         gate_line("Binance+Bitget trading venue", _boolish_scalar(scored_row.get("_goal_venue_pass")) or not require_binance_bitget, _venue_evidence_text(scored_row)),
         gate_line(
-            "whale dominance",
+            "top10 whale dominance",
             _boolish_scalar(scored_row.get("_goal_whale_pass")),
             (
-                f"max {whale_pct:.1f}% | top10 {top10:.1f}%, top100 {top100:.1f}% | holder {holder_evidence}"
+                f"top10 gate {whale_pct:.1f}% | top100 context {top100:.1f}% | holder {holder_evidence}"
                 if whale_pct is not None and top10 is not None and top100 is not None
                 else f"holder {holder_evidence}"
             ),
@@ -5495,7 +5532,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
-        min_whale_pct="Minimum observed top-holder concentration percentage.",
+        min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         strict="Require target CEX flow, whale, short, float, and not-late gates.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
@@ -5547,7 +5584,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
@@ -5600,7 +5637,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
@@ -5654,7 +5691,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         min_score="Optional minimum early-structure score. Default 0 lets hard gates lead.",
         min_archetype="Optional minimum RAVE or LAB historical-analogue score. Default 0 does not force analogy.",
-        min_whale_pct="Required observed top-holder concentration percentage. Default 90.",
+        min_whale_pct="Required top10 holder concentration floor. Values below 90 are treated as 90.",
         min_squeeze_score="Required short-squeeze/perp-fuel score. Default 50.",
         min_history_days="Required history coverage for the dormancy/no-pump gate. Default 60.",
         max_recent_pump_pct="Reject rows with a daily high expansion above this in the last 60d. Default 35.",
@@ -5905,7 +5942,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
-        min_whale_pct="Minimum observed top-holder concentration percentage.",
+        min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
@@ -6428,7 +6465,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage, default 50.",
-        min_whale_pct="Minimum observed top-holder concentration percentage, default 90.",
+        min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         require_dormant="Only show rows that pass the dormant/early structure gate.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
