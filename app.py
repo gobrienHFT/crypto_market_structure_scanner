@@ -5859,9 +5859,11 @@ def render_breakout_dashboard() -> None:
             "early_pump_archetype_score": st.column_config.NumberColumn("Pump Analogue", format="%.1f"),
             "early_pump_not_late_score": st.column_config.NumberColumn("Pump Not Late", format="%.1f"),
             "early_pump_confirmed_target_flow": st.column_config.CheckboxColumn("Target Flow"),
-            "early_pump_whale_gate": st.column_config.CheckboxColumn("Whale Gate"),
+            "early_pump_holder_evidence_gate": st.column_config.CheckboxColumn("Holder Evidence"),
+            "early_pump_whale_gate": st.column_config.CheckboxColumn("Top10 Whale Gate"),
             "early_pump_short_gate": st.column_config.CheckboxColumn("Short Gate"),
             "early_pump_float_gate": st.column_config.CheckboxColumn("Float Gate"),
+            "early_pump_binance_bitget_gate": st.column_config.CheckboxColumn("Binance+Bitget"),
             "early_pump_venue_gate": st.column_config.CheckboxColumn("Venue Gate"),
             "early_pump_not_late_gate": st.column_config.CheckboxColumn("Not-Late Gate"),
             "early_pump_alert_flag": st.column_config.CheckboxColumn("Pump Watch"),
@@ -5884,6 +5886,9 @@ def render_breakout_dashboard() -> None:
             "pre_activity_preignition_score": st.column_config.NumberColumn("Pre-Ignition Base", format="%.1f"),
             "pre_activity_heat_score": st.column_config.NumberColumn("Activity Heat", format="%.1f"),
             "pre_activity_confirmed_target_flow": st.column_config.CheckboxColumn("Pre Target Flow"),
+            "pre_activity_holder_evidence_gate": st.column_config.CheckboxColumn("Pre Holder Evidence"),
+            "pre_activity_whale_gate": st.column_config.CheckboxColumn("Pre Top10 Whale"),
+            "pre_activity_binance_bitget_gate": st.column_config.CheckboxColumn("Pre Binance+Bitget"),
             "pre_activity_structure_gate": st.column_config.CheckboxColumn("Pre Structure"),
             "pre_activity_behavior_gate": st.column_config.CheckboxColumn("Pre Behaviour"),
             "pre_activity_quiet_gate": st.column_config.CheckboxColumn("Pre Quiet Gate"),
@@ -8118,8 +8123,8 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[13]:
             st.caption(
-                "One-board triage for the exact early move pattern: whale/control pressure, confirmed Binance/Bitget/Gate "
-                "wallet-to-CEX flow when available, short-account squeeze fuel, low-float structure, venue support, and not-late timing."
+                "One-board triage for the exact early move pattern: explorer-backed top10 whale control, Binance+Bitget trading evidence, "
+                "confirmed Binance/Bitget/Gate wallet-to-CEX flow when available, short-account squeeze fuel, low-float structure, and not-late timing."
             )
             pump_cols = [
                 "symbol",
@@ -8131,9 +8136,11 @@ def render_breakout_dashboard() -> None:
                 "early_pump_next_check",
                 "early_pump_note",
                 "early_pump_confirmed_target_flow",
+                "early_pump_holder_evidence_gate",
                 "early_pump_whale_gate",
                 "early_pump_short_gate",
                 "early_pump_float_gate",
+                "early_pump_binance_bitget_gate",
                 "early_pump_venue_gate",
                 "early_pump_not_late_gate",
                 "early_pump_flow_score",
@@ -8244,7 +8251,7 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[14]:
             st.caption(
-                "Pre-activity radar: controlled float, concentrated holders, target-CEX/venue inventory tells, "
+                "Pre-activity radar: explorer-backed top10 holder control, Binance+Bitget trading evidence, controlled float, target-CEX inventory tells, "
                 "short-fuse perp positioning, and thin books, while filtering out names that already have chase heat."
             )
             pre_activity_cols = [
@@ -8257,6 +8264,9 @@ def render_breakout_dashboard() -> None:
                 "pre_activity_next_check",
                 "pre_activity_note",
                 "pre_activity_confirmed_target_flow",
+                "pre_activity_holder_evidence_gate",
+                "pre_activity_whale_gate",
+                "pre_activity_binance_bitget_gate",
                 "pre_activity_structure_gate",
                 "pre_activity_behavior_gate",
                 "pre_activity_quiet_gate",

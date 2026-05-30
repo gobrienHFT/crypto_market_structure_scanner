@@ -27,6 +27,9 @@ def test_early_pump_radar_prioritizes_target_flow_whales_and_shorts() -> None:
                     "cex_deposit_24h_max_amount": 12_000_000,
                     "cex_deposit_24h_target_exchanges": "Binance, Bitget",
                     "cex_deposit_inventory_stress_score": 84,
+                    "token_platform": "ethereum",
+                    "token_contract": "0x1111111111111111111111111111111111111111",
+                    "holder_source": "Etherscan holder endpoint",
                     "top10_holder_pct": 91,
                     "top100_holder_pct": 99,
                     "centralized_ownership_score": 86,
@@ -54,6 +57,8 @@ def test_early_pump_radar_prioritizes_target_flow_whales_and_shorts() -> None:
 
     assert row["early_pump_radar_score"] >= 75
     assert bool(row["early_pump_confirmed_target_flow"]) is True
+    assert bool(row["early_pump_holder_evidence_gate"]) is True
+    assert bool(row["early_pump_binance_bitget_gate"]) is True
     assert bool(row["early_pump_alert_flag"]) is True
     assert row["early_pump_state"] == "Prime early squeeze"
     assert "target CEX flow" in row["early_pump_primary_signal"]
@@ -104,6 +109,34 @@ def test_early_pump_radar_handles_missing_target_exchange_text() -> None:
 
     assert row["early_pump_note"]
     assert "no confirmed target CEX" in row["early_pump_note"]
+
+
+def test_early_pump_radar_does_not_alert_on_top100_only_control() -> None:
+    row = apply_early_pump_radar(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "TOP100ONLYUSDT",
+                    "cex_deposit_flow_score": 95,
+                    "cex_deposit_flow_flag": True,
+                    "cex_deposit_24h_count": 2,
+                    "cex_deposit_24h_max_amount": 2_000_000,
+                    "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                    "token_platform": "ethereum",
+                    "token_contract": "0x2222222222222222222222222222222222222222",
+                    "holder_source": "Etherscan holder endpoint",
+                    "top10_holder_pct": 55,
+                    "top100_holder_pct": 99,
+                    "short_account_pct": 64,
+                    "low_float_score": 82,
+                    "bitget_volume_share_pct": 2.4,
+                }
+            ]
+        )
+    ).iloc[0]
+
+    assert bool(row["early_pump_whale_gate"]) is False
+    assert bool(row["early_pump_alert_flag"]) is False
 
 
 def test_early_pump_radar_target_flow_respects_transfer_floor() -> None:

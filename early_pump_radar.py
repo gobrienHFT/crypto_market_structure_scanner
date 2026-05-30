@@ -5,6 +5,8 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from venue_gate import binance_bitget_venue_mask, holder_concentration_mask, holder_evidence_mask
+
 
 TARGET_CEX_RE = re.compile(r"\b(?:binance|bitget|gate(?:\.io|io)?)\b", flags=re.IGNORECASE)
 
@@ -19,9 +21,11 @@ EARLY_PUMP_RADAR_COLUMNS = [
     "early_pump_archetype_score",
     "early_pump_not_late_score",
     "early_pump_confirmed_target_flow",
+    "early_pump_holder_evidence_gate",
     "early_pump_whale_gate",
     "early_pump_short_gate",
     "early_pump_float_gate",
+    "early_pump_binance_bitget_gate",
     "early_pump_venue_gate",
     "early_pump_not_late_gate",
     "early_pump_alert_flag",
@@ -150,6 +154,8 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
         and _row_bool(row, "early_pump_confirmed_target_flow")
         and _row_bool(row, "early_pump_whale_gate")
         and _row_bool(row, "early_pump_short_gate")
+        and _row_bool(row, "early_pump_float_gate")
+        and _row_bool(row, "early_pump_binance_bitget_gate")
     ):
         return "Prime early squeeze"
     if score >= 62.0 and _row_bool(row, "early_pump_confirmed_target_flow"):
@@ -176,13 +182,13 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
     if not _row_bool(row, "early_pump_confirmed_target_flow"):
         missing.append("fresh labelled Binance/Bitget/Gate transfer")
     if not _row_bool(row, "early_pump_whale_gate"):
-        missing.append("whale/concentration gate")
+        missing.append("top10 whale-control evidence")
     if not _row_bool(row, "early_pump_short_gate"):
         missing.append("short-account majority")
     if not _row_bool(row, "early_pump_float_gate"):
         missing.append("low-float/FDV evidence")
-    if not _row_bool(row, "early_pump_venue_gate"):
-        missing.append("target venue support")
+    if not _row_bool(row, "early_pump_binance_bitget_gate"):
+        missing.append("Binance+Bitget trading evidence")
     if not _row_bool(row, "early_pump_not_late_gate"):
         return "skip unless heat resets; wait for wick/late-risk compression before re-rating"
     if missing:
@@ -344,10 +350,12 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
     ).max(axis=1).fillna(0.0)
     not_late = _clip(100.0 - heat)
 
-    whale_gate = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0).ge(90.0)
+    holder_evidence_gate = holder_evidence_mask(output)
+    whale_gate = holder_concentration_mask(output, min_whale_pct=90.0, require_holder_evidence=True)
+    venue_pair_gate = binance_bitget_venue_mask(output, allow_cex_flow_targets=False)
     short_gate = short_pct.ge(50.0) | squeeze_score.ge(55.0)
     float_gate = float_score.ge(55.0)
-    venue_gate = venue_score.ge(45.0) | target_flow
+    venue_gate = venue_pair_gate
     not_late_gate = not_late.ge(45.0)
 
     balanced = (
@@ -383,12 +391,14 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
     output["early_pump_archetype_score"] = archetype_score
     output["early_pump_not_late_score"] = not_late
     output["early_pump_confirmed_target_flow"] = target_flow
+    output["early_pump_holder_evidence_gate"] = holder_evidence_gate
     output["early_pump_whale_gate"] = whale_gate
     output["early_pump_short_gate"] = short_gate
     output["early_pump_float_gate"] = float_gate
+    output["early_pump_binance_bitget_gate"] = venue_pair_gate
     output["early_pump_venue_gate"] = venue_gate
     output["early_pump_not_late_gate"] = not_late_gate
-    output["early_pump_alert_flag"] = radar_score.ge(65.0) & venue_gate & not_late_gate & (target_flow | (whale_gate & short_gate & float_gate))
+    output["early_pump_alert_flag"] = radar_score.ge(65.0) & whale_gate & short_gate & float_gate & venue_gate & not_late_gate & target_flow
     output["early_pump_state"] = output.apply(_state, axis=1)
     output["early_pump_primary_signal"] = output.apply(_primary_signal, axis=1)
     output["early_pump_next_check"] = output.apply(_next_check, axis=1)

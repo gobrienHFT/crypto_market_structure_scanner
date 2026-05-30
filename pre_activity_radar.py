@@ -6,6 +6,8 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from venue_gate import binance_bitget_venue_mask, holder_concentration_mask, holder_evidence_mask
+
 
 TARGET_CEX_RE = re.compile(r"\b(?:binance|bitget|gate(?:\.io|io)?)\b", flags=re.IGNORECASE)
 
@@ -21,6 +23,9 @@ PRE_ACTIVITY_RADAR_COLUMNS = [
     "pre_activity_preignition_score",
     "pre_activity_heat_score",
     "pre_activity_confirmed_target_flow",
+    "pre_activity_holder_evidence_gate",
+    "pre_activity_whale_gate",
+    "pre_activity_binance_bitget_gate",
     "pre_activity_structure_gate",
     "pre_activity_behavior_gate",
     "pre_activity_quiet_gate",
@@ -163,11 +168,12 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
     behavior = _row_bool(row, "pre_activity_behavior_gate")
     structure = _row_bool(row, "pre_activity_structure_gate")
     flow = _row_bool(row, "pre_activity_confirmed_target_flow")
+    venue = _row_bool(row, "pre_activity_binance_bitget_gate")
     if heat >= 70.0 or not quiet:
         return "Already active / chase risk"
-    if score >= 76.0 and flow and structure:
+    if score >= 76.0 and flow and structure and venue:
         return "Stealth inventory setup"
-    if score >= 68.0 and behavior and structure:
+    if score >= 68.0 and behavior and structure and venue:
         return "Silent squeeze fuse"
     if score >= 60.0 and structure:
         return "Control-plane watch"
@@ -178,8 +184,12 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
     if not _row_bool(row, "pre_activity_quiet_gate"):
         return "wait for heat to reset; the setup is no longer pre-activity"
     missing: list[str] = []
+    if not _row_bool(row, "pre_activity_whale_gate"):
+        missing.append("top10 whale-control evidence")
+    if not _row_bool(row, "pre_activity_binance_bitget_gate"):
+        missing.append("Binance+Bitget trading evidence")
     if not _row_bool(row, "pre_activity_structure_gate"):
-        missing.append("holder/float control")
+        missing.append("low-float/FDV structure")
     if not _row_bool(row, "pre_activity_behavior_gate"):
         missing.append("target CEX flow or venue-inventory tell")
     if not _row_bool(row, "pre_activity_confirmed_target_flow"):
@@ -388,7 +398,10 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     )
 
     major_excluded = _boolish(output.get("crime_excluded_major"), index=index)
-    structure_gate = ((control_score >= 55.0) | (top10 >= 76.0) | (top100 >= 90.0)) & ((float_score >= 45.0) | (thin_book_score >= 55.0))
+    holder_evidence_gate = holder_evidence_mask(output)
+    whale_gate = holder_concentration_mask(output, min_whale_pct=90.0, require_holder_evidence=True)
+    venue_pair_gate = binance_bitget_venue_mask(output, allow_cex_flow_targets=False)
+    structure_gate = whale_gate & ((float_score >= 45.0) | (thin_book_score >= 55.0))
     behavior_gate = target_flow | behavior_score.ge(58.0) | ((venue_score >= 55.0) & (short_fuse_score >= 52.0))
     quiet_gate = quiet_score.ge(50.0) & activity_heat.lt(62.0)
 
@@ -419,10 +432,21 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     output["pre_activity_preignition_score"] = preignition_score
     output["pre_activity_heat_score"] = activity_heat
     output["pre_activity_confirmed_target_flow"] = target_flow
+    output["pre_activity_holder_evidence_gate"] = holder_evidence_gate
+    output["pre_activity_whale_gate"] = whale_gate
+    output["pre_activity_binance_bitget_gate"] = venue_pair_gate
     output["pre_activity_structure_gate"] = structure_gate & (~major_excluded)
     output["pre_activity_behavior_gate"] = behavior_gate & (~major_excluded)
     output["pre_activity_quiet_gate"] = quiet_gate & (~major_excluded)
-    output["pre_activity_alert_flag"] = score.ge(62.0) & structure_gate & behavior_gate & quiet_gate & (~major_excluded)
+    output["pre_activity_alert_flag"] = (
+        score.ge(62.0)
+        & structure_gate
+        & behavior_gate
+        & quiet_gate
+        & venue_pair_gate
+        & short_fuse_score.ge(50.0)
+        & (~major_excluded)
+    )
     output["pre_activity_state"] = output.apply(_state, axis=1)
     output["pre_activity_primary_signal"] = output.apply(_primary_signal, axis=1)
     output["pre_activity_next_check"] = output.apply(_next_check, axis=1)
