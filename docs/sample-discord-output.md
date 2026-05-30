@@ -5,9 +5,9 @@ These examples are representative text outputs for reviewers. Live values depend
 ## `/alpha`
 
 ```text
-Alpha brief - venue-gated convex watchlist
+Alpha brief - strict thesis-gated convex watchlist
 Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Scan mode: Deep | Updated: 2026-05-16 15:40:00 UTC
-Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
 Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel.
 
 Candidates: /FLOWUSDT /RAVEUSDT /PLAYUSDT

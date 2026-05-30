@@ -252,7 +252,7 @@ Supported commands include:
 
 The bot can retrieve:
 
-- a venue-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel
+- a strict thesis-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ holder evidence and Binance+Bitget gates
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides

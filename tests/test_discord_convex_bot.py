@@ -10,6 +10,17 @@ def disable_live_command_scans(monkeypatch):
     monkeypatch.setenv("DISCORD_COMMAND_LIVE_SCAN_ENABLED", "0")
 
 
+def _holder_evidence(chain: str = "ethereum", contract: str = "0x1111111111111111111111111111111111111111") -> dict[str, object]:
+    source = {"ethereum": "Etherscan", "bsc": "BscScan", "arbitrum": "Arbiscan"}.get(chain, "Explorer")
+    return {
+        "token_platform": chain,
+        "token_contract": contract,
+        "holder_source": f"{source} holder endpoint",
+        "holder_count": 6_000,
+        "top100_holder_pct": 99.0,
+    }
+
+
 def test_normalize_symbol_query_accepts_fast_coin_forms() -> None:
     assert bot._normalize_symbol_query("playusdt") == "PLAYUSDT"
     assert bot._normalize_symbol_query("/PLAYUSDT") == "PLAYUSDT"
@@ -421,6 +432,7 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
                 "terminal_edge_score": 72,
                 "short_account_pct": 62,
                 "bitget_volume_share_pct": 7.5,
+                **_holder_evidence("ethereum", "0x2222222222222222222222222222222222222222"),
                 "oi_delta_pct": 3.0,
                 "hour_return_pct": 2.0,
                 "hour_volume_multiple": 2.0,
@@ -2291,6 +2303,7 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
             {
                 "symbol": "FLOWUSDT",
                 "bitget_volume_share_pct": 5.0,
+                **_holder_evidence("ethereum", "0x3333333333333333333333333333333333333333"),
                 "trade_bucket_score": 82,
                 "centralized_ownership_score": 85,
                 "low_float_score": 80,
@@ -2333,7 +2346,8 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
     output = "\n".join(chunks)
 
     assert title == "Alpha brief"
-    assert "Alpha brief - venue-gated convex watchlist" in output
+    assert "Alpha brief - strict thesis-gated convex watchlist" in output
+    assert "Thesis gate: observed holder >= 90.0%" in output
     assert "FLOWUSDT | brief" in output
     assert "evidence:" in output
     assert "next:" in output
@@ -2361,6 +2375,7 @@ def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monk
                     "trade_bucket": "Convex Long",
                     "trade_bucket_score": 82,
                     "bitget_volume_share_pct": 4.2,
+                    **_holder_evidence("bsc", "0x4444444444444444444444444444444444444444"),
                     "scan_mode": "Deep",
                     "scanned_at_utc": "2026-05-14 18:00:00 UTC",
                 }
@@ -2426,6 +2441,7 @@ def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -
                 "terminal_edge_score": 80,
                 "short_account_pct": 61,
                 "bitget_volume_share_pct": 5.0,
+                **_holder_evidence("arbitrum", "0x5555555555555555555555555555555555555555"),
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -2510,8 +2526,27 @@ def test_convex_candidates_require_binance_bitget_by_default(monkeypatch) -> Non
     frame = pd.DataFrame(
         [
             {"symbol": "NOGATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 99},
-            {"symbol": "BITGETUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 90, "bitget_volume_share_pct": 0.1},
-            {"symbol": "GATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 88, "gate_volume_share_pct": 2.0},
+            {
+                "symbol": "PCTONLYUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 95,
+                "bitget_volume_share_pct": 0.1,
+                "top100_holder_pct": 99.0,
+            },
+            {
+                "symbol": "BITGETUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 90,
+                "bitget_volume_share_pct": 0.1,
+                **_holder_evidence("ethereum", "0x6666666666666666666666666666666666666666"),
+            },
+            {
+                "symbol": "GATEUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 88,
+                "gate_volume_share_pct": 2.0,
+                **_holder_evidence("ethereum", "0x7777777777777777777777777777777777777777"),
+            },
         ]
     )
 
@@ -2522,7 +2557,17 @@ def test_convex_candidates_require_binance_bitget_by_default(monkeypatch) -> Non
 
 def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
-    frame = pd.DataFrame([{"symbol": "NOGATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 99}])
+    frame = pd.DataFrame(
+        [
+            {"symbol": "PCTONLYUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 100, "top100_holder_pct": 99.0},
+            {
+                "symbol": "NOGATEUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 99,
+                **_holder_evidence("bsc", "0x8888888888888888888888888888888888888888"),
+            },
+        ]
+    )
 
     selected = bot._convex_candidates_from_frame(frame)
 

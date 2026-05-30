@@ -721,7 +721,7 @@ def _convex_candidates_from_frame(frame: pd.DataFrame) -> pd.DataFrame:
     candidates = source[source["trade_bucket"].astype(str).eq("Convex Long") & (score >= min_score)].copy()
     if candidates.empty:
         return candidates
-    candidates = _apply_thesis_venue_gate(candidates)
+    candidates = _apply_thesis_candidate_gate(candidates)
     if candidates.empty:
         return candidates
     candidates["_discord_bucket_score"] = pd.to_numeric(candidates.get("trade_bucket_score"), errors="coerce").fillna(0.0)
@@ -821,14 +821,14 @@ def _load_candidates(limit: int) -> tuple[str, str]:
         frame = _convex_candidates_from_frame(frame)
         if frame.empty:
             description = (
-                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_venue_header()}\n\n"
-                "No current market-structure candidates met the Binance+Bitget thesis venue filter."
+                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_candidate_header()}\n\n"
+                "No current market-structure candidates met the strict holder-evidence and Binance+Bitget thesis gate."
             )
             return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     elif not _source_is_unavailable(source):
         description = (
-            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_venue_header()}\n\n"
-            "No current market-structure candidates met the Binance+Bitget thesis venue filter."
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_candidate_header()}\n\n"
+            "No current market-structure candidates met the strict holder-evidence and Binance+Bitget thesis gate."
         )
         return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     else:
@@ -850,12 +850,12 @@ def _load_candidates(limit: int) -> tuple[str, str]:
         return ("No market-structure candidates in the latest scan", f"Cache: `{path}`")
 
     cache_header = _cache_age_header(frame, source)
-    frame = _apply_thesis_venue_gate(frame)
+    frame = _apply_thesis_candidate_gate(frame)
     if frame.empty:
         return (
-            "No market-structure candidates met the Binance+Bitget venue gate",
-            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{_thesis_venue_header()}\n\n"
-            "No cached candidates currently show Binance+Bitget venue support.",
+            "No market-structure candidates met the strict thesis gate",
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{_thesis_candidate_header()}\n\n"
+            "No cached candidates currently show both strict holder evidence and Binance+Bitget venue support.",
         )
 
     score_col = "trade_bucket_score" if "trade_bucket_score" in frame.columns else None
@@ -871,7 +871,7 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     frame = apply_timing_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    header = _cache_age_header(frame, source) + "\n" + _thesis_venue_header()
+    header = _cache_age_header(frame, source) + "\n" + _thesis_candidate_header()
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{header}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     title = f"Fresh scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     if source.startswith("cached fallback"):
@@ -891,11 +891,11 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
         return "Market-structure evidence terminal", f"No live scan, scanner snapshot, or cache exists yet. `{source}`"
     frame = apply_terminal_model(frame)
     frame = apply_timing_model(frame)
-    frame = _apply_thesis_venue_gate(frame)
+    frame = _apply_thesis_candidate_gate(frame)
     if frame.empty:
-        return "Market-structure evidence terminal", "```text\n" + _thesis_venue_header() + "\n\nNo current rows met the Binance+Bitget thesis venue gate.\n```"
+        return "Market-structure evidence terminal", "```text\n" + _thesis_candidate_header() + "\n\nNo current rows met the strict holder-evidence and Binance+Bitget thesis gate.\n```"
     frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
-    header = _cache_age_header(frame, source) + "\n" + _thesis_venue_header()
+    header = _cache_age_header(frame, source) + "\n" + _thesis_candidate_header()
     lines = [
         (
             f"{str(row.get('symbol', '')).upper()} | terminal {(_safe_float(row.get('terminal_edge_score')) or 0.0):.1f} | "
@@ -933,9 +933,9 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     if frame.empty:
         return "Timing watchlist", "No live scan, scanner snapshot, or cache exists yet."
     frame = apply_timing_model(apply_terminal_model(frame))
-    frame = _apply_thesis_venue_gate(frame)
+    frame = _apply_thesis_candidate_gate(frame)
     if frame.empty:
-        return "Timing watchlist", "```text\n" + _thesis_venue_header() + "\n\nNo current timing rows met the Binance+Bitget thesis venue gate.\n```"
+        return "Timing watchlist", "```text\n" + _thesis_candidate_header() + "\n\nNo current timing rows met the strict holder-evidence and Binance+Bitget thesis gate.\n```"
     frame = frame.sort_values(
         ["timing_score", "timing_trigger_score", "timing_too_late_score", "symbol"],
         ascending=[False, False, True, True],
@@ -950,7 +950,7 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     ]
     header = (
         f"Source: {source} | Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-        f"{_thesis_venue_header()}"
+        f"{_thesis_candidate_header()}"
     )
     return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
@@ -2469,10 +2469,26 @@ def _thesis_venue_header() -> str:
     return "Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only"
 
 
+def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
+    return (
+        f"Thesis gate: observed holder >= {float(min_whale_pct):.1f}% with "
+        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract source/count evidence | {_thesis_venue_header()}"
+    )
+
+
 def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return frame.copy()
     return frame[_binance_bitget_trading_gate_mask(frame)].copy()
+
+
+def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    holder_gated = frame[_strict_cex_holder_gate_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=True)].copy()
+    if holder_gated.empty:
+        return holder_gated
+    return _apply_thesis_venue_gate(holder_gated)
 
 
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
@@ -4313,10 +4329,10 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
 
     source_frame = frame.loc[:, ~frame.columns.duplicated()].copy()
     source_frame = apply_timing_model(apply_terminal_model(source_frame))
-    source_frame = _apply_thesis_venue_gate(source_frame)
-    venue_header = _thesis_venue_header()
+    source_frame = _apply_thesis_candidate_gate(source_frame)
+    thesis_header = _thesis_candidate_header()
     if source_frame.empty:
-        return "Alpha brief", [venue_header + "\n\nNo rows met the Discord venue gate."]
+        return "Alpha brief", [thesis_header + "\n\nNo rows met the strict holder-evidence and Binance+Bitget thesis gate."]
 
     def num(column: str) -> pd.Series:
         return pd.to_numeric(source_frame.get(column, pd.Series(0.0, index=source_frame.index)), errors="coerce").fillna(0.0)
@@ -4348,7 +4364,7 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
     min_score = _env_float("DISCORD_ALPHA_BRIEF_MIN_SCORE", 35.0, minimum=0.0)
     selected = source_frame[source_frame["_discord_alpha_brief_score"].ge(min_score)].copy()
     if selected.empty:
-        return "Alpha brief", [venue_header + f"\n\nNo rows reached the alpha brief minimum score of {min_score:.0f}."]
+        return "Alpha brief", [thesis_header + f"\n\nNo rows reached the alpha brief minimum score of {min_score:.0f}."]
 
     selected = selected.sort_values(
         ["_discord_alpha_brief_score", "terminal_edge_score", "timing_score", "symbol"],
@@ -4356,9 +4372,9 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
     ).head(min(max(int(limit), 1), 50))
 
     header = (
-        "Alpha brief - venue-gated convex watchlist\n"
+        "Alpha brief - strict thesis-gated convex watchlist\n"
         f"{_cache_age_header(selected, source)}\n"
-        f"{venue_header}\n"
+        f"{thesis_header}\n"
         "Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel."
     )
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype="object")).tolist())
@@ -5706,7 +5722,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
-    alpha_kwargs = {"name": "alpha", "description": "Show a venue-gated alpha brief across structure, timing, and CEX flow."}
+    alpha_kwargs = {"name": "alpha", "description": "Show a strict holder-and-venue-gated alpha brief."}
     if guild is not None:
         alpha_kwargs["guild"] = guild
 
