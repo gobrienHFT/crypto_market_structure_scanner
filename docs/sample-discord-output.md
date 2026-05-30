@@ -7,7 +7,7 @@ These examples are representative text outputs for reviewers. Live values depend
 ```text
 Alpha brief - venue-gated convex watchlist
 Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Scan mode: Deep | Updated: 2026-05-16 15:40:00 UTC
-Venue gate: Binance perp + Bitget/Gate venue support (any visible share or Bitget/Gate transfer target)
+Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
 Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel.
 
 Candidates: /FLOWUSDT /RAVEUSDT /PLAYUSDT
@@ -130,7 +130,7 @@ Candidates: /PRIMEUSDT /FLOWUSDT
 
 ```text
 Early pump watch
-Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Venue gate: Binance/Bitget/Gate support or confirmed target transfer
+Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Additional venue gate: target-CEX/venue-support check enabled
 Gate rows: strict holder 12 | Binance+Bitget 7 | Shown after radar filters 3
 Matches: 3 | Confirmed target-flow rows: 2 | Read: rank-order evidence, not an execution instruction.
 
@@ -201,8 +201,7 @@ Principle: small losses; stay exposed only while structure remains intact
 ```text
 Wallet-to-CEX flow monitor
 The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.
-Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h
-Venue gate: Binance perp + Bitget/Gate venue support (any visible share or Bitget/Gate transfer target)
+Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
 Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
 Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
@@ -249,8 +248,7 @@ Use `/flowcoin symbol:<symbol>` for single-coin detail/query URL and `/flowhealt
 ```text
 Early wallet-to-CEX flow sweep
 The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.
-Source: fresh Deep scan at 2026-05-16 15:45:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h
-Venue gate: Binance perp + Bitget/Gate venue support (any visible share or Bitget/Gate transfer target)
+Source: fresh Deep scan at 2026-05-16 15:45:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
 Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
 Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
@@ -260,7 +258,7 @@ Candidates: /MICROUSDT
 
 /MICROUSDT
 CEX Flow Score: 52/100 | Risk: Elevated
-Evidence: Concentration-gated wallet-to-CEX flow: 1 large transfer(s) into Gate; total 25.00K tokens; largest 25.00K; top10 91.0% / top100 99.0%.
+Evidence: Concentration-gated wallet-to-CEX flow: 1 large transfer(s) into Bitget; total 25.00K tokens; largest 25.00K; top10 91.0% / top100 99.0%.
 Venue-flow read: Token inventory moved from non-CEX wallets into labelled exchange wallets after the concentration gate was met. Treat this as venue-flow and distribution-risk evidence, not a conclusion about intent.
 Next check: Watch whether CEX balances keep rising, OI/volume expands, and price absorbs or rejects the added venue inventory.
 ```
@@ -269,7 +267,7 @@ Next check: Watch whether CEX balances keep rising, OI/volume expands, and price
 
 ```text
 CEX inventory-stress monitor
-Source: fresh Deep scan at 2026-05-16 15:47:00 UTC | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget/Gate venue support (any visible share or Bitget/Gate transfer target)
+Source: fresh Deep scan at 2026-05-16 15:47:00 UTC | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only
 Inventory-stress rows before venue gate: 2 | After venue gate: 1
 
 Candidates: /FLOWUSDT
@@ -316,8 +314,8 @@ API fallback readiness:
 
 ```text
 Seth flow checklist
-Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Structure gate: dormant/early only
-Confirmed target-CEX flow rows: 3 | Whale+short+dormant pass: 1
+Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only | Structure gate: dormant/early only
+Confirmed target-CEX flow rows: 2 | Whale+short+dormant pass: 1
 
 Checklist: 1 flow -> 2 whale dominated -> 3 >50% short accounts -> 4 dormant/early, not already wild -> 5 research state.
 

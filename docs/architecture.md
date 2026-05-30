@@ -46,7 +46,7 @@ flowchart LR
 4. CEX-flow enrichment converts token transfers into venue-inventory stress by comparing deposit notional with visible ask depth and 24h turnover.
 5. Archetype scoring compares rows with RAVE-style cap-table reflexivity, LAB-style venue-inventory stress, SIREN-style short-fuse compression, RIVER-style runway breakouts, and STO-style target-venue squeeze structures.
 6. `early_pump_radar.py` collapses target-CEX flow, whale/control, low float, short crowding, venue support, archetype match, timing, and not-late risk into one ranked pump-watch layer.
-7. Venue gating keeps Discord focused on Binance perp plus Bitget/Gate support, unless target-CEX flow modes explicitly allow Binance/Bitget/Gate transfer targets.
+7. Venue gating keeps Discord focused on Binance perp plus Bitget trading evidence; Gate and labelled CEX transfer targets are supporting evidence, not Bitget substitutes, unless a command is explicitly run in diagnostic ungated mode.
 8. `discord_flag_formatter.py` renders a research card with thesis, evidence stack, trigger, next check, invalidation, liquidity warning, and case-study analogue when available.
 9. `proof_engine.py` archives alerts, including structure-edge, inventory-stress, and archetype scores, then later refreshes outcome metrics.
 

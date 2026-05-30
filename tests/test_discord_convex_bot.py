@@ -772,6 +772,26 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
                 "holder_count": 6_000,
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "GATEONLYUSDT",
+                "cex_deposit_flow_score": 77,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 900_000,
+                "cex_deposit_24h_max_amount": 900_000,
+                "cex_deposit_24h_target_exchanges": "Gate",
+                "cex_deposit_concentration_gate": "top10 92.0% / top100 98.0%",
+                "token_platform": "bsc",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "BscScan holder endpoint",
+                "holder_count": 5_000,
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 98.0,
+                "gate_volume_share_pct": 2.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -801,7 +821,7 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert "Min transfer: 20.00K tokens" in output
     assert "Holder gate: observed holder >= 90.0%" in output
     assert "Holder evidence required: True" in output
-    assert "Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1" in output
+    assert "Flow rows before holder gate: 2 | After holder gate: 2 | After venue gate: 1" in output
     assert "Candidates: /PLAYUSDT" in output
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
@@ -809,6 +829,7 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert "Venue-flow read:" in output
     assert "Next check:" in output
     assert "Bitget" in output
+    assert "GATEONLYUSDT" not in output
     assert "LOWUSDT" not in output
     assert "OLDUSDT" not in output
     assert captured["cex_min_transfer_tokens"] == 20_000
@@ -825,7 +846,7 @@ def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
                 "cex_deposit_24h_count": 1,
                 "cex_deposit_24h_token_amount": 25_000,
                 "cex_deposit_24h_max_amount": 25_000,
-                "cex_deposit_24h_target_exchanges": "Gate",
+                "cex_deposit_24h_target_exchanges": "Bitget",
                 "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
                 "token_platform": "bsc",
                 "token_contract": "0x2222222222222222222222222222222222222222",
@@ -833,7 +854,7 @@ def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
                 "holder_count": 4_000,
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
-                "gate_volume_share_pct": 1.0,
+                "bitget_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             }
@@ -1207,6 +1228,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "day_return_pct": 42.0,
                 "dormant_short_fuse_score": 85.0,
                 "binance_volume_share_pct": 5.0,
+                "bitget_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -1270,7 +1292,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
     output = "\n".join(chunks)
 
     assert title == "Seth flow checklist"
-    assert "Confirmed target-CEX flow rows: 3 | Whale+short+dormant pass: 1" in output
+    assert "Confirmed target-CEX flow rows: 2 | Whale+short+dormant pass: 1" in output
     assert "Whale gate: observed holder >= 90.0%" in output
     assert "Holder evidence required: True" in output
     assert "/SETUPUSDT | RESEARCH: dormant candidate" in output
@@ -1305,6 +1327,7 @@ def test_load_seth_flow_playbook_can_show_volatile_diagnostic_rows(monkeypatch) 
                 "day_return_pct": 42.0,
                 "dormant_short_fuse_score": 85.0,
                 "binance_volume_share_pct": 5.0,
+                "bitget_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             }
@@ -2202,14 +2225,14 @@ def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monk
     ).to_csv(cache, index=False)
     fresh = pd.DataFrame(
         [
-            {
-                "symbol": "NEWUSDT",
-                "trade_bucket": "Convex Long",
-                "trade_bucket_score": 82,
-                "gate_volume_share_pct": 4.2,
-                "scan_mode": "Deep",
-                "scanned_at_utc": "2026-05-14 18:00:00 UTC",
-            }
+                {
+                    "symbol": "NEWUSDT",
+                    "trade_bucket": "Convex Long",
+                    "trade_bucket_score": 82,
+                    "bitget_volume_share_pct": 4.2,
+                    "scan_mode": "Deep",
+                    "scanned_at_utc": "2026-05-14 18:00:00 UTC",
+                }
         ]
     )
     monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
@@ -2351,7 +2374,7 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
     assert "Research constraint: user owns entries, sizing, stops, and execution" in description
 
 
-def test_convex_candidates_require_bitget_or_gate_by_default(monkeypatch) -> None:
+def test_convex_candidates_require_binance_bitget_by_default(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     frame = pd.DataFrame(
         [
@@ -2363,7 +2386,7 @@ def test_convex_candidates_require_bitget_or_gate_by_default(monkeypatch) -> Non
 
     selected = bot._convex_candidates_from_frame(frame)
 
-    assert selected["symbol"].tolist() == ["BITGETUSDT", "GATEUSDT"]
+    assert selected["symbol"].tolist() == ["BITGETUSDT"]
 
 
 def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:

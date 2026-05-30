@@ -39,7 +39,6 @@ from scan_orchestrator import run_fresh_scan_frame
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
 from trade_setup_pipeline import TradeBotConfig, TradeBotRuntime
-from venue_gate import apply_bitget_gate_venue_gate, bitget_gate_venue_header
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -722,7 +721,7 @@ def _convex_candidates_from_frame(frame: pd.DataFrame) -> pd.DataFrame:
     candidates = source[source["trade_bucket"].astype(str).eq("Convex Long") & (score >= min_score)].copy()
     if candidates.empty:
         return candidates
-    candidates = apply_bitget_gate_venue_gate(candidates, allow_cex_flow_targets=False)
+    candidates = _apply_thesis_venue_gate(candidates)
     if candidates.empty:
         return candidates
     candidates["_discord_bucket_score"] = pd.to_numeric(candidates.get("trade_bucket_score"), errors="coerce").fillna(0.0)
@@ -822,14 +821,14 @@ def _load_candidates(limit: int) -> tuple[str, str]:
         frame = _convex_candidates_from_frame(frame)
         if frame.empty:
             description = (
-                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{bitget_gate_venue_header()}\n\n"
-                "No current market-structure candidates met the Convex + Bitget/Gate venue filter."
+                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_venue_header()}\n\n"
+                "No current market-structure candidates met the Binance+Bitget thesis venue filter."
             )
             return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     elif not _source_is_unavailable(source):
         description = (
-            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{bitget_gate_venue_header()}\n\n"
-            "No current market-structure candidates met the Convex + Bitget/Gate venue filter."
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_venue_header()}\n\n"
+            "No current market-structure candidates met the Binance+Bitget thesis venue filter."
         )
         return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     else:
@@ -851,12 +850,12 @@ def _load_candidates(limit: int) -> tuple[str, str]:
         return ("No market-structure candidates in the latest scan", f"Cache: `{path}`")
 
     cache_header = _cache_age_header(frame, source)
-    frame = apply_bitget_gate_venue_gate(frame, allow_cex_flow_targets=False)
+    frame = _apply_thesis_venue_gate(frame)
     if frame.empty:
         return (
-            "No market-structure candidates met the Bitget/Gate venue gate",
-            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{bitget_gate_venue_header()}\n\n"
-            "No cached candidates currently show Bitget or Gate venue support.",
+            "No market-structure candidates met the Binance+Bitget venue gate",
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{_thesis_venue_header()}\n\n"
+            "No cached candidates currently show Binance+Bitget venue support.",
         )
 
     score_col = "trade_bucket_score" if "trade_bucket_score" in frame.columns else None
@@ -872,7 +871,7 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     frame = apply_timing_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    header = _cache_age_header(frame, source) + "\n" + bitget_gate_venue_header()
+    header = _cache_age_header(frame, source) + "\n" + _thesis_venue_header()
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{header}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     title = f"Fresh scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     if source.startswith("cached fallback"):
@@ -892,11 +891,11 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
         return "Market-structure evidence terminal", f"No live scan, scanner snapshot, or cache exists yet. `{source}`"
     frame = apply_terminal_model(frame)
     frame = apply_timing_model(frame)
-    frame = apply_bitget_gate_venue_gate(frame, allow_cex_flow_targets=False)
+    frame = _apply_thesis_venue_gate(frame)
     if frame.empty:
-        return "Market-structure evidence terminal", "```text\n" + bitget_gate_venue_header() + "\n\nNo current rows met the Bitget/Gate venue gate.\n```"
+        return "Market-structure evidence terminal", "```text\n" + _thesis_venue_header() + "\n\nNo current rows met the Binance+Bitget thesis venue gate.\n```"
     frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
-    header = _cache_age_header(frame, source) + "\n" + bitget_gate_venue_header()
+    header = _cache_age_header(frame, source) + "\n" + _thesis_venue_header()
     lines = [
         (
             f"{str(row.get('symbol', '')).upper()} | terminal {(_safe_float(row.get('terminal_edge_score')) or 0.0):.1f} | "
@@ -934,9 +933,9 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     if frame.empty:
         return "Timing watchlist", "No live scan, scanner snapshot, or cache exists yet."
     frame = apply_timing_model(apply_terminal_model(frame))
-    frame = apply_bitget_gate_venue_gate(frame, allow_cex_flow_targets=False)
+    frame = _apply_thesis_venue_gate(frame)
     if frame.empty:
-        return "Timing watchlist", "```text\n" + bitget_gate_venue_header() + "\n\nNo current timing rows met the Bitget/Gate venue gate.\n```"
+        return "Timing watchlist", "```text\n" + _thesis_venue_header() + "\n\nNo current timing rows met the Binance+Bitget thesis venue gate.\n```"
     frame = frame.sort_values(
         ["timing_score", "timing_trigger_score", "timing_too_late_score", "symbol"],
         ascending=[False, False, True, True],
@@ -951,7 +950,7 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     ]
     header = (
         f"Source: {source} | Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-        f"{bitget_gate_venue_header()}"
+        f"{_thesis_venue_header()}"
     )
     return "Timing watchlist", "```text\n" + (header + "\n\n" + "\n".join(lines))[:1850] + "\n```"
 
@@ -1968,7 +1967,7 @@ def _load_cex_flow_list(
         f"Source: {source} | Holder gate: observed holder >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | "
         f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback:.0f}h | "
-        f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
+        f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
     if "fallback" in source.lower():
         header += "\nNote: fallback cache may have been generated with a different transfer threshold."
@@ -1986,7 +1985,7 @@ def _load_cex_flow_list(
             require_holder_evidence=require_holder_evidence,
         )
     ].copy()
-    flow = apply_bitget_gate_venue_gate(strict_flow, allow_cex_flow_targets=True) if require_venue_gate else strict_flow.copy()
+    flow = _apply_thesis_venue_gate(strict_flow) if require_venue_gate else strict_flow.copy()
     header += f"\nFlow rows before holder gate: {raw_flow_count} | After holder gate: {len(strict_flow)} | After venue gate: {len(flow)}"
     diagnostic_lines = _cex_flow_scan_diagnostic_lines(
         frame,
@@ -2003,7 +2002,7 @@ def _load_cex_flow_list(
             )
         elif raw_flow_count > 0 and require_venue_gate:
             message = (
-                "Strict holder-gated CEX transfer flow was found, but none of those rows also met the Bitget/Gate venue gate. "
+                "Strict holder-gated CEX transfer flow was found, but none of those rows also met the Binance+Bitget thesis venue gate. "
                 "Retry with `require_venue_gate:false` to inspect all labelled CEX-flow rows."
             )
         elif "explorer blocked" in diagnostic_text.lower():
@@ -2089,7 +2088,7 @@ def _load_cex_flow_diagnostics(
         f"Source: {source} | Holder gate: observed holder >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | "
         f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback:.0f}h | "
-        f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
+        f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
     if "fallback" in source.lower():
         header += "\nNote: fallback cache may have been generated with a different transfer threshold."
@@ -2106,7 +2105,7 @@ def _load_cex_flow_diagnostics(
             require_holder_evidence=require_holder_evidence,
         )
     ].copy()
-    flow = apply_bitget_gate_venue_gate(strict_flow, allow_cex_flow_targets=True) if require_venue_gate else strict_flow.copy()
+    flow = _apply_thesis_venue_gate(strict_flow) if require_venue_gate else strict_flow.copy()
     lines = [
         header,
         f"Flow rows before holder gate: {len(raw_flow)} | After holder gate: {len(strict_flow)} | After venue gate: {len(flow)}",
@@ -2183,7 +2182,7 @@ def _load_symbol_cex_flow(symbol_query: str, *, min_tokens: float | None = None,
     header = (
         f"Source: {source}\n"
         f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
-        f"{bitget_gate_venue_header(allow_cex_flow_targets=True)}"
+        f"{_thesis_venue_header()} | Symbol detail is not filtered"
     )
     if "fallback" in source.lower():
         header += "\nNote: fallback cache may have been generated with a different transfer threshold."
@@ -2235,7 +2234,7 @@ def _load_flow_stress_list(
         "CEX inventory-stress monitor\n"
         f"Source: {source} | Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | "
         f"Lookback: {effective_lookback}h | "
-        f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
+        f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
     if frame.empty:
         return "CEX inventory-stress monitor", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -2247,7 +2246,7 @@ def _load_flow_stress_list(
     rows = frame[(stress.gt(0.0)) | (score.gt(0.0))].copy()
     raw_count = len(rows)
     if require_venue_gate and not rows.empty:
-        rows = apply_bitget_gate_venue_gate(rows, allow_cex_flow_targets=True)
+        rows = _apply_thesis_venue_gate(rows)
     header += f"\nInventory-stress rows before venue gate: {raw_count} | After venue gate: {len(rows)}"
     if rows.empty:
         return "CEX inventory-stress monitor", [header + "\n\nNo CEX inventory-stress rows found in the active scan coverage."]
@@ -2462,6 +2461,18 @@ def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
     return (has_binance & has_bitget).fillna(False)
 
 
+def _thesis_venue_header() -> str:
+    if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
+        return "Venue gate: disabled"
+    return "Venue gate: Binance perp + Bitget trading evidence required; Gate is optional evidence only"
+
+
+def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
+        return frame.copy()
+    return frame[_binance_bitget_trading_gate_mask(frame)].copy()
+
+
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
     setup_score = max(
         _safe_float(row.get("dormant_short_fuse_score")) or 0.0,
@@ -2500,7 +2511,7 @@ def _load_seth_flow_playbook(
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
     require_dormant: bool = True,
-    require_venue_gate: bool = False,
+    require_venue_gate: bool = True,
     require_holder_evidence: bool = True,
     max_range_pct: float = 35.0,
     max_day_move_pct: float = 30.0,
@@ -2514,6 +2525,7 @@ def _load_seth_flow_playbook(
         f"Source: {source} | Confirmed target-CEX flow only | Min transfer: >= {_fmt_compact_number(effective_min_transfer)} tokens | "
         f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= {float(min_whale_pct):.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Short gate: >= {min_short_pct:.1f}% | "
+        f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'} | "
         f"Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
     )
     if "fallback" in source.lower():
@@ -2531,7 +2543,7 @@ def _load_seth_flow_playbook(
     flow_mask = (flag | score.gt(0.0)) & count.gt(0.0) & max_amount.ge(effective_min_transfer) & target_mask
     raw_target_flow = frame[flow_mask].copy()
     if require_venue_gate and not raw_target_flow.empty:
-        raw_target_flow = apply_bitget_gate_venue_gate(raw_target_flow, allow_cex_flow_targets=True)
+        raw_target_flow = _apply_thesis_venue_gate(raw_target_flow)
 
     if raw_target_flow.empty:
         raw_count = int(((flag | score.gt(0.0)) & count.gt(0.0)).sum())
@@ -2961,7 +2973,7 @@ def _load_pump_watch_list(
         f"Min radar: {float(min_score):.0f} | Holder gate: >= {float(min_whale_pct):.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
-        f"{'Venue gate: Binance/Bitget/Gate support or confirmed target transfer' if require_venue_gate else 'Venue gate: disabled for this command'}"
+        f"{'Additional venue gate: target-CEX/venue-support check enabled' if require_venue_gate else 'Additional venue gate: disabled for this command'}"
     )
     if frame.empty:
         return "Early pump watch", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -4155,8 +4167,8 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
 
     source_frame = frame.loc[:, ~frame.columns.duplicated()].copy()
     source_frame = apply_timing_model(apply_terminal_model(source_frame))
-    source_frame = apply_bitget_gate_venue_gate(source_frame, allow_cex_flow_targets=True)
-    venue_header = bitget_gate_venue_header(allow_cex_flow_targets=True)
+    source_frame = _apply_thesis_venue_gate(source_frame)
+    venue_header = _thesis_venue_header()
     if source_frame.empty:
         return "Alpha brief", [venue_header + "\n\nNo rows met the Discord venue gate."]
 
@@ -4750,7 +4762,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
-        require_venue_gate="Require Bitget/Gate support or target-flow venue gate.",
+        require_venue_gate="Require Binance perp plus Bitget trading evidence. Gate is optional evidence only.",
     )
     async def pumpwatch(
         interaction: discord.Interaction,
@@ -5227,7 +5239,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the holder gate.",
-        require_venue_gate="Require Binance perp plus Bitget/Gate venue support. Disable for raw CEX-flow sweep.",
+        require_venue_gate="Require Binance perp plus Bitget trading evidence. Disable for raw CEX-flow sweep.",
     )
     async def cexflow(
         interaction: discord.Interaction,
@@ -5272,7 +5284,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the holder gate.",
-        require_venue_gate="Show how many raw CEX-flow rows survive the Binance/Bitget/Gate venue gate.",
+        require_venue_gate="Show how many raw CEX-flow rows survive the Binance+Bitget thesis venue gate.",
         symbol_limit="How many attempted symbols to list.",
     )
     async def cexdiag(
@@ -5315,7 +5327,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the holder gate.",
-        require_venue_gate="Require Binance perp plus Bitget/Gate venue support. Disable for raw early-flow sweep.",
+        require_venue_gate="Require Binance perp plus Bitget trading evidence. Disable for raw early-flow sweep.",
     )
     async def earlyflow(
         interaction: discord.Interaction,
@@ -5392,7 +5404,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per transfer, for example 20000.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        require_venue_gate="Also apply the stricter Binance perp plus Bitget/Gate venue-support gate.",
+        require_venue_gate="Also apply the Binance+Bitget thesis venue gate.",
     )
     async def flowstress(
         interaction: discord.Interaction,
@@ -5501,7 +5513,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_short_pct="Minimum short-account percentage, default 50.",
         min_whale_pct="Minimum observed top-holder concentration percentage, default 90.",
         require_dormant="Only show rows that pass the dormant/early structure gate.",
-        require_venue_gate="Require Binance perp plus Bitget/Gate venue support.",
+        require_venue_gate="Require Binance perp plus Bitget trading evidence.",
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
     )
     async def sethflow(
@@ -5512,7 +5524,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
         require_dormant: bool = True,
-        require_venue_gate: bool = False,
+        require_venue_gate: bool = True,
         require_holder_evidence: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):

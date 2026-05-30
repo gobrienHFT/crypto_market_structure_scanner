@@ -4,7 +4,7 @@
 
 Research and monitoring framework for finding asymmetric crypto market structures before they become obvious on price alone.
 
-The system combines perpetual-market positioning, Binance/Bitget/Gate venue participation, on-chain holder concentration, wallet-to-CEX flow, timing quality, Discord alerting, and proof-of-signal tracking. The practical goal is to surface low-float or concentrated-holder structures where short crowding, thin liquidity, and exchange inventory movement can create convex payoff conditions.
+The system combines perpetual-market positioning, Binance+Bitget venue participation with Gate as optional evidence, on-chain holder concentration, wallet-to-CEX flow, timing quality, Discord alerting, and proof-of-signal tracking. The practical goal is to surface low-float or concentrated-holder structures where short crowding, thin liquidity, and exchange inventory movement can create convex payoff conditions.
 
 It is built as research infrastructure, not as an automated trading system. Alerts are designed to accelerate discretionary review, sizing discipline, and post-alert measurement.
 
@@ -177,7 +177,7 @@ Webhook alerts support:
 - configurable top-N filtering
 - configurable score thresholds
 - per-symbol cooldowns
-- Bitget/Gate venue gating by default
+- Binance+Bitget thesis venue gating by default, with Gate treated as optional supporting evidence
 - dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
 - venue-inventory stress notes when CEX deposits are large versus visible liquidity
 - case-study analogue lines for fast pattern triage, including the RAVE 2026-04-18 and LAB 2026-05-11 historical anchors when matched
