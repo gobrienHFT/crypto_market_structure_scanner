@@ -14,7 +14,8 @@ def test_select_convex_long_candidates_applies_score_and_venue_gate(monkeypatch)
         [
             {"symbol": "LOWUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 15, "bitget_volume_share_pct": 2.0},
             {"symbol": "NOGATEUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 99},
-            {"symbol": "GOODUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 80, "gate_volume_share_pct": 1.0},
+            {"symbol": "GATEONLYUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 85, "gate_volume_share_pct": 1.0},
+            {"symbol": "GOODUSDT", "trade_bucket": "Convex Long", "trade_bucket_score": 80, "bitget_volume_share_pct": 1.0},
             {"symbol": "WATCHUSDT", "trade_bucket": "Watch", "trade_bucket_score": 95, "bitget_volume_share_pct": 5.0},
         ]
     )
@@ -51,7 +52,7 @@ def test_run_scanner_scan_temporarily_overrides_cex_flow_threshold(monkeypatch) 
                     "symbol": "FLOWUSDT",
                     "trade_bucket": "Convex Long",
                     "trade_bucket_score": 80,
-                    "gate_volume_share_pct": 1.0,
+                    "bitget_volume_share_pct": 1.0,
                 }
             ]
         )

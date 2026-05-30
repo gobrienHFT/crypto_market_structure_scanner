@@ -103,6 +103,7 @@ def test_timing_alert_source_excludes_fragile_states(monkeypatch) -> None:
                 "hour_trade_count_multiple": 2.0,
                 "hour_close_location_pct": 82,
                 "gate_volume_share_pct": 4.0,
+                "bitget_volume_share_pct": 1.0,
             },
             {
                 "symbol": "BADUSDT",
@@ -148,6 +149,7 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "short_dominance_score": 80,
                 "pre_pump_precision_flag": True,
                 "gate_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 2.0,
             },
         ]
     )
@@ -175,6 +177,7 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
                 "cex_deposit_24h_total_pct_supply": 2.5,
                 "cex_deposit_24h_count": 3,
                 "cex_deposit_24h_target_exchanges": "Bitget",
+                "bitget_volume_share_pct": 1.0,
             },
             {
                 "symbol": "WATCHUSDT",
@@ -183,13 +186,14 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
                 "cex_deposit_24h_total_pct_supply": 1.2,
                 "cex_deposit_24h_count": 1,
                 "cex_deposit_24h_target_exchanges": "GateIO",
+                "gate_volume_share_pct": 1.0,
             },
         ]
     )
 
     selected = watcher._select_alert_candidates(frame, alert_source="cex_flow", top_n=10)
 
-    assert selected["symbol"].tolist() == ["PLAYUSDT", "WATCHUSDT"]
+    assert selected["symbol"].tolist() == ["PLAYUSDT"]
     assert float(selected.iloc[0]["watcher_alert_score"]) == 88.0
 
 
@@ -222,16 +226,17 @@ def test_cex_flow_watcher_cards_use_flow_format(monkeypatch) -> None:
     assert archive.iloc[0]["_raw_bot_output"] == cards[0]
 
 
-def test_terminal_alert_source_requires_bitget_or_gate_by_default(monkeypatch) -> None:
+def test_terminal_alert_source_requires_binance_bitget_by_default(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     monkeypatch.setenv("DISCORD_WATCHER_MIN_TERMINAL_SCORE", "50")
     frame = pd.DataFrame(
         [
-            {"symbol": "NOGATEUSDT", "terminal_edge_score": 90},
-            {"symbol": "GATEUSDT", "terminal_edge_score": 80, "gate_volume_share_pct": 0.1},
+            {"symbol": "NOBITGETUSDT", "terminal_edge_score": 90},
+            {"symbol": "GATEONLYUSDT", "terminal_edge_score": 85, "gate_volume_share_pct": 1.0},
+            {"symbol": "BITGETUSDT", "terminal_edge_score": 80, "bitget_volume_share_pct": 0.1},
         ]
     )
 
     selected = watcher._select_alert_candidates(frame, alert_source="terminal", top_n=10)
 
-    assert selected["symbol"].tolist() == ["GATEUSDT"]
+    assert selected["symbol"].tolist() == ["BITGETUSDT"]

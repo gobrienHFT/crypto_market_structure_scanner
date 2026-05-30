@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from venue_gate import apply_bitget_gate_venue_gate
+from venue_gate import apply_binance_bitget_venue_gate
 
 
 _MISSING = object()
@@ -41,7 +41,7 @@ def select_convex_long_candidates(
     ].copy()
     if candidates.empty:
         return candidates
-    candidates = apply_bitget_gate_venue_gate(candidates, allow_cex_flow_targets=allow_cex_flow_targets)
+    candidates = apply_binance_bitget_venue_gate(candidates, allow_cex_flow_targets=allow_cex_flow_targets)
     if candidates.empty:
         return candidates
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])

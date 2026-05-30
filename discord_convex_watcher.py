@@ -23,7 +23,7 @@ from proof_engine import archive_alerts, refresh_outcomes
 from scan_orchestrator import run_scanner_scan, select_convex_long_candidates
 from terminal_engine import apply_terminal_model
 from timing_engine import apply_timing_model
-from venue_gate import apply_bitget_gate_venue_gate, bitget_gate_venue_header
+from venue_gate import apply_binance_bitget_venue_gate, binance_bitget_venue_header
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -206,7 +206,7 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         return all_df.copy()
     scored = _ensure_alert_scores(all_df)
     source = alert_source.strip().lower().replace("-", "_")
-    scored = apply_bitget_gate_venue_gate(scored, allow_cex_flow_targets=source in {"cex_flow", "cexflow", "cex_deposit_flow"})
+    scored = apply_binance_bitget_venue_gate(scored, allow_cex_flow_targets=source in {"cex_flow", "cexflow", "cex_deposit_flow"})
     if scored.empty:
         return scored
 
@@ -374,7 +374,7 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, alert_source: str
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
     normalized_source = alert_source.strip().lower().replace("-", "_")
     allow_cex_targets = normalized_source in {"cex_flow", "cexflow", "cex_deposit_flow"}
-    venue_header = bitget_gate_venue_header(allow_cex_flow_targets=allow_cex_targets)
+    venue_header = binance_bitget_venue_header(allow_cex_flow_targets=allow_cex_targets)
     description = (
         f"{DISCORD_PRODUCT_IDENTITY}\n\n"
         f"{venue_header}\n\n"

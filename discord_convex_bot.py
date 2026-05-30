@@ -1284,6 +1284,8 @@ def _apply_ravelab_recent_pump_window(
 
     missing_after = clean_candidate_mask & _text_series(out, "_ravelab_recent_pump_source").eq("")
     out.loc[missing_after, "_ravelab_recent_pump_source"] = "missing 60d pump proof"
+    unchecked_after = (~clean_candidate_mask) & _text_series(out, "_ravelab_recent_pump_source").eq("")
+    out.loc[unchecked_after, "_ravelab_recent_pump_source"] = "not checked; earlier gate failed"
     out = _ravelab_refresh_activity_gates(
         out,
         min_history_days=min_history_days,
@@ -3518,7 +3520,7 @@ def _ravelab_next_check(row: pd.Series) -> str:
     has_no_pump_gate = hasattr(row, "index") and "_ravelab_no_large_pump_gate" in row.index
     if has_no_pump_gate and not _boolish_scalar(row.get("_ravelab_no_large_pump_gate")):
         pump_source = _clean_scalar_text(row.get("_ravelab_recent_pump_source", ""))
-        if "insufficient" in pump_source or "missing" in pump_source or "skipped" in pump_source:
+        if "insufficient" in pump_source or "missing" in pump_source or "skipped" in pump_source or "not checked" in pump_source:
             return "wait; load 60D daily-candle pump proof before treating dormancy as real"
         max_pump = _safe_float(row.get("_ravelab_max_recent_pump_pct")) or 35.0
         return f"wait; recent daily pump exceeded {max_pump:.0f}% no-pump gate"
@@ -3646,6 +3648,65 @@ def _ravelab_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.S
     return _strict_holder_evidence_masks(frame)
 
 
+def _ravelab_near_miss_rows(
+    scored: pd.DataFrame,
+    selected: pd.DataFrame,
+    *,
+    limit: int,
+    style_key: str,
+    min_score: float,
+    min_archetype: float,
+    min_squeeze_score: float,
+    require_holder_evidence: bool,
+    require_binance_bitget: bool,
+) -> pd.DataFrame:
+    if scored.empty or limit <= 0:
+        return pd.DataFrame()
+    candidates = scored.copy()
+    if "symbol" in candidates.columns and not selected.empty and "symbol" in selected.columns:
+        selected_symbols = set(selected["symbol"].astype(str).str.upper().str.strip())
+        candidates = candidates[~candidates["symbol"].astype(str).str.upper().str.strip().isin(selected_symbols)].copy()
+    if candidates.empty:
+        return candidates
+
+    base_mask = (
+        _num_series(candidates, "_ravelab_early_score").ge(max(0.0, float(min_score)))
+        & _num_series(candidates, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
+        & _boolish_series(candidates.get("_ravelab_whale_gate"), index=candidates.index)
+        & _num_series(candidates, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
+        & _num_series(candidates, "_ravelab_core_gate_count").ge(3.0)
+    )
+    candidates = candidates[base_mask].copy()
+    if candidates.empty:
+        return candidates
+    if require_holder_evidence:
+        candidates = candidates[_boolish_series(candidates.get("_ravelab_holder_evidence_gate"), index=candidates.index)].copy()
+    if require_binance_bitget:
+        candidates = candidates[_boolish_series(candidates.get("_ravelab_venue_gate"), index=candidates.index)].copy()
+    if candidates.empty:
+        return candidates
+    if style_key == "rave":
+        candidates = candidates[candidates["_ravelab_side"].astype(str).isin(["RAVE-like", "Mixed RAVE/LAB"])].copy()
+    elif style_key == "lab":
+        candidates = candidates[candidates["_ravelab_side"].astype(str).isin(["LAB-like", "Mixed RAVE/LAB"])].copy()
+    if candidates.empty:
+        return candidates
+    return candidates.sort_values(
+        [
+            "_ravelab_core_gate_count",
+            "_ravelab_whale_origin_flow",
+            "_ravelab_holder_evidence_gate",
+            "_ravelab_venue_gate",
+            "_ravelab_dormant_2m_gate",
+            "_ravelab_thesis_score",
+            "_ravelab_early_score",
+            "_ravelab_whale_pct",
+            "symbol",
+        ],
+        ascending=[False, False, False, False, False, False, False, False, True],
+    ).head(min(max(int(limit), 0), 30))
+
+
 def _load_ravelab_list(
     limit: int,
     *,
@@ -3666,6 +3727,7 @@ def _load_ravelab_list(
     require_holder_evidence: bool = True,
     require_breakout_high: bool = False,
     require_whale_origin_flow: bool = False,
+    near_miss_limit: int = 5,
     detail: bool = False,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
@@ -3692,7 +3754,8 @@ def _load_ravelab_list(
         f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
         f"Quiet required: {require_quiet} | Target flow required: {require_target_flow} | Whale-origin CEX required: {require_whale_origin_flow} | "
-        f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Detail: {detail}{ignored_breakout_text}\n"
+        f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
+        f"Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
         "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
@@ -3821,6 +3884,17 @@ def _load_ravelab_list(
         ],
         ascending=[False, False, False, False, False, False, False, False, False, False, False, True],
     ).head(min(max(int(limit), 1), 100))
+    near_misses = _ravelab_near_miss_rows(
+        scored,
+        selected,
+        limit=max(0, int(near_miss_limit)),
+        style_key=style_key,
+        min_score=min_score,
+        min_archetype=min_archetype,
+        min_squeeze_score=min_squeeze_score,
+        require_holder_evidence=require_holder_evidence,
+        require_binance_bitget=require_binance_bitget,
+    )
     target_count = int(_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index).sum())
     whale_origin_count = int(_boolish_series(selected.get("_ravelab_whale_origin_flow"), index=selected.index).sum())
     core_count = int(_num_series(selected, "_ravelab_core_gate_count").ge(5.0).sum())
@@ -3840,7 +3914,7 @@ def _load_ravelab_list(
         (
             f"Matches: {len(selected)} | RAVE-like: {rave_count} | LAB-like: {lab_count} | Mixed: {mixed_count} | "
             f"Core 5/5: {core_count} | Target-flow rows: {target_count} | Whale-origin CEX rows: {whale_origin_count} | "
-            "Read: historical-analogue screen, not trade instruction."
+            f"Near misses shown: {len(near_misses)} | Read: historical-analogue screen, not trade instruction."
         ),
         gate_summary,
         (
@@ -3861,6 +3935,16 @@ def _load_ravelab_list(
     ]
     for _, row in selected.iterrows():
         lines.append(_ravelab_line(row, detail=detail))
+    if not near_misses.empty:
+        lines.extend(
+            [
+                "",
+                "Near misses (blocked, not eligible yet; failed gates are shown as blockers):",
+                "",
+            ]
+        )
+        for _, row in near_misses.iterrows():
+            lines.append(_ravelab_line(row, detail=detail))
     return "RAVE/LAB early radar", _chunk_text_lines(lines)
 
 
@@ -4881,6 +4965,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence="Require source/contract/count evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet.",
+        near_miss_limit="Blocked high-signal rows to show after strict matches. Use 0 to hide.",
         detail="Show full multi-line evidence instead of the compact staged read.",
     )
     @app_commands.choices(
@@ -4910,6 +4995,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence: bool = True,
         require_breakout_high: bool = False,
         require_whale_origin_flow: bool = False,
+        near_miss_limit: int = 5,
         detail: bool = False,
     ) -> None:
         if not _channel_allowed(interaction):
@@ -4939,6 +5025,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_holder_evidence=require_holder_evidence,
             require_breakout_high=require_breakout_high,
             require_whale_origin_flow=require_whale_origin_flow,
+            near_miss_limit=min(max(int(near_miss_limit), 0), 30),
             detail=detail,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)

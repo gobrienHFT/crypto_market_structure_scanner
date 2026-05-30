@@ -1870,8 +1870,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "No-pump proof: requires 60D closed daily-candle pump history" in output
     assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
+    assert "Near misses: 5" in output
     assert "Core 5/5: 2" in output
     assert "Whale-origin CEX rows: 1" in output
+    assert "Near misses shown: 2" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "Daily pump checks:" in output
@@ -1893,14 +1895,18 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
+    assert "Near misses (blocked, not eligible yet; failed gates are shown as blockers):" in output
+    assert "/RECENTPUMPUSDT | RAVE-like | B1 BLOCKED" in output
+    assert "blockers 2mo no-pump" in output
+    assert "pump60 82.0%/60d scan60d" in output
+    assert "/MISSINGPUMPUSDT | RAVE-like | B1 BLOCKED" in output
+    assert "insufficient 0d" in output
     assert "/HOTRAVEUSDT" not in output
     assert "/NOBITGETUSDT" not in output
     assert "/YOUNGUSDT" not in output
     assert "/PCTONLYUSDT" not in output
     assert "/COUNTONLYUSDT" not in output
     assert "/TARGETONLYUSDT" not in output
-    assert "/RECENTPUMPUSDT" not in output
-    assert "/MISSINGPUMPUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)
@@ -1913,6 +1919,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
         min_archetype=0,
         min_tokens=20_000,
         require_breakout_high=True,
+        near_miss_limit=0,
     )
     breakout_output = "\n".join(breakout_chunks)
     assert "/CAPUSDT | RAVE-like" in breakout_output
@@ -1924,6 +1931,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
         min_archetype=0,
         min_tokens=20_000,
         require_whale_origin_flow=True,
+        near_miss_limit=0,
     )
     whale_flow_output = "\n".join(whale_flow_chunks)
     assert "Whale-origin CEX required: True" in whale_flow_output
