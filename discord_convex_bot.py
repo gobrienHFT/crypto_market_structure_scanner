@@ -13,7 +13,13 @@ import requests
 
 from archetype_scoring import apply_archetype_model
 from binance_futures import BinanceFuturesPublic
-from cex_flow_scanner import TOKEN_TRANSFER_API_CONFIGS, build_cex_flow_discord_block, load_cex_address_book, token_transfer_api_key_envs
+from cex_flow_scanner import (
+    TOKEN_TRANSFER_API_CONFIGS,
+    build_cex_flow_discord_block,
+    is_qualified_whale_sender,
+    load_cex_address_book,
+    token_transfer_api_key_envs,
+)
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
     DISCORD_FOOTER,
@@ -128,6 +134,16 @@ def _safe_pct(value: Any) -> float | None:
         return None
     if parsed != 0.0 and abs(parsed) <= 1.0:
         return parsed * 100.0
+    return parsed
+
+
+def _safe_holder_pct(value: Any) -> float | None:
+    try:
+        parsed = float(str(value).replace(",", "").replace("%", "").strip())
+    except Exception:
+        return None
+    if pd.isna(parsed):
+        return None
     return parsed
 
 
@@ -463,14 +479,14 @@ def _cex_attempt_amount_text(row: pd.Series, *, min_transfer_tokens: float | Non
 
 def _whale_sender_text(row: pd.Series, *, include_amount: bool = False) -> str:
     count = int(_safe_float(row.get("cex_deposit_24h_whale_sender_count")) or 0)
-    if count <= 0:
+    if count <= 0 or not _whale_sender_qualifies(row):
         return ""
     parts = [f"{count} top-holder sender tx"]
     amount = _safe_float(row.get("cex_deposit_24h_whale_sender_token_amount"))
     if include_amount and amount is not None and amount > 0:
         parts.append(f"whale-origin {_fmt_compact_number(amount)}")
     rank = _safe_float(row.get("cex_deposit_24h_top_sender_rank"))
-    pct = _safe_pct(row.get("cex_deposit_24h_top_sender_pct"))
+    pct = _safe_holder_pct(row.get("cex_deposit_24h_top_sender_pct"))
     address = _short_contract_text(row.get("cex_deposit_24h_top_sender_address", ""))
     detail: list[str] = []
     if rank is not None and rank > 0:
@@ -482,6 +498,16 @@ def _whale_sender_text(row: pd.Series, *, include_amount: bool = False) -> str:
     if detail:
         parts.append(" ".join(detail))
     return " | ".join(parts)
+
+
+def _whale_sender_qualifies(row: pd.Series) -> bool:
+    count = int(_safe_float(row.get("cex_deposit_24h_whale_sender_count")) or 0)
+    if count <= 0:
+        return False
+    return is_qualified_whale_sender(
+        row.get("cex_deposit_24h_top_sender_rank"),
+        row.get("cex_deposit_24h_top_sender_pct"),
+    )
 
 
 def _cex_flow_attempt_symbol_lines(
@@ -3363,8 +3389,10 @@ def _ravelab_apply_thesis_columns(
     breakout_any = _boolish_series(output.get("_ravelab_breakout_any"), index=index)
     squeeze_gate = _ravelab_squeeze_gate_series(output, min_squeeze_score=min_squeeze_score)
     transfer_floor = max(0.0, float(min_transfer_tokens or 0.0))
+    qualified_whale_sender = output.apply(_whale_sender_qualifies, axis=1).astype(bool)
     whale_origin_flow = (
-        _num_series(output, "cex_deposit_24h_whale_sender_count").gt(0.0)
+        qualified_whale_sender
+        & _num_series(output, "cex_deposit_24h_whale_sender_count").gt(0.0)
         & _num_series(output, "cex_deposit_24h_count").gt(0.0)
         & _num_series(output, "cex_deposit_24h_whale_sender_token_amount").ge(transfer_floor)
         & target_flow

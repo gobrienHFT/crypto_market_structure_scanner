@@ -57,6 +57,10 @@ CEX_DEPOSIT_FLOW_COLUMNS = [
 ]
 
 
+WHALE_SENDER_MAX_RANK = 10
+WHALE_SENDER_MIN_PCT = 1.0
+
+
 CEX_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("binance", "Binance"),
     ("bitget", "Bitget"),
@@ -150,8 +154,27 @@ def _pct_value(value: Any) -> float | None:
     return parsed
 
 
+def _holder_pct_value(value: Any) -> float | None:
+    return _safe_float(value)
+
+
+def is_qualified_whale_sender(rank: Any, pct: Any) -> bool:
+    rank_value = _safe_float(rank)
+    pct_value = _holder_pct_value(pct)
+    if pct_value is not None and pct_value >= WHALE_SENDER_MIN_PCT:
+        return True
+    if rank_value is not None and 0 < rank_value <= WHALE_SENDER_MAX_RANK:
+        return pct_value is None or pct_value > 0.0
+    return False
+
+
 def _fmt_pct(value: Any) -> str:
     parsed = _pct_value(value)
+    return "n/a" if parsed is None else f"{parsed:.1f}%"
+
+
+def _fmt_holder_pct(value: Any) -> str:
+    parsed = _holder_pct_value(value)
     return "n/a" if parsed is None else f"{parsed:.1f}%"
 
 
@@ -764,10 +787,15 @@ def _sender_holder_evidence(
         holder = holders_by_address.get(address)
         if holder is None:
             continue
+        rank_value = _safe_float(getattr(holder, "rank", math.nan))
+        rank = int(rank_value) if rank_value is not None and rank_value > 0 else 0
+        pct = _holder_pct_value(getattr(holder, "percent", math.nan))
+        if not is_qualified_whale_sender(rank, pct):
+            continue
         enriched = dict(item)
         enriched["_sender_address"] = address
-        enriched["_sender_rank"] = int(getattr(holder, "rank", 0) or 0)
-        enriched["_sender_pct"] = _pct_value(getattr(holder, "percent", math.nan))
+        enriched["_sender_rank"] = rank
+        enriched["_sender_pct"] = pct
         whale_rows.append(enriched)
 
     if not whale_rows:
@@ -825,7 +853,7 @@ def build_cex_flow_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     whale_sender_count = int(_safe_float(_row_value(row, "cex_deposit_24h_whale_sender_count", 0)) or 0)
     whale_sender_amount = _safe_float(_row_value(row, "cex_deposit_24h_whale_sender_token_amount", 0.0)) or 0.0
     whale_sender_rank = _safe_float(_row_value(row, "cex_deposit_24h_top_sender_rank", math.nan))
-    whale_sender_pct = _pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
+    whale_sender_pct = _holder_pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
     whale_sender_address = _short_address(_row_value(row, "cex_deposit_24h_top_sender_address", ""))
     inventory_note = _clean_text(_row_value(row, "cex_deposit_inventory_stress_note", ""))
     pct_parts: list[str] = []
@@ -844,7 +872,7 @@ def build_cex_flow_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
         if whale_sender_rank is not None and whale_sender_rank > 0:
             detail_parts.append(f"rank {int(whale_sender_rank)}")
         if whale_sender_pct is not None:
-            detail_parts.append(_fmt_pct(whale_sender_pct))
+            detail_parts.append(_fmt_holder_pct(whale_sender_pct))
         if whale_sender_address:
             detail_parts.append(whale_sender_address)
         if detail_parts:
@@ -887,7 +915,7 @@ def build_cex_flow_alert_line(row: Mapping[str, Any] | pd.Series) -> str:
     inventory_stress = _safe_float(_row_value(row, "cex_deposit_inventory_stress_score", 0.0)) or 0.0
     whale_sender_count = int(_safe_float(_row_value(row, "cex_deposit_24h_whale_sender_count", 0)) or 0)
     whale_sender_rank = _safe_float(_row_value(row, "cex_deposit_24h_top_sender_rank", math.nan))
-    whale_sender_pct = _pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
+    whale_sender_pct = _holder_pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
     pct_text = f" | {total_pct:.2f}% supply" if total_pct is not None else ""
     stress_text = f" | inventory stress {inventory_stress:.0f}" if inventory_stress > 0.0 else ""
     whale_text = ""
@@ -896,7 +924,7 @@ def build_cex_flow_alert_line(row: Mapping[str, Any] | pd.Series) -> str:
         if whale_sender_rank is not None and whale_sender_rank > 0:
             whale_parts.append(f"r{int(whale_sender_rank)}")
         if whale_sender_pct is not None:
-            whale_parts.append(_fmt_pct(whale_sender_pct))
+            whale_parts.append(_fmt_holder_pct(whale_sender_pct))
         whale_text = f" | {' '.join(whale_parts)}"
     return f"{symbol} | flow {score:.0f}/100 | {risk} | {count} tx | {targets} | total {total_amount}{pct_text}{stress_text}{whale_text}"
 
@@ -964,7 +992,7 @@ def _apply_flow_rows_to_result(
     targets = sorted({str(item["exchange"]) for item in rows if item.get("exchange")})
     sender_evidence = _sender_holder_evidence(rows, composition)
     whale_sender_count = int(_safe_float(sender_evidence.get("cex_deposit_24h_whale_sender_count", 0)) or 0)
-    whale_sender_pct = _pct_value(sender_evidence.get("cex_deposit_24h_top_sender_pct"))
+    whale_sender_pct = _holder_pct_value(sender_evidence.get("cex_deposit_24h_top_sender_pct"))
     score = _flow_score(
         count=len(rows),
         total_pct_supply=total_pct_supply,

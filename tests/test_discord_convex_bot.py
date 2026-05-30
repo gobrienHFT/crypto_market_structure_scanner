@@ -2415,6 +2415,8 @@ def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
             "cex_deposit_24h_max_amount": amount,
             "cex_deposit_24h_whale_sender_count": 1,
             "cex_deposit_24h_whale_sender_token_amount": amount,
+            "cex_deposit_24h_top_sender_rank": 1,
+            "cex_deposit_24h_top_sender_pct": 91.0,
             "cex_deposit_24h_target_exchanges": "Binance, Gate.io",
             "cex_deposit_inventory_stress_score": 96,
             "inventory_transfer_risk_score": 94,
@@ -2476,6 +2478,45 @@ def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
     assert "Trigger lanes before filter: triggered 1 | whale-CEX 1 | target-CEX 1" in output
     assert "/BIGFLOWUSDT" in output
     assert "/LOWFLOWUSDT" not in output
+
+
+def test_ravelab_whale_origin_flow_requires_qualified_top_holder_sender() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "TINYTOP100USDT",
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": True,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 62.0,
+                "short_account_pct": 54.0,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 2_000_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 2_000_000,
+                "cex_deposit_24h_top_sender_rank": 25,
+                "cex_deposit_24h_top_sender_pct": 0.2,
+                "cex_deposit_24h_target_exchanges": "Binance",
+            }
+        ]
+    )
+
+    scored = bot._ravelab_apply_thesis_columns(frame, min_squeeze_score=50.0, min_transfer_tokens=20_000)
+    row = scored.iloc[0]
+
+    assert bool(row["_ravelab_target_flow"])
+    assert not bool(row["_ravelab_whale_origin_flow"])
+    assert row["_ravelab_state"] == "A1 CORE PRIME"
+    assert bot._ravelab_trigger_text(row) == "target-CEX Binance 2.00M"
+    assert bot._whale_sender_text(row, include_amount=True) == ""
 
 
 def test_ravelab_exhaustion_blocks_core_prime() -> None:

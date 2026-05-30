@@ -53,6 +53,13 @@ class _ApiResponse:
         return self._payload
 
 
+def test_qualified_whale_sender_requires_top10_or_one_pct_holder() -> None:
+    assert cex.is_qualified_whale_sender(1, 91.0)
+    assert cex.is_qualified_whale_sender(25, 1.2)
+    assert not cex.is_qualified_whale_sender(5, 0.0)
+    assert not cex.is_qualified_whale_sender(11, 0.5)
+
+
 def test_scan_cex_deposit_flow_scores_only_recent_deposits_after_concentration_gate(monkeypatch) -> None:
     monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
     monkeypatch.setattr(cex.requests, "get", lambda *args, **kwargs: _Response())
@@ -154,6 +161,63 @@ def test_scan_cex_deposit_flow_falls_back_to_token_transfer_api_after_403(monkey
     assert "1 top-holder sender tx r1 91.0%" in result["cex_deposit_flow_alert_line"]
     assert "api.etherscan.io/v2/api" in result["cex_deposit_24h_source_url"]
     assert "chainid=8453" in result["cex_deposit_24h_source_url"]
+
+
+def test_scan_cex_deposit_flow_does_not_call_tiny_top100_sender_whale_origin(monkeypatch) -> None:
+    deposit_address = "0x9999999999999999999999999999999999999999"
+    monkeypatch.setenv("CEX_ADDRESS_LABELS", f"base:{deposit_address}=Bitget Deposit")
+    monkeypatch.setattr(
+        cex,
+        "fetch_holder_composition",
+        lambda *args, **kwargs: _composition(top10_pct=90.0, top100_pct=90.5),
+    )
+    now = pd.Timestamp.utcnow().timestamp()
+
+    def fake_get(url, **_kwargs):
+        if "advanced-filter" in str(url):
+            response = _ApiResponse({})
+            response.status_code = 403
+            return response
+        return _ApiResponse(
+            {
+                "status": "1",
+                "message": "OK",
+                "result": [
+                    {
+                        "hash": "0xapi",
+                        "timeStamp": str(int(now - 60 * 60)),
+                        "from": "0x2222222222222222222222222222222222222222",
+                        "to": deposit_address,
+                        "value": str(1_500_000 * 10**18),
+                        "tokenDecimal": "18",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(cex.requests, "get", fake_get)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "PLAYUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+            "last_price": 0.20,
+            "quote_volume_24h": 2_000_000,
+            "ask_depth_1pct_usdt": 100_000,
+        },
+        min_transfer_tokens=500_000,
+    )
+
+    assert result["cex_deposit_flow_flag"] is True
+    assert result["cex_deposit_24h_count"] == 1
+    assert result["cex_deposit_24h_token_amount"] == 1_500_000
+    assert result["cex_deposit_24h_target_exchanges"] == "Bitget"
+    assert result["cex_deposit_24h_whale_sender_count"] == 0
+    assert result["cex_deposit_24h_whale_sender_token_amount"] == 0.0
+    assert "Top-holder sender evidence" not in result["cex_deposit_flow_note"]
+    assert "top-holder sender tx" not in result["cex_deposit_flow_evidence_summary"]
+    assert "whale-origin" not in result["cex_deposit_flow_alert_line"]
 
 
 def test_scan_cex_deposit_flow_falls_back_when_explorer_returns_bot_check_page(monkeypatch) -> None:
