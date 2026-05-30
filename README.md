@@ -229,9 +229,9 @@ Supported commands include:
 /terminal
 /timing
 /corr [threshold] [limit]
-/cexflow [min_tokens] [limit] [lookback_hours] [require_venue_gate]
-/cexdiag [min_tokens] [lookback_hours] [require_venue_gate] [symbol_limit]
-/earlyflow [min_tokens] [limit] [lookback_hours] [require_venue_gate]
+/cexflow [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_venue_gate]
+/cexdiag [min_tokens] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_venue_gate] [symbol_limit]
+/earlyflow [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_venue_gate]
 /flowcoin <symbol> [min_tokens] [lookback_hours]
 /flowstress [min_tokens] [limit] [lookback_hours] [require_venue_gate]
 /flowblocked [min_tokens] [limit] [lookback_hours]

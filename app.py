@@ -3068,8 +3068,8 @@ CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS = _parse_env_float(
     minimum=0.0,
 )
 CEX_DEPOSIT_FLOW_MIN_TOP10_PCT = _parse_env_float(
-    _env_value("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", default="80"),
-    default=80.0,
+    _env_value("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", default="90"),
+    default=90.0,
     minimum=0.0,
 )
 CEX_DEPOSIT_FLOW_MIN_TOP100_PCT = _parse_env_float(

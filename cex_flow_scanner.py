@@ -1019,7 +1019,7 @@ def scan_cex_deposit_flow(
     max_holders: int = 100,
     lookback_hours: int = 24,
     min_transfer_tokens: float = 500_000.0,
-    min_top10_pct: float = 80.0,
+    min_top10_pct: float = 90.0,
     min_top100_pct: float = 90.0,
 ) -> dict[str, Any]:
     hint = resolve_contract_hint(row, hints_path=hints_path)
@@ -1180,7 +1180,7 @@ def enrich_cex_deposit_flows(
     max_holders: int = 100,
     lookback_hours: int = 24,
     min_transfer_tokens: float = 500_000.0,
-    min_top10_pct: float = 80.0,
+    min_top10_pct: float = 90.0,
     min_top100_pct: float = 90.0,
 ) -> pd.DataFrame:
     output = frame.copy()

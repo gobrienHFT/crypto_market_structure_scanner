@@ -337,8 +337,8 @@ def _holder_composition_text(row: pd.Series) -> str:
 def _cex_flow_scan_diagnostic_lines(
     frame: pd.DataFrame,
     *,
-    min_top10: float,
-    min_top100: float,
+    min_whale_pct: float,
+    require_holder_evidence: bool = True,
 ) -> list[str]:
     if frame.empty:
         return ["Coverage: scan rows 0 | contract hints 0 | CEX-flow attempts 0 | raw flow 0"]
@@ -347,6 +347,8 @@ def _cex_flow_scan_diagnostic_lines(
     hint_count = 0
     precomputed_gate_count = 0
     precomputed_concentration_rows = 0
+    holder_evidence_mask, _ = _strict_holder_evidence_masks(frame)
+    holder_evidence_count = int(holder_evidence_mask.sum())
     for _, row in frame.iterrows():
         row_dict = row.to_dict()
         try:
@@ -359,7 +361,8 @@ def _cex_flow_scan_diagnostic_lines(
         top100 = _safe_pct(row.get("top100_holder_pct"))
         if top10 is not None or top100 is not None:
             precomputed_concentration_rows += 1
-        if (top10 is not None and top10 >= min_top10) or (top100 is not None and top100 >= min_top100):
+        whale_pct = max([value for value in (top10, top100) if value is not None] or [0.0])
+        if whale_pct >= float(min_whale_pct):
             precomputed_gate_count += 1
 
     score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
@@ -384,7 +387,8 @@ def _cex_flow_scan_diagnostic_lines(
     lines = [
         (
             f"Coverage: scan rows {len(frame)} | contract hints {hint_count} | "
-            f"precomputed concentration rows {precomputed_concentration_rows} | precomputed gate pass {precomputed_gate_count}"
+            f"precomputed concentration rows {precomputed_concentration_rows} | observed >= {float(min_whale_pct):.1f}% rows {precomputed_gate_count} | "
+            f"holder evidence rows {holder_evidence_count} | strict holder gate pass {int(_strict_cex_holder_gate_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=require_holder_evidence).sum())}"
         ),
         (
             f"CEX-flow attempts {attempt_count}"
@@ -1929,6 +1933,8 @@ def _load_cex_flow_list(
     *,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
+    min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
     require_venue_gate: bool = True,
     title_prefix: str = "Wallet-to-CEX flow monitor",
 ) -> tuple[str, list[str]]:
@@ -1955,12 +1961,12 @@ def _load_cex_flow_list(
         frame = _read_csv_if_exists(_cache_path())
         source = "latest Convex cache fallback"
 
-    min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
-    min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
+    effective_min_whale_pct = max(0.0, float(min_whale_pct))
     header = (
         f"{title_prefix}\n"
         "The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.\n"
-        f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
+        f"Source: {source} | Holder gate: observed holder >= {effective_min_whale_pct:.1f}% | "
+        f"Holder evidence required: {require_holder_evidence} | "
         f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback:.0f}h | "
         f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
@@ -1973,19 +1979,31 @@ def _load_cex_flow_list(
     flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
     raw_flow = frame[flag | score.gt(0.0)].copy()
     raw_flow_count = len(raw_flow)
-    flow = apply_bitget_gate_venue_gate(raw_flow, allow_cex_flow_targets=True) if require_venue_gate else raw_flow.copy()
-    header += f"\nFlow rows before venue gate: {raw_flow_count} | After venue gate: {len(flow)}"
+    strict_flow = raw_flow[
+        _strict_cex_holder_gate_mask(
+            raw_flow,
+            min_whale_pct=effective_min_whale_pct,
+            require_holder_evidence=require_holder_evidence,
+        )
+    ].copy()
+    flow = apply_bitget_gate_venue_gate(strict_flow, allow_cex_flow_targets=True) if require_venue_gate else strict_flow.copy()
+    header += f"\nFlow rows before holder gate: {raw_flow_count} | After holder gate: {len(strict_flow)} | After venue gate: {len(flow)}"
     diagnostic_lines = _cex_flow_scan_diagnostic_lines(
         frame,
-        min_top10=min_top10,
-        min_top100=min_top100,
+        min_whale_pct=effective_min_whale_pct,
+        require_holder_evidence=require_holder_evidence,
     )
     diagnostic_text = "\n".join(diagnostic_lines)
     header += "\n" + diagnostic_text
     if flow.empty:
-        if raw_flow_count > 0 and require_venue_gate:
+        if raw_flow_count > 0 and strict_flow.empty:
             message = (
-                "Concentration-gated CEX transfer flow was found, but none of those rows also met the Bitget/Gate venue gate. "
+                "Verified labelled CEX transfer rows exist, but none cleared the strict holder gate for this command. "
+                "Use `require_holder_evidence:false` only to diagnose missing holder-source coverage."
+            )
+        elif raw_flow_count > 0 and require_venue_gate:
+            message = (
+                "Strict holder-gated CEX transfer flow was found, but none of those rows also met the Bitget/Gate venue gate. "
                 "Retry with `require_venue_gate:false` to inspect all labelled CEX-flow rows."
             )
         elif "explorer blocked" in diagnostic_text.lower():
@@ -2037,6 +2055,8 @@ def _load_cex_flow_diagnostics(
     *,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
+    min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
     require_venue_gate: bool = True,
     symbol_limit: int = 15,
 ) -> tuple[str, str]:
@@ -2063,11 +2083,11 @@ def _load_cex_flow_diagnostics(
         frame = _read_csv_if_exists(_cache_path())
         source = "latest Convex cache fallback"
 
-    min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
-    min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
+    effective_min_whale_pct = max(0.0, float(min_whale_pct))
     header = (
         "CEX-flow scan diagnostics\n"
-        f"Source: {source} | Gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
+        f"Source: {source} | Holder gate: observed holder >= {effective_min_whale_pct:.1f}% | "
+        f"Holder evidence required: {require_holder_evidence} | "
         f"Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback:.0f}h | "
         f"{bitget_gate_venue_header(allow_cex_flow_targets=True) if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
@@ -2079,11 +2099,22 @@ def _load_cex_flow_diagnostics(
     score = pd.to_numeric(frame.get("cex_deposit_flow_score", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
     flag = _boolish_series(frame.get("cex_deposit_flow_flag", pd.Series(False, index=frame.index)), index=frame.index)
     raw_flow = frame[flag | score.gt(0.0)].copy()
-    flow = apply_bitget_gate_venue_gate(raw_flow, allow_cex_flow_targets=True) if require_venue_gate else raw_flow.copy()
+    strict_flow = raw_flow[
+        _strict_cex_holder_gate_mask(
+            raw_flow,
+            min_whale_pct=effective_min_whale_pct,
+            require_holder_evidence=require_holder_evidence,
+        )
+    ].copy()
+    flow = apply_bitget_gate_venue_gate(strict_flow, allow_cex_flow_targets=True) if require_venue_gate else strict_flow.copy()
     lines = [
         header,
-        f"Flow rows before venue gate: {len(raw_flow)} | After venue gate: {len(flow)}",
-        *_cex_flow_scan_diagnostic_lines(frame, min_top10=min_top10, min_top100=min_top100),
+        f"Flow rows before holder gate: {len(raw_flow)} | After holder gate: {len(strict_flow)} | After venue gate: {len(flow)}",
+        *_cex_flow_scan_diagnostic_lines(
+            frame,
+            min_whale_pct=effective_min_whale_pct,
+            require_holder_evidence=require_holder_evidence,
+        ),
         "",
         *_cex_flow_attempt_symbol_lines(
             frame,
@@ -2104,6 +2135,8 @@ def _load_early_flow_list(
     *,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
+    min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
     require_venue_gate: bool = True,
 ) -> tuple[str, list[str]]:
     default_min = _env_float("DISCORD_EARLY_FLOW_MIN_TOKENS", 20_000.0, minimum=0.0)
@@ -2111,6 +2144,8 @@ def _load_early_flow_list(
         limit,
         min_tokens=default_min if min_tokens is None else min_tokens,
         lookback_hours=lookback_hours,
+        min_whale_pct=min_whale_pct,
+        require_holder_evidence=require_holder_evidence,
         require_venue_gate=require_venue_gate,
         title_prefix="Early wallet-to-CEX flow sweep",
     )
@@ -2393,6 +2428,24 @@ def _strict_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Se
     holder_count = _num_series(frame, "holder_count", default=0.0).gt(0.0)
     evidence_mask = chain_mask & contract_mask & (source_mask | holder_count)
     return evidence_mask.fillna(False), contract_mask.fillna(False)
+
+
+def _strict_cex_holder_gate_mask(
+    frame: pd.DataFrame,
+    *,
+    min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
+) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    top10 = _safe_pct_series(frame, "top10_holder_pct").fillna(0.0)
+    top100 = _safe_pct_series(frame, "top100_holder_pct").fillna(0.0)
+    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
+    gate = whale_pct.ge(float(min_whale_pct))
+    if require_holder_evidence:
+        holder_evidence_mask, _ = _strict_holder_evidence_masks(frame)
+        gate = gate & holder_evidence_mask
+    return gate.fillna(False)
 
 
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
@@ -5098,6 +5151,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per transfer, for example 20000.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
+        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the holder gate.",
         require_venue_gate="Require Binance perp plus Bitget/Gate venue support. Disable for raw CEX-flow sweep.",
     )
     async def cexflow(
@@ -5105,6 +5160,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens: float = 0.0,
         limit: int = default_cexflow_top_n,
         lookback_hours: int = 24,
+        min_whale_pct: float = 90.0,
+        require_holder_evidence: bool = True,
         require_venue_gate: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
@@ -5119,6 +5176,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min(max(int(limit), 1), 100),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_holder_evidence=require_holder_evidence,
             require_venue_gate=require_venue_gate,
         )
         if not chunks:
@@ -5137,6 +5196,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         min_tokens="Minimum token amount per transfer, for example 1000.",
         lookback_hours="Transfer lookback window in hours.",
+        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the holder gate.",
         require_venue_gate="Show how many raw CEX-flow rows survive the Binance/Bitget/Gate venue gate.",
         symbol_limit="How many attempted symbols to list.",
     )
@@ -5144,6 +5205,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         interaction: discord.Interaction,
         min_tokens: float = 0.0,
         lookback_hours: int = 24,
+        min_whale_pct: float = 90.0,
+        require_holder_evidence: bool = True,
         require_venue_gate: bool = True,
         symbol_limit: int = 15,
     ) -> None:
@@ -5158,6 +5221,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             _load_cex_flow_diagnostics,
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_holder_evidence=require_holder_evidence,
             require_venue_gate=require_venue_gate,
             symbol_limit=min(max(int(symbol_limit), 1), 50),
         )
@@ -5174,6 +5239,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per transfer. Defaults to DISCORD_EARLY_FLOW_MIN_TOKENS or 20000.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
+        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the holder gate.",
         require_venue_gate="Require Binance perp plus Bitget/Gate venue support. Disable for raw early-flow sweep.",
     )
     async def earlyflow(
@@ -5181,6 +5248,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens: float = 0.0,
         limit: int = default_cexflow_top_n,
         lookback_hours: int = 24,
+        min_whale_pct: float = 90.0,
+        require_holder_evidence: bool = True,
         require_venue_gate: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
@@ -5195,6 +5264,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min(max(int(limit), 1), 100),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_holder_evidence=require_holder_evidence,
             require_venue_gate=require_venue_gate,
         )
         if not chunks:

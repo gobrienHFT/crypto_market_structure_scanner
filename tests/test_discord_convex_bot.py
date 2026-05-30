@@ -362,7 +362,7 @@ def test_load_whale_dominance_list_computes_top100_when_scan_columns_missing(mon
             },
             {
                 "symbol": "LOWUSDT",
-                "token_platform": "base",
+                "token_platform": "bsc",
                 "token_contract": "0x2222222222222222222222222222222222222222",
                 "short_account_pct": 55.0,
                 "scan_mode": "Deep",
@@ -766,6 +766,12 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
                 "cex_deposit_24h_target_exchanges": "Bitget, Kraken",
                 "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
                 "cex_deposit_flow_note": "concentration-gated CEX deposit flow",
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 6_000,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -793,7 +799,9 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert title == "Wallet-to-CEX flow monitor"
     assert "Wallet-to-CEX flow monitor" in output
     assert "Min transfer: 20.00K tokens" in output
-    assert "Flow rows before venue gate: 1 | After venue gate: 1" in output
+    assert "Holder gate: observed holder >= 90.0%" in output
+    assert "Holder evidence required: True" in output
+    assert "Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1" in output
     assert "Candidates: /PLAYUSDT" in output
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
@@ -819,6 +827,12 @@ def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
                 "cex_deposit_24h_max_amount": 25_000,
                 "cex_deposit_24h_target_exchanges": "Gate",
                 "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "token_platform": "bsc",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "BscScan holder endpoint",
+                "holder_count": 4_000,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
                 "gate_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -855,6 +869,12 @@ def test_load_cex_flow_list_can_disable_venue_gate(monkeypatch) -> None:
                 "cex_deposit_24h_max_amount": 1_500,
                 "cex_deposit_24h_target_exchanges": "Kraken",
                 "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+                "token_platform": "ethereum",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 3_000,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             }
@@ -868,7 +888,7 @@ def test_load_cex_flow_list_can_disable_venue_gate(monkeypatch) -> None:
     ungated_output = "\n".join(ungated_chunks)
 
     assert gated_title == "Wallet-to-CEX flow monitor"
-    assert "Flow rows before venue gate: 1 | After venue gate: 0" in gated_output
+    assert "Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 0" in gated_output
     assert "require_venue_gate:false" in gated_output
     assert ungated_title == "Wallet-to-CEX flow monitor"
     assert "Venue gate: disabled for this command" in ungated_output
@@ -884,6 +904,8 @@ def test_load_cex_flow_list_explains_zero_raw_flow(monkeypatch) -> None:
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 96.0,
+                "holder_source": "BscScan holder endpoint",
+                "holder_count": 1_000,
                 "cex_deposit_flow_score": 0,
                 "cex_deposit_flow_flag": False,
                 "cex_deposit_concentration_gate": "top10 91.0% / top100 96.0%",
@@ -906,9 +928,10 @@ def test_load_cex_flow_list_explains_zero_raw_flow(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert title == "Wallet-to-CEX flow monitor"
-    assert "Flow rows before venue gate: 0 | After venue gate: 0" in output
+    assert "Flow rows before holder gate: 0 | After holder gate: 0 | After venue gate: 0" in output
     assert "Coverage: scan rows 2 | contract hints 1" in output
-    assert "precomputed concentration rows 1 | precomputed gate pass 1" in output
+    assert "precomputed concentration rows 1 | observed >= 90.0% rows 1" in output
+    assert "holder evidence rows 1 | strict holder gate pass 1" in output
     assert "CEX-flow attempts 1" in output
     assert "errors 1 | raw flow 0" in output
     assert "Status: explorer blocked 1 CEX-flow attempts with HTTP 403; API fallback/label coverage decides" in output
@@ -924,10 +947,12 @@ def test_load_cex_flow_diagnostics_reports_bottlenecks(monkeypatch) -> None:
         [
             {
                 "symbol": "EMPTYUSDT",
-                "token_platform": "base",
+                "token_platform": "bsc",
                 "token_contract": "0x2222222222222222222222222222222222222222",
                 "top10_holder_pct": 92.0,
                 "top100_holder_pct": 97.0,
+                "holder_source": "BscScan holder endpoint",
+                "holder_count": 2_000,
                 "cex_deposit_flow_score": 0,
                 "cex_deposit_flow_flag": False,
                 "cex_deposit_concentration_gate": "top10 92.0% / top100 97.0%",
@@ -951,6 +976,8 @@ def test_load_cex_flow_diagnostics_reports_bottlenecks(monkeypatch) -> None:
     assert "Min transfer: 1.00K tokens | Lookback: 48h" in description
     assert "Venue gate: disabled for this command" in description
     assert "Coverage: scan rows 1 | contract hints 1" in description
+    assert "observed >= 90.0% rows 1" in description
+    assert "holder evidence rows 1 | strict holder gate pass 1" in description
     assert "no-transfer rows 1" in description
     assert "Attempted symbols (not confirmed transfers unless status starts FLOW):" in description
     assert "/EMPTYUSDT | checked: no labelled CEX transfer met threshold/lookback" in description
@@ -970,6 +997,8 @@ def test_load_cex_flow_diagnostics_lists_blocked_symbols(monkeypatch) -> None:
                 "token_contract": "0x3333333333333333333333333333333333333333",
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 96.0,
+                "holder_source": "BscScan holder endpoint",
+                "holder_count": 3_000,
                 "cex_deposit_flow_score": 0,
                 "cex_deposit_flow_flag": False,
                 "cex_deposit_concentration_gate": "top10 91.0% / top100 96.0%",
@@ -980,10 +1009,12 @@ def test_load_cex_flow_diagnostics_lists_blocked_symbols(monkeypatch) -> None:
             },
             {
                 "symbol": "FLOWUSDT",
-                "token_platform": "base",
+                "token_platform": "arbitrum",
                 "token_contract": "0x4444444444444444444444444444444444444444",
                 "top10_holder_pct": 92.0,
                 "top100_holder_pct": 97.0,
+                "holder_source": "Arbiscan holder endpoint",
+                "holder_count": 4_000,
                 "cex_deposit_flow_score": 67,
                 "cex_deposit_flow_flag": True,
                 "cex_deposit_24h_count": 2,
@@ -1907,6 +1938,10 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
     assert "venues Bn N/Bg N/Gate N" in output
     assert "needs 42d history" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
+
+
+def test_clip_text_treats_pandas_na_as_empty_text() -> None:
+    assert bot._clip_text(pd.NA, 12) == ""
 
 
 def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypatch) -> None:

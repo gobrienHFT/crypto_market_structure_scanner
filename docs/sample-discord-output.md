@@ -199,10 +199,10 @@ Principle: small losses; stay exposed only while structure remains intact
 ```text
 Wallet-to-CEX flow monitor
 The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.
-Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | CEX min transfer 20000 tokens | Gate: top10 >= 80% or top100 >= 90% | Min transfer: 20.00K tokens | Lookback: 24h
+Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h
 Venue gate: Binance perp + Bitget/Gate venue support (any visible share or Bitget/Gate transfer target)
-Flow rows before venue gate: 1 | After venue gate: 1
-Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | precomputed gate pass 12
+Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
+Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
 Status: verified labelled CEX-flow rows exist; venue gate decides whether they appear in `/cexflow`.
 
@@ -221,9 +221,9 @@ Source: https://api.etherscan.io/v2/api?chainid=8453&module=account&action=token
 
 ```text
 CEX-flow scan diagnostics
-Source: fresh Deep scan at 2026-05-16 15:42:00 UTC | CEX min transfer 1000 tokens | Gate: top10 >= 80% or top100 >= 90% | Min transfer: 1.00K tokens | Lookback: 24h | Venue gate: disabled for this command
-Flow rows before venue gate: 0 | After venue gate: 0
-Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | precomputed gate pass 12
+Source: fresh Deep scan at 2026-05-16 15:42:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 1.00K tokens | Lookback: 24h | Venue gate: disabled for this command
+Flow rows before holder gate: 0 | After holder gate: 0 | After venue gate: 0
+Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 9 | gate-not-met rows 0 | errors 3 | raw flow 0
 Status: explorer blocked 2 CEX-flow attempts with HTTP 403; API fallback/label coverage decides whether zero raw flow is conclusive.
 Top CEX-flow errors: advanced filter HTTP 403; token-transfer API fallback found no labelled CEX destination matches x2; holder composition failed: timeout x1
@@ -247,10 +247,10 @@ Use `/flowcoin symbol:<symbol>` for single-coin detail/query URL and `/flowhealt
 ```text
 Early wallet-to-CEX flow sweep
 The highest-signal read is concentrated holder inventory moving into labelled exchange wallets.
-Source: fresh Deep scan at 2026-05-16 15:45:00 UTC | CEX min transfer 20000 tokens | Gate: top10 >= 80% or top100 >= 90% | Min transfer: 20.00K tokens | Lookback: 24h
+Source: fresh Deep scan at 2026-05-16 15:45:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h
 Venue gate: Binance perp + Bitget/Gate venue support (any visible share or Bitget/Gate transfer target)
-Flow rows before venue gate: 1 | After venue gate: 1
-Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | precomputed gate pass 12
+Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
+Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
 Status: verified labelled CEX-flow rows exist; venue gate decides whether they appear in `/cexflow`.
 
@@ -293,9 +293,9 @@ Read: these are data-source failures or no labelled API matches, not proof that 
 
 ```text
 CEX-flow scan diagnostics
-Source: fresh Deep scan at 2026-05-16 15:49:00 UTC | CEX min transfer 20000 tokens | Gate: top10 >= 80% or top100 >= 90% | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: disabled for this command
-Flow rows before venue gate: 1 | After venue gate: 1
-Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | precomputed gate pass 12
+Source: fresh Deep scan at 2026-05-16 15:49:00 UTC | Holder gate: observed holder >= 90.0% | Holder evidence required: True | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: disabled for this command
+Flow rows before holder gate: 1 | After holder gate: 1 | After venue gate: 1
+Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 2 | raw flow 1
 CEX-flow source paths: token_transfer_api x1; advanced_filter_blocked_api_fallback x2
 
