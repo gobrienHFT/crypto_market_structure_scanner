@@ -1739,6 +1739,31 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
+            {
+                "symbol": "MISSINGPUMPUSDT",
+                "history_days": 180,
+                "token_platform": "ethereum",
+                "token_contract": "0x5555555555555555555555555555555555555555",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "holder_count": 9_000,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 85.0,
+                "binance_volume_share_pct": 12.0,
+                "bitget_volume_share_pct": 2.0,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
@@ -1749,11 +1774,14 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
 
         def klines_1d(self, symbol: str, limit: int = 200, **kwargs):
             if symbol == "CAPUSDT":
-                closed = [[0, 0, high, 1, 0] for high in range(1, max(limit, 2))]
-                return [*closed, [0, 0, 100, 1, 0]]
+                closed = [[0, 100, 100 + (idx % 6), 98, 100] for idx in range(max(limit - 1, 1))]
+                return [*closed, [0, 100, 110, 98, 108]]
             if symbol == "LABXUSDT":
-                closed = [[0, 0, 100, 1, 0] for _ in range(max(limit - 1, 1))]
-                return [*closed, [0, 0, 50, 1, 0]]
+                closed = [[0, 100, 102, 98, 100] for _ in range(max(limit - 1, 1))]
+                return [*closed, [0, 50, 50, 49, 50]]
+            if symbol in {"PCTONLYUSDT", "COUNTONLYUSDT", "TARGETONLYUSDT", "YOUNGUSDT"}:
+                closed = [[0, 100, 102, 98, 100] for _ in range(max(limit - 1, 1))]
+                return [*closed, [0, 100, 101, 99, 100]]
             return []
 
     monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
@@ -1768,12 +1796,14 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Max recent pump: < 35% over 60d" in output
     assert "Holder evidence required: True" in output
     assert "Whale-origin CEX required: False" in output
+    assert "No-pump proof: requires 60D closed daily-candle pump history" in output
     assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Core 5/5: 2" in output
     assert "Whale-origin CEX rows: 1" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
+    assert "Daily pump checks:" in output
     assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze >= 50." in output
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
@@ -1784,11 +1814,11 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "holder chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
     assert "venue Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
-    assert "WHALE-FLOW PRIMED" in output
+    assert "A3 WHALE-CEX PRIME" in output
     assert "core 5/5 | thesis" in output
-    assert "miss none" in output
+    assert "blockers none" in output
     assert "whaleCEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
-    assert "hard gates: whale Y holderEv Y venue Y noPump Y dormant2m Y squeeze Y" in output
+    assert "proof: whale 99.2% holderEv Y | venues Bn Y/Bg Y/Gate Y | noPump Y pump60 2.0%/60d binance60d" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
@@ -1799,6 +1829,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/COUNTONLYUSDT" not in output
     assert "/TARGETONLYUSDT" not in output
     assert "/RECENTPUMPUSDT" not in output
+    assert "/MISSINGPUMPUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)
@@ -1869,7 +1900,7 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
         }
     )
 
-    output = bot._ravelab_line(row)
+    output = bot._ravelab_line(row, detail=True)
 
     assert "/MISSUSDT | RAVE-like" in output
     assert "CEX no target flow 0tx max n/a" in output

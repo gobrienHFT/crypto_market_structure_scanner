@@ -1166,6 +1166,129 @@ def _apply_ravelab_high_breakout_windows(frame: pd.DataFrame, windows: list[int]
     return out, stats
 
 
+def _recent_daily_pump_from_klines(klines: list[list[Any]], *, days: int = 60) -> tuple[float | None, int]:
+    if len(klines) < 2:
+        return None, 0
+    pumps: list[float] = []
+    for raw in klines[:-1][-max(1, int(days)):]:
+        if not isinstance(raw, (list, tuple)) or len(raw) <= 4:
+            continue
+        open_price = _safe_float(raw[1])
+        high = _safe_float(raw[2])
+        low = _safe_float(raw[3])
+        close = _safe_float(raw[4])
+        base = open_price if open_price is not None and open_price > 0 else low if low is not None and low > 0 else close
+        if base is None or base <= 0 or high is None:
+            continue
+        pumps.append(max(0.0, (high / base - 1.0) * 100.0))
+    if not pumps:
+        return None, 0
+    return max(pumps), len(pumps)
+
+
+def _ravelab_refresh_activity_gates(
+    frame: pd.DataFrame,
+    *,
+    min_history_days: int,
+    max_recent_pump_pct: float,
+) -> pd.DataFrame:
+    out = frame.copy()
+    if out.empty:
+        return out
+    index = out.index
+    required_pump_days = max(1, min(60, int(min_history_days)))
+    recent_pump = _num_series(out, "_ravelab_recent_max_pump_pct", default=float("nan"))
+    observed_days = _num_series(out, "_ravelab_recent_pump_days", default=0.0)
+    pump_observed = recent_pump.notna() & observed_days.ge(required_pump_days)
+    no_large_recent_pump = pump_observed & recent_pump.lt(max(0.0, float(max_recent_pump_pct)))
+    history_days = _num_series(out, "_ravelab_history_days", default=0.0)
+    broke_90d = _boolish_series(out.get("broke_high_90d"), index=index)
+    broke_180d = _boolish_series(out.get("broke_high_180d"), index=index)
+    heat = _num_series(out, "pre_activity_heat_score")
+    late_penalty = _max_series(out, "rave_lab_late_penalty_score", "timing_too_late_score", "convexity_late_penalty")
+    dormant_2m = (
+        history_days.ge(max(1, int(min_history_days)))
+        & (~broke_90d)
+        & (~broke_180d)
+        & heat.lt(62.0)
+        & late_penalty.lt(66.0)
+        & no_large_recent_pump
+    )
+    major_excluded = _boolish_series(out.get("crime_excluded_major"), index=index)
+    out["_ravelab_recent_pump_observed"] = pump_observed & (~major_excluded)
+    out["_ravelab_no_large_pump_gate"] = no_large_recent_pump & (~major_excluded)
+    out["_ravelab_dormant_2m_gate"] = dormant_2m & (~major_excluded)
+    return out
+
+
+def _apply_ravelab_recent_pump_window(
+    frame: pd.DataFrame,
+    candidate_mask: pd.Series,
+    *,
+    min_history_days: int,
+    max_recent_pump_pct: float,
+    days: int = 60,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    out = frame.copy()
+    stats = {"checked": 0, "cached": 0, "errors": 0, "insufficient": 0, "skipped": 0}
+    if out.empty:
+        return out, stats
+    required_pump_days = max(1, min(int(days), int(min_history_days)))
+    if "_ravelab_recent_pump_source" not in out.columns:
+        out["_ravelab_recent_pump_source"] = ""
+    recent_pump = _num_series(out, "_ravelab_recent_max_pump_pct", default=float("nan"))
+    observed_days = _num_series(out, "_ravelab_recent_pump_days", default=0.0)
+    cached_mask = recent_pump.notna() & observed_days.ge(required_pump_days)
+    out.loc[cached_mask, "_ravelab_recent_pump_source"] = out.loc[cached_mask, "_ravelab_recent_pump_source"].replace("", "scan60d")
+    stats["cached"] = int(cached_mask.sum())
+
+    clean_candidate_mask = candidate_mask.reindex(out.index, fill_value=False).fillna(False).astype(bool)
+    missing_mask = clean_candidate_mask & (~cached_mask)
+    indices = list(out[missing_mask].index)
+    max_checks = _env_int("DISCORD_RAVELAB_MAX_PUMP_CHECKS", 50, minimum=1)
+    if len(indices) > max_checks:
+        for idx in indices[max_checks:]:
+            out.at[idx, "_ravelab_recent_pump_source"] = f"skipped; max {max_checks} checks"
+            stats["skipped"] += 1
+        indices = indices[:max_checks]
+
+    timeout = _env_int("DISCORD_RAVELAB_HTTP_TIMEOUT_SECONDS", _env_int("HTTP_TIMEOUT", 12, minimum=3), minimum=3)
+    rps = _env_float("DISCORD_RAVELAB_REQUESTS_PER_SECOND", _env_float("DISCORD_BREAKOUT_REQUESTS_PER_SECOND", 6.0, minimum=0.5), minimum=0.5)
+    client = BinanceFuturesPublic(timeout=timeout, requests_per_second=rps) if indices else None
+    limit = max(2, int(days) + 1)
+    for idx in indices:
+        symbol = _clean_scalar_text(out.at[idx, "symbol"] if "symbol" in out.columns else "").upper().strip()
+        if not symbol or client is None:
+            out.at[idx, "_ravelab_recent_pump_source"] = "missing symbol"
+            stats["errors"] += 1
+            continue
+        try:
+            klines = client.klines_1d(symbol, limit=limit)
+            pump, used_days = _recent_daily_pump_from_klines(klines, days=days)
+        except Exception as exc:
+            out.at[idx, "_ravelab_recent_pump_source"] = f"{type(exc).__name__}"
+            stats["errors"] += 1
+            continue
+        if pump is None or used_days < required_pump_days:
+            out.at[idx, "_ravelab_recent_pump_days"] = int(used_days or 0)
+            out.at[idx, "_ravelab_recent_pump_source"] = f"insufficient {int(used_days or 0)}d"
+            stats["insufficient"] += 1
+            continue
+        out.at[idx, "_ravelab_recent_max_pump_pct"] = float(pump)
+        out.at[idx, "_ravelab_recent_pump_days"] = int(used_days)
+        out.at[idx, "_ravelab_recent_pump_source"] = f"binance{int(used_days)}d"
+        stats["checked"] += 1
+
+    missing_after = clean_candidate_mask & _text_series(out, "_ravelab_recent_pump_source").eq("")
+    out.loc[missing_after, "_ravelab_recent_pump_source"] = "missing 60d pump proof"
+    out = _ravelab_refresh_activity_gates(
+        out,
+        min_history_days=min_history_days,
+        max_recent_pump_pct=max_recent_pump_pct,
+    )
+    return out, stats
+
+
 def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0) -> tuple[str, list[str]]:
     direction = "high" if str(side).lower().startswith("h") else "low"
     parsed_days = _parse_breakout_days(days)
@@ -3047,15 +3170,15 @@ def _ravelab_apply_thesis_columns(frame: pd.DataFrame, *, min_squeeze_score: flo
         has_whale_flow = bool(whale_origin_flow.loc[idx])
         has_breakout = bool(breakout_any.loc[idx])
         if full_core and has_whale_flow and has_breakout:
-            states.append("WHALE-FLOW BREAKOUT")
+            states.append("A4 PRIME+FLOW+BREAKOUT")
         elif full_core and has_whale_flow:
-            states.append("WHALE-FLOW PRIMED")
+            states.append("A3 WHALE-CEX PRIME")
         elif full_core and has_breakout:
-            states.append("BREAKOUT PRIMED")
+            states.append("A2 BREAKOUT PRIME")
         elif full_core:
-            states.append("CORE PRIMED")
+            states.append("A1 CORE PRIME")
         else:
-            states.append(f"NEAR MISS {int(core_count.loc[idx])}/{len(core_gates)}")
+            states.append(f"B{max(0, len(core_gates) - int(core_count.loc[idx]))} BLOCKED")
 
     output["_ravelab_squeeze_gate"] = squeeze_gate
     output["_ravelab_whale_origin_flow"] = whale_origin_flow
@@ -3273,6 +3396,9 @@ def _ravelab_next_check(row: pd.Series) -> str:
         return "skip until Binance and Bitget venue evidence are both present"
     has_no_pump_gate = hasattr(row, "index") and "_ravelab_no_large_pump_gate" in row.index
     if has_no_pump_gate and not _boolish_scalar(row.get("_ravelab_no_large_pump_gate")):
+        pump_source = _clean_scalar_text(row.get("_ravelab_recent_pump_source", ""))
+        if "insufficient" in pump_source or "missing" in pump_source or "skipped" in pump_source:
+            return "wait; load 60D daily-candle pump proof before treating dormancy as real"
         max_pump = _safe_float(row.get("_ravelab_max_recent_pump_pct")) or 35.0
         return f"wait; recent daily pump exceeded {max_pump:.0f}% no-pump gate"
     if not _boolish_scalar(row.get("_ravelab_dormant_2m_gate")):
@@ -3286,12 +3412,26 @@ def _ravelab_next_check(row: pd.Series) -> str:
     return "watch for absorption after target-CEX inventory movement and first perp response"
 
 
-def _ravelab_line(row: pd.Series) -> str:
+def _ravelab_stage_label(row: pd.Series) -> str:
+    core_count = int(_safe_float(row.get("_ravelab_core_gate_count")) or 0)
+    core_total = int(_safe_float(row.get("_ravelab_core_gate_total")) or 5)
+    if core_count >= core_total:
+        if _boolish_scalar(row.get("_ravelab_whale_origin_flow")) and _boolish_scalar(row.get("_ravelab_breakout_any")):
+            return "A4 PRIME+FLOW+BREAKOUT"
+        if _boolish_scalar(row.get("_ravelab_whale_origin_flow")):
+            return "A3 WHALE-CEX PRIME"
+        if _boolish_scalar(row.get("_ravelab_breakout_any")):
+            return "A2 BREAKOUT PRIME"
+        return "A1 CORE PRIME"
+    return f"B{max(0, core_total - core_count)} BLOCKED"
+
+
+def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     score = _safe_float(row.get("_ravelab_early_score")) or 0.0
     thesis_score = _safe_float(row.get("_ravelab_thesis_score")) or 0.0
     side = _clip_text(row.get("_ravelab_side", ""), 18) or "RAVE/LAB"
-    state = _clip_text(row.get("_ravelab_state", ""), 22) or "NEAR MISS"
+    state = _ravelab_stage_label(row)
     rave = _safe_float(row.get("_ravelab_rave_score")) or 0.0
     lab = _safe_float(row.get("_ravelab_lab_score")) or 0.0
     setup = _safe_float(row.get("rave_lab_setup_score")) or 0.0
@@ -3337,6 +3477,7 @@ def _ravelab_line(row: pd.Series) -> str:
             pump_text += f"/{recent_pump_days:.0f}d"
     else:
         pump_text = "n/a"
+    pump_source = _clip_text(row.get("_ravelab_recent_pump_source", ""), 28) or "unverified"
     holder_evidence = _holder_evidence_text(row)
     venue_evidence = _venue_evidence_text(row)
     whale_flow = _whale_sender_text(row, include_amount=True)
@@ -3346,8 +3487,16 @@ def _ravelab_line(row: pd.Series) -> str:
     next_check = _clip_text(_ravelab_next_check(row), 96)
     headline = (
         f"/{symbol} | {side} | {state} | core {core_count}/{core_total} | "
-        f"thesis {thesis_score:.0f}/100 early {score:.0f}/100 | miss {missing_core}"
+        f"thesis {thesis_score:.0f}/100 early {score:.0f}/100 | blockers {missing_core}{anchor}"
     )
+    proof = (
+        f"  proof: whale {whale_text} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
+        f"noPump {no_pump} pump60 {pump_text} {pump_source} | hist {history_text} dormant2m {dormant} | "
+        f"squeeze {squeeze:.0f}({squeeze_gate}) shorts {short_text} | highs {breakout_windows} | "
+        f"CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | holder {holder_evidence} | venue {venue_evidence}"
+    )
+    if not detail:
+        return "\n".join([headline, proof, f"  next: {next_check}"])
     hard_gates = (
         f"  hard gates: whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} "
         f"noPump {no_pump} dormant2m {dormant} squeeze {squeeze_gate} | "
@@ -3355,7 +3504,7 @@ def _ravelab_line(row: pd.Series) -> str:
     )
     evidence = (
         f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | holder {holder_evidence} | "
-        f"venue {venue_evidence} | squeeze {squeeze:.0f} shorts {short_text} | history {history_text} pump60 {pump_text}"
+        f"venue {venue_evidence} | squeeze {squeeze:.0f} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
     )
     flow = (
         f"  flow/timing: CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | "
@@ -3396,6 +3545,7 @@ def _load_ravelab_list(
     require_holder_evidence: bool = True,
     require_breakout_high: bool = False,
     require_whale_origin_flow: bool = False,
+    detail: bool = False,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
@@ -3406,6 +3556,7 @@ def _load_ravelab_list(
         style_key = "both"
     breakout_days, ignored_breakout_windows = _parse_breakout_window_list(breakout_windows)
     breakout_label = ",".join(f"{days}D" for days in breakout_days) if breakout_days else "disabled"
+    pump_proof_days = max(1, min(60, int(min_history_days)))
     ignored_breakout_text = (
         f" | Ignored breakout windows: {', '.join(ignored_breakout_windows[:5])}"
         if ignored_breakout_windows
@@ -3420,7 +3571,8 @@ def _load_ravelab_list(
         f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
         f"Quiet required: {require_quiet} | Target flow required: {require_target_flow} | Whale-origin CEX required: {require_whale_origin_flow} | "
-        f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high}{ignored_breakout_text}\n"
+        f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Detail: {detail}{ignored_breakout_text}\n"
+        f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
         "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze fuel, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
@@ -3435,6 +3587,23 @@ def _load_ravelab_list(
     )
     holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
     scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    pump_check_mask = (
+        _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
+        & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
+        & _boolish_series(scored.get("_ravelab_whale_gate"), index=scored.index)
+        & _num_series(scored, "_ravelab_squeeze_score").ge(max(0.0, float(min_squeeze_score)))
+    )
+    if require_holder_evidence:
+        pump_check_mask = pump_check_mask & _boolish_series(scored.get("_ravelab_holder_evidence_gate"), index=scored.index)
+    if require_binance_bitget:
+        pump_check_mask = pump_check_mask & _boolish_series(scored.get("_ravelab_venue_gate"), index=scored.index)
+    scored, pump_stats = _apply_ravelab_recent_pump_window(
+        scored,
+        pump_check_mask,
+        min_history_days=int(min_history_days),
+        max_recent_pump_pct=float(max_recent_pump_pct),
+        days=60,
+    )
     scored = _ravelab_apply_thesis_columns(scored, min_squeeze_score=min_squeeze_score)
     selected = scored[
         _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
@@ -3503,10 +3672,14 @@ def _load_ravelab_list(
                 f"Breakout high checks: {breakout_label} | dynamic checks {breakout_stats['checked']} | "
                 f"errors {breakout_stats['errors']} | insufficient {breakout_stats['insufficient']}"
             ),
+            (
+                f"Daily pump checks: cached {pump_stats['cached']} | Binance checked {pump_stats['checked']} | "
+                f"errors {pump_stats['errors']} | insufficient {pump_stats['insufficient']} | skipped {pump_stats['skipped']}"
+            ),
             "",
             "No rows passed the requested strict filters. Nearest rows, with failed gates visible:",
             "",
-            *[_ravelab_line(row) for _, row in nearest.iterrows()],
+            *[_ravelab_line(row, detail=detail) for _, row in nearest.iterrows()],
         ]
         return "RAVE/LAB early radar", _chunk_text_lines(lines)
 
@@ -3557,12 +3730,16 @@ def _load_ravelab_list(
             f"Breakout high checks: {breakout_label} | dynamic checks {breakout_stats['checked']} | "
             f"cached flags {breakout_stats['cached']} | errors {breakout_stats['errors']} | insufficient {breakout_stats['insufficient']}"
         ),
+        (
+            f"Daily pump checks: cached {pump_stats['cached']} | Binance checked {pump_stats['checked']} | "
+            f"errors {pump_stats['errors']} | insufficient {pump_stats['insufficient']} | skipped {pump_stats['skipped']}"
+        ),
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",
         "",
     ]
     for _, row in selected.iterrows():
-        lines.append(_ravelab_line(row))
+        lines.append(_ravelab_line(row, detail=detail))
     return "RAVE/LAB early radar", _chunk_text_lines(lines)
 
 
@@ -4565,6 +4742,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence="Require source/contract/count evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet.",
+        detail="Show full multi-line evidence instead of the compact staged read.",
     )
     @app_commands.choices(
         style=[
@@ -4593,6 +4771,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence: bool = True,
         require_breakout_high: bool = False,
         require_whale_origin_flow: bool = False,
+        detail: bool = False,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -4621,6 +4800,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_holder_evidence=require_holder_evidence,
             require_breakout_high=require_breakout_high,
             require_whale_origin_flow=require_whale_origin_flow,
+            detail=detail,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
         embed.set_footer(text=DISCORD_FOOTER)
