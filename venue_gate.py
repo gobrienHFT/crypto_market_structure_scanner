@@ -141,7 +141,12 @@ def holder_evidence_mask(frame: pd.DataFrame) -> pd.Series:
 
     chain_mask = frame.apply(row_has_chain, axis=1).astype(bool)
     contract_mask = frame.apply(lambda row: bool(row_contract(row)), axis=1).astype(bool)
-    return (chain_mask & contract_mask & source_mask).fillna(False)
+    snapshot_mask = (
+        _numeric_column(frame, "holder_count").gt(0.0)
+        | _pct_column(frame, "top10_holder_pct").notna()
+        | _pct_column(frame, "top100_holder_pct").notna()
+    )
+    return (chain_mask & contract_mask & source_mask & snapshot_mask).fillna(False)
 
 
 def holder_concentration_mask(
@@ -186,7 +191,7 @@ def thesis_alert_header(
 ) -> str:
     holder = f"Holder gate: observed top-holder concentration >= {float(min_whale_pct):.1f}%"
     if require_holder_evidence:
-        holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source evidence"
+        holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence"
     else:
         holder = f"{holder}; holder evidence diagnostic relaxed"
     if not require_venue:

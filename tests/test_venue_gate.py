@@ -53,7 +53,7 @@ def test_thesis_alert_header_names_holder_and_venue_gates(monkeypatch) -> None:
     header = thesis_alert_header(allow_cex_flow_targets=True)
 
     assert "Holder gate: observed top-holder concentration >= 90.0%" in header
-    assert "ETH/BNB/ARB chain+contract holder-source evidence" in header
+    assert "ETH/BNB/ARB chain+contract holder-source snapshot evidence" in header
     assert "Binance perp + Bitget trading evidence required" in header
     assert "Gate optional" in header
 

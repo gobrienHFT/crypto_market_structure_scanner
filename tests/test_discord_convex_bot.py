@@ -2098,7 +2098,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence required: True" in output
     assert "Whale-origin CEX required: False" in output
     assert "No-pump proof: requires 60D closed daily-candle pump history" in output
-    assert "Core gates: 90%+ chain+contract holder-source evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
+    assert "Core gates: 90%+ chain+contract holder-source snapshot evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Near misses: 5" in output
     assert "Trigger filter: all" in output
@@ -2112,7 +2112,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "Daily pump checks:" in output
-    assert "All shown rows passed whale >= 90.0%, holder-source evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
+    assert "All shown rows passed whale >= 90.0%, holder-source snapshot evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
     assert "Candidates:" in output
     assert "Trigger queue:" in output
     assert "/LABXUSDT A3 (whale-CEX 360.00K)" in output
@@ -2120,10 +2120,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert output.index("Trigger queue:") < output.index("Holder evidence rows:")
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
-    assert "holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
+    assert "holder chain ethereum, holders 6000, top10 94.0% / top100 99.8%, src Etherscan holder endpoint, contract 0x1111...1111" in output
     assert "venue Bn 8.0%; Bg 2.0%; Gate no" in output
     assert "/LABXUSDT" in output
-    assert "holder chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
+    assert "holder chain arbitrum, holders 8000, top10 91.0% / top100 99.2%, src Arbiscan holder endpoint, contract 0x2222...2222" in output
     assert "venue Bn 9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "A3 WHALE-CEX PRIME" in output
@@ -2204,15 +2204,15 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     diagnostic_output = "\n".join(diagnostic_chunks)
     assert "Holder evidence required: False" in diagnostic_output
     assert "/PCTONLYUSDT" in diagnostic_output
-    assert "holder pct-only; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
+    assert "holder top10 96.0% / top100 99.9%; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
     assert "/COUNTONLYUSDT" in diagnostic_output
-    assert "holder holders 5000; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
+    assert "holder holders 5000, top10 96.0% / top100 99.9%; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
 
     crime_title, crime_chunks = bot._load_crimepump_list(10, min_tokens=20_000)
     crime_output = "\n".join(crime_chunks)
     assert crime_title == "Crime-pump early queue"
     assert "Crime-pump early queue" in crime_output
-    assert "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
+    assert "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
     assert "Trigger: all" in crime_output
     assert "Gate funnel:" in crime_output
     assert "Trigger lanes: triggered 2" in crime_output
@@ -3164,14 +3164,31 @@ def test_strict_holder_evidence_requires_holder_source() -> None:
                 "holder_count": 6_000,
                 "top100_holder_pct": 99.0,
             },
+            {
+                "symbol": "PCTSNAPUSDT",
+                "token_platform": "ethereum",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "holder_source": "Etherscan holder endpoint",
+                "top100_holder_pct": 98.0,
+            },
+            {
+                "symbol": "METADATAUSDT",
+                "token_platform": "ethereum",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "holder_source": "Etherscan holder endpoint",
+            },
         ]
     )
 
     mask, _ = bot._strict_holder_evidence_masks(frame)
 
-    assert mask.tolist() == [True, False]
+    assert mask.tolist() == [True, False, True, False]
     source_less_text = bot._holder_evidence_text(frame.iloc[1])
     assert "needs source" in source_less_text
+    pct_snapshot_text = bot._holder_evidence_text(frame.iloc[2])
+    assert "top100 98.0%" in pct_snapshot_text
+    metadata_only_text = bot._holder_evidence_text(frame.iloc[3])
+    assert "needs holder snapshot" in metadata_only_text
 
 
 def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:

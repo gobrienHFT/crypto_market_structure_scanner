@@ -2020,7 +2020,7 @@ def _load_cex_flow_list(
         if raw_flow_count > 0 and strict_flow.empty:
             message = (
                 "Verified labelled CEX transfer rows exist, but none cleared the strict holder gate for this command. "
-                "Use `require_holder_evidence:false` only to diagnose missing holder-source coverage."
+                "Use `require_holder_evidence:false` only to diagnose missing holder-source snapshot coverage."
             )
         elif raw_flow_count > 0 and require_venue_gate:
             message = (
@@ -2411,17 +2411,27 @@ def _holder_evidence_text(row: pd.Series) -> str:
     source = _first_nonempty_text(row.get("holder_source", ""), row.get("holder_data_source", ""))
     contract = _holder_contract_address(row)
     holders = _safe_float(row.get("holder_count"))
+    top10 = _safe_pct(row.get("top10_holder_pct"))
+    top100 = _safe_pct(row.get("top100_holder_pct"))
+    has_snapshot = bool((holders is not None and holders > 0) or top10 is not None or top100 is not None)
 
     parts: list[str] = []
     if chain:
         parts.append(f"chain {chain}")
     if holders is not None and holders > 0:
         parts.append(f"holders {holders:.0f}")
+    concentration_parts: list[str] = []
+    if top10 is not None:
+        concentration_parts.append(f"top10 {top10:.1f}%")
+    if top100 is not None:
+        concentration_parts.append(f"top100 {top100:.1f}%")
+    if concentration_parts:
+        parts.append(" / ".join(concentration_parts))
     if source:
         parts.append(f"src {_clip_text(source, 28)}")
     if contract:
         parts.append(f"contract {_short_contract_text(contract)}")
-    strict_ok = chain in RAVELAB_HOLDER_EVIDENCE_CHAINS and bool(contract) and bool(source)
+    strict_ok = chain in RAVELAB_HOLDER_EVIDENCE_CHAINS and bool(contract) and bool(source) and has_snapshot
     if strict_ok:
         return ", ".join(parts)
     missing: list[str] = []
@@ -2431,8 +2441,24 @@ def _holder_evidence_text(row: pd.Series) -> str:
         missing.append("contract")
     if not source:
         missing.append("source")
+    if not has_snapshot:
+        missing.append("holder snapshot")
     detail = ", ".join(parts) if parts else "pct-only"
     return f"{detail}; needs {'+'.join(missing)}"
+
+
+def _holder_snapshot_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    masks: list[pd.Series] = []
+    if "holder_count" in frame.columns:
+        masks.append(pd.to_numeric(frame["holder_count"], errors="coerce").gt(0.0).fillna(False))
+    for column in ("top10_holder_pct", "top100_holder_pct"):
+        if column in frame.columns:
+            masks.append(frame[column].map(_safe_pct).notna())
+    if not masks:
+        return pd.Series(False, index=frame.index)
+    return pd.concat(masks, axis=1).any(axis=1).fillna(False)
 
 
 def _strict_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
@@ -2442,11 +2468,12 @@ def _strict_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Se
     source_cols = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
     contract_mask = frame.apply(lambda row: bool(_holder_contract_address(row)), axis=1).astype(bool)
     chain_mask = frame.apply(lambda row: _holder_chain_key(row) in RAVELAB_HOLDER_EVIDENCE_CHAINS, axis=1).astype(bool)
+    snapshot_mask = _holder_snapshot_mask(frame)
     if source_cols:
         source_mask = pd.concat([_text_series(frame, column).ne("") for column in source_cols], axis=1).any(axis=1)
     else:
         source_mask = pd.Series(False, index=frame.index)
-    evidence_mask = chain_mask & contract_mask & source_mask
+    evidence_mask = chain_mask & contract_mask & source_mask & snapshot_mask
     return evidence_mask.fillna(False), contract_mask.fillna(False)
 
 
@@ -2511,7 +2538,7 @@ def _thesis_venue_header() -> str:
 def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
     return (
         f"Thesis gate: observed holder >= {float(min_whale_pct):.1f}% with "
-        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source evidence | {_thesis_venue_header()}"
+        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence | {_thesis_venue_header()}"
     )
 
 
@@ -4177,7 +4204,7 @@ def _load_ravelab_list(
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
         f"Trigger filter: {trigger_filter_key} | Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
-        "Core gates: 90%+ chain+contract holder-source evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
+        "Core gates: 90%+ chain+contract holder-source snapshot evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
     if frame.empty:
@@ -4260,7 +4287,7 @@ def _load_ravelab_list(
                     f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
                     f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
                 ),
-                "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+                "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
                 gate_counts,
                 funnel_line,
                 lane_counts_line,
@@ -4290,7 +4317,7 @@ def _load_ravelab_list(
             funnel_line,
             lane_counts_line,
             (
-                f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source | "
+                f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot | "
                 f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
             ),
             (
@@ -4344,7 +4371,7 @@ def _load_ravelab_list(
     mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
     gate_summary = (
         f"All shown rows passed whale >= {float(min_whale_pct):.1f}%"
-        f"{', holder-source evidence' if require_holder_evidence else ''}"
+        f"{', holder-source snapshot evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         f"{f', no recent pump >= {float(max_recent_pump_pct):.0f}%, history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
         f", squeeze stack >= {float(min_squeeze_score):.0f}."
@@ -4360,7 +4387,7 @@ def _load_ravelab_list(
                 f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
                 f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
             ),
-            "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+            "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
             (
                 f"Matches: {len(selected)} | Core 5/5: {core_count} | Triggered: {triggered_count} | "
                 f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | Breakout highs: {breakout_count}"
@@ -4390,7 +4417,7 @@ def _load_ravelab_list(
     lines.extend([
         gate_summary,
         (
-            f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source | "
+            f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot | "
             f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
         ),
         (
@@ -5327,7 +5354,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_short_pct="Minimum short-account percentage.",
         min_whale_pct="Minimum observed top-holder concentration percentage.",
         strict="Require target CEX flow, whale, short, float, and not-late gates.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the whale gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
     async def setupscore(
@@ -5378,7 +5405,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the whale gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence. Gate is optional evidence only.",
@@ -5431,7 +5458,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the whale gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_quiet="Require the no-chase quiet/low-activity gate.",
@@ -5497,7 +5524,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_binance_bitget="Require both Binance and Bitget venue evidence.",
         require_dormant_2m="Require no 90D/180D high break and low recent heat.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the 90% whale-holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears min_tokens.",
         trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch only.",
@@ -5725,7 +5752,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
         min_whale_pct="Minimum observed top-holder concentration percentage.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the whale gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
         require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
     async def coincheck(
@@ -5974,7 +6001,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the holder gate.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence. Disable for raw CEX-flow sweep.",
     )
     async def cexflow(
@@ -6019,7 +6046,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per transfer, for example 1000.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the holder gate.",
         require_venue_gate="Show how many raw CEX-flow rows survive the Binance+Bitget thesis venue gate.",
         symbol_limit="How many attempted symbols to list.",
     )
@@ -6062,7 +6089,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the holder gate.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence. Disable for raw early-flow sweep.",
     )
     async def earlyflow(
@@ -6250,7 +6277,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_whale_pct="Minimum observed top-holder concentration percentage, default 90.",
         require_dormant="Only show rows that pass the dormant/early structure gate.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the whale gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
     )
     async def sethflow(
         interaction: discord.Interaction,
