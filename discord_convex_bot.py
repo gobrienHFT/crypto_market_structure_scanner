@@ -955,7 +955,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /radar, not before it.",
         "/precrime - quiet pre-activity board after hard holder, Binance+Bitget, and 60D no-pump gates.",
         "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, and 60D no-pump gates.",
-        "/setupscore - strict full-thesis ranking with transfer, holder, venue, short, float, and not-late checks.",
+        "/setupscore - strict full-thesis ranking with transfer, holder, venue, 60D no-pump, short, float, and not-late checks.",
         "",
         "Flow and holder diagnostics:",
         "/cexflow [min_tokens] - concentration-gated labelled wallet-to-CEX flow; use require_venue_gate:false only for diagnostics.",
@@ -2651,7 +2651,8 @@ def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
     threshold = _strict_thesis_min_whale_pct(min_whale_pct)
     return (
         f"Thesis gate: observed top10 holder >= {threshold:.1f}% with "
-        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence | {_thesis_venue_header()}"
+        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence | "
+        f"{_thesis_venue_header()} | 60D no-pump/dormancy proof required"
     )
 
 
@@ -2669,7 +2670,7 @@ def _thesis_candidate_gate_mask(frame: pd.DataFrame, *, min_whale_pct: float = 9
         min_whale_pct=min_whale_pct,
         require_holder_evidence=True,
     )
-    return (holder_gate & _explicit_binance_bitget_trading_gate_mask(frame)).fillna(False)
+    return (holder_gate & _explicit_binance_bitget_trading_gate_mask(frame) & _no_recent_pump_proof_mask(frame)).fillna(False)
 
 
 def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.DataFrame:
@@ -2678,7 +2679,34 @@ def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 
     return frame[_thesis_candidate_gate_mask(frame, min_whale_pct=min_whale_pct)].copy()
 
 
-def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
+def _no_recent_pump_proof_mask(
+    frame: pd.DataFrame,
+    *,
+    min_history_days: int = 60,
+    max_recent_pump_pct: float = 35.0,
+) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    min_days = max(1, int(min_history_days))
+    proof_days = max(1, min(60, min_days))
+    history_days = pd.to_numeric(frame.get("history_days", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    recent_pump_days = pd.to_numeric(frame.get("recent_pump_60d_days", pd.Series(0.0, index=frame.index)), errors="coerce").fillna(0.0)
+    recent_pump = pd.to_numeric(frame.get("recent_max_pump_60d_pct", pd.Series(float("nan"), index=frame.index)), errors="coerce")
+    no_large_flag = _boolish_series(frame.get("no_large_pump_60d_flag"), index=frame.index)
+    coverage = history_days.ge(min_days) | recent_pump_days.ge(proof_days)
+    pump_window_ready = recent_pump_days.ge(proof_days)
+    numeric_pass = recent_pump.notna() & recent_pump.lt(max(0.0, float(max_recent_pump_pct))) & pump_window_ready
+    flag_pass = no_large_flag & pump_window_ready
+    return (coverage & (numeric_pass | flag_pass)).fillna(False)
+
+
+def _seth_structure_state(
+    row: pd.Series,
+    *,
+    max_range_pct: float,
+    max_day_move_pct: float,
+    no_recent_pump_pass: bool,
+) -> tuple[str, bool, float, str]:
     setup_score = max(
         _safe_float(row.get("dormant_short_fuse_score")) or 0.0,
         _safe_float(row.get("pre_pump_precision_score")) or 0.0,
@@ -2701,6 +2729,8 @@ def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_
         if too_late >= 65.0:
             reasons.append(f"late score {too_late:.0f}")
         return "volatile/late", False, setup_score, ", ".join(reasons[:3])
+    if not no_recent_pump_pass:
+        return "dormancy unproven", False, setup_score, "missing/failed 60D no-pump proof"
     if setup_score >= 55.0:
         return "dormant candidate", True, setup_score, f"setup {setup_score:.0f}"
     if setup_score >= 35.0:
@@ -2779,6 +2809,7 @@ def _load_seth_flow_playbook(
         rows["_seth_holder_evidence_pass"] if require_holder_evidence else True
     )
     rows["_seth_short_pass"] = shorts.ge(min_short_pct)
+    rows["_seth_no_recent_pump_pass"] = _no_recent_pump_proof_mask(rows)
     structure_states: list[str] = []
     structure_passes: list[bool] = []
     structure_scores: list[float] = []
@@ -2788,6 +2819,7 @@ def _load_seth_flow_playbook(
             row,
             max_range_pct=max_range_pct,
             max_day_move_pct=max_day_move_pct,
+            no_recent_pump_pass=bool(rows.at[row.name, "_seth_no_recent_pump_pass"]),
         )
         structure_states.append(state)
         structure_passes.append(passed)
@@ -2805,7 +2837,9 @@ def _load_seth_flow_playbook(
         + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.18
         + rows["_seth_whale_pct"].fillna(0.0).clip(upper=100.0) * 0.20
     )
-    rows["_seth_all_pass"] = rows["_seth_whale_pass"] & rows["_seth_short_pass"] & rows["_seth_structure_pass"]
+    rows["_seth_all_pass"] = (
+        rows["_seth_whale_pass"] & rows["_seth_short_pass"] & rows["_seth_structure_pass"] & rows["_seth_no_recent_pump_pass"]
+    )
     visible = rows[rows["_seth_all_pass"]].copy() if require_dormant else rows.copy()
     if visible.empty:
         visible = rows.sort_values(["_seth_short_pass", "_seth_whale_pass", "_seth_score", "symbol"], ascending=[False, False, False, True]).head(
@@ -2850,6 +2884,8 @@ def _load_seth_flow_playbook(
             action = "WAIT: holder evidence missing"
         elif not bool(row.get("_seth_short_pass")):
             action = "WAIT: short-account gate failed"
+        elif not _boolish_scalar(row.get("_seth_no_recent_pump_pass")):
+            action = "WAIT: 60D no-pump proof missing"
         elif state == "volatile/late":
             action = "SKIP: already volatile/late"
         elif not bool(row.get("_seth_structure_pass")):
@@ -2859,10 +2895,11 @@ def _load_seth_flow_playbook(
         top10_text = f"{row_top10:.1f}%" if row_top10 is not None else "n/a"
         top100_text = f"{row_top100:.1f}%" if row_top100 is not None else "n/a"
         holder_ev = "Y" if _boolish_scalar(row.get("_seth_holder_evidence_pass")) else "N"
+        no_pump = "Y" if _boolish_scalar(row.get("_seth_no_recent_pump_pass")) else "N"
         lines.append(
             f"/{symbol} | {action} | flow {flow_score:.0f}/100 | {cex_count} tx into {targets_text} | "
             f"total {total_amount}, max {max_transfer} | top10 {top10_text}, top100 {top100_text} | "
-            f"holderEv {holder_ev} | shorts {short_pct:.1f}% | structure {state}"
+            f"holderEv {holder_ev} | noPump60 {no_pump} | shorts {short_pct:.1f}% | structure {state}"
         )
         lines.append(
             f"  chart gate: range {range_text}, 24h {day_text}, {_clip_text(row.get('_seth_structure_reason', ''), 80)} | "
@@ -3010,9 +3047,10 @@ def _goal_score_frame(
     whale_concentration_pass = whale_pct.ge(effective_min_whale_pct)
     whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
     venue_pass = _explicit_binance_bitget_trading_gate_mask(output)
+    no_recent_pump_pass = _no_recent_pump_proof_mask(output)
     short_pass = short_pct.ge(min_short_pct)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
-    structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0)
+    structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0) & no_recent_pump_pass
 
     setup_score = (
         target_flow_component * 0.23
@@ -3026,6 +3064,7 @@ def _goal_score_frame(
         + venue_pass.astype(float) * 3.0
         + short_pass.astype(float) * 3.0
         + float_pass.astype(float) * 2.0
+        - (~no_recent_pump_pass).astype(float) * 18.0
     ).clip(lower=0.0, upper=100.0)
 
     output["_goal_setup_score"] = setup_score
@@ -3039,6 +3078,7 @@ def _goal_score_frame(
     output["_goal_holder_evidence_required"] = bool(require_holder_evidence)
     output["_goal_venue_pass"] = venue_pass
     output["_goal_venue_required"] = bool(require_binance_bitget)
+    output["_goal_no_recent_pump_pass"] = no_recent_pump_pass
     output["_goal_float_component"] = float_component
     output["_goal_short_component"] = short_component
     output["_goal_structure_component"] = structure_component
@@ -3047,7 +3087,15 @@ def _goal_score_frame(
     output["_goal_short_pass"] = short_pass
     output["_goal_float_pass"] = float_pass
     output["_goal_structure_pass"] = structure_pass
-    output["_goal_all_pass"] = target_flow & whale_pass & short_pass & float_pass & structure_pass & (venue_pass if require_binance_bitget else True)
+    output["_goal_all_pass"] = (
+        target_flow
+        & whale_pass
+        & short_pass
+        & float_pass
+        & structure_pass
+        & no_recent_pump_pass
+        & (venue_pass if require_binance_bitget else True)
+    )
     return output
 
 
@@ -3067,6 +3115,8 @@ def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
         missing.append("short")
     if not _boolish_scalar(row.get("_goal_float_pass")):
         missing.append("float")
+    if not _boolish_scalar(row.get("_goal_no_recent_pump_pass")):
+        missing.append("60D no-pump")
     if not _boolish_scalar(row.get("_goal_structure_pass")):
         missing.append("timing")
     return "WATCH" if missing else "WATCH"
@@ -3085,6 +3135,7 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
     whale_pct = _safe_pct(row.get("_goal_whale_pct"))
     holder_ev = "Y" if _boolish_scalar(row.get("_goal_holder_evidence_pass")) else "N"
     venue_ev = "Y" if _boolish_scalar(row.get("_goal_venue_pass")) else "N"
+    no_pump = "Y" if _boolish_scalar(row.get("_goal_no_recent_pump_pass")) else "N"
     short_pct = _safe_pct(row.get("short_account_pct"))
     float_score = _safe_float(row.get("_goal_float_component")) or 0.0
     fdv_ratio = _safe_float(row.get("fdv_to_market_cap"))
@@ -3098,6 +3149,7 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
         f"whale {whale_pct:.1f}%" if whale_pct is not None else "whale n/a",
         f"holderEv {holder_ev}",
         f"venueBnBg {venue_ev}",
+        f"noPump60 {no_pump}",
         f"whale t10 {top10:.1f}%" if top10 is not None else "whale t10 n/a",
         f"t100 {top100:.1f}%" if top100 is not None else "t100 n/a",
         f"shorts {short_pct:.1f}%" if short_pct is not None else "shorts n/a",
@@ -3136,7 +3188,8 @@ def _load_setup_score_list(
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
         f"Gates: top10 holder >= {effective_min_whale_pct:.1f}%, holder evidence required {require_holder_evidence}, "
-        f"Binance+Bitget required {require_binance_bitget}, shorts >= {min_short_pct:.1f}%, low-float/FDV, not-late structure | Strict: {strict}"
+        f"Binance+Bitget required {require_binance_bitget}, 60D no-pump required, shorts >= {min_short_pct:.1f}%, "
+        f"low-float/FDV, not-late structure | Strict: {strict}"
     )
     if frame.empty:
         return "Insider-structure setup score", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -4903,6 +4956,11 @@ def _load_coin_check(
     short_pct = _safe_pct(scored_row.get("short_account_pct"))
     float_score = _safe_float(scored_row.get("_goal_float_component")) or 0.0
     structure = _safe_float(scored_row.get("_goal_structure_component")) or 0.0
+    history_days = _safe_float(scored_row.get("history_days"))
+    pump60 = _safe_float(scored_row.get("recent_max_pump_60d_pct"))
+    pump_days = _safe_float(scored_row.get("recent_pump_60d_days"))
+    history_text = f"{history_days:.0f}d" if history_days is not None else "n/a"
+    pump_text = f"{pump60:.1f}%/{pump_days:.0f}d" if pump60 is not None and pump_days is not None else "n/a"
     lines = [
         f"{symbol} manipulation-structure checklist",
         f"Verdict: {status} | setup score {score:.0f}/100 | Source: {source}",
@@ -4921,6 +4979,11 @@ def _load_coin_check(
         ),
         gate_line("short dominance", _boolish_scalar(scored_row.get("_goal_short_pass")), f"short accounts {short_pct:.1f}%" if short_pct is not None else "short accounts n/a"),
         gate_line("low-float/high-FDV", _boolish_scalar(scored_row.get("_goal_float_pass")), f"float {float_score:.0f}/100 | FDV/MC {_fmt_compact_number(scored_row.get('fdv_to_market_cap'))}x | locked {_fmt_compact_number(scored_row.get('locked_supply_pct'))}%"),
+        gate_line(
+            "60D no-pump/dormancy",
+            _boolish_scalar(scored_row.get("_goal_no_recent_pump_pass")),
+            f"history {history_text} | pump60 {pump_text}",
+        ),
         gate_line("dormant/not-late structure", _boolish_scalar(scored_row.get("_goal_structure_pass")), f"structure {structure:.0f}/100 | not-late {(_safe_float(scored_row.get('_goal_not_late_component')) or 0.0):.0f}/100"),
         "",
         _setup_score_line(scored_row, min_score=min_score),

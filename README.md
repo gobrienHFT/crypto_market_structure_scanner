@@ -201,7 +201,7 @@ DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1
 ```
 
-Fresh scans write `binance_perp_universe=true` before Discord gates run. `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` keeps older broad-dashboard cache files compatible; set it to `0` when testing mixed non-Binance rows so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` always require explicit Binance evidence and do not use symbol text as proof.
+Fresh scans write `binance_perp_universe=true` before Discord gates run. `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` keeps older broad-dashboard cache files compatible; set it to `0` when testing mixed non-Binance rows so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` always require explicit Binance evidence and 60D no-pump proof; they do not use symbol text as proof.
 
 Per-symbol cooldown state is stored locally in:
 
@@ -265,7 +265,7 @@ Use `/commands` inside Discord when you want the operator map. It labels `/radar
 
 The bot can retrieve:
 
-- a strict thesis-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract holder-source snapshot evidence and Binance+Bitget gates
+- a strict thesis-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget, and 60D no-pump gates
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
@@ -274,8 +274,8 @@ The bot can retrieve:
 - `/crimepump` as a legacy blunt-name alias and `/prime` as a short alias for the same compact hard-gated queue
 - a dedicated `/ravelab` strict early-structure microscope requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects `whale_flow_min_tokens` while generic target-CEX flow still respects `min_tokens`, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ holder-source snapshot, Binance+Bitget, and 60D no-pump/dormancy gates
-- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, low float/high FDV, short crowding, and not-late structure
-- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate and showing top-holder sender provenance when the transfer origin matches a scanned holder wallet
+- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowding, and not-late structure
+- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate, 60D no-pump proof, and top-holder sender provenance when the transfer origin matches a scanned holder wallet
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
 - top terminal market-structure evidence rows
 - top timing-quality rows

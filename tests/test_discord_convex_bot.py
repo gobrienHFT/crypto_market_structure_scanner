@@ -1253,6 +1253,10 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "short_account_pct": 63.0,
                 "range_24h_pct": 8.0,
                 "day_return_pct": 2.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 78.0,
                 "pre_pump_precision_score": 72.0,
                 "binance_volume_share_pct": 3.0,
@@ -1277,6 +1281,10 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "short_account_pct": 61.0,
                 "range_24h_pct": 55.0,
                 "day_return_pct": 42.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 85.0,
                 "binance_volume_share_pct": 5.0,
                 "bitget_volume_share_pct": 1.0,
@@ -1348,7 +1356,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
     assert "Holder evidence required: True" in output
     assert "/SETUPUSDT | RESEARCH: dormant candidate" in output
     assert "2 tx into Bitget | total 22.00M, max 12.00M" in output
-    assert "top10 91.0%, top100 99.0% | holderEv Y | shorts 63.0%" in output
+    assert "top10 91.0%, top100 99.0% | holderEv Y | noPump60 Y | shorts 63.0%" in output
     assert "VOLUSDT" not in output
     assert "NOSHORTUSDT" not in output
     assert "SMALLUSDT" not in output
@@ -1376,6 +1384,10 @@ def test_load_seth_flow_playbook_ignores_relaxed_dormant_toggle(monkeypatch) -> 
                 "short_account_pct": 61.0,
                 "range_24h_pct": 55.0,
                 "day_return_pct": 42.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 85.0,
                 "binance_volume_share_pct": 5.0,
                 "bitget_volume_share_pct": 1.0,
@@ -1417,6 +1429,10 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
                 "locked_supply_pct": 70.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 80.0,
                 "pre_pump_precision_score": 75.0,
                 "range_24h_pct": 8.0,
@@ -1446,6 +1462,10 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
                 "locked_supply_pct": 70.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 80.0,
                 "pre_pump_precision_score": 75.0,
                 "range_24h_pct": 8.0,
@@ -1558,6 +1578,55 @@ def test_goal_score_hard_floors_top10_whale_gate() -> None:
     assert not bool(scored.loc["TOP100ONLYUSDT", "_goal_whale_concentration_pass"])
     assert not bool(scored.loc["TOP100ONLYUSDT", "_goal_whale_pass"])
     assert bool(scored.loc["TOP10USDT", "_goal_whale_concentration_pass"])
+
+
+def test_goal_score_requires_60d_no_pump_proof() -> None:
+    base = {
+        "cex_deposit_flow_score": 92,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 1,
+        "cex_deposit_24h_max_amount": 30_000,
+        "cex_deposit_24h_target_exchanges": "Binance",
+        **_holder_evidence(),
+        "top10_holder_pct": 92.0,
+        "short_account_pct": 64.0,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "dormant_short_fuse_score": 80.0,
+        "pre_pump_precision_score": 75.0,
+        "binance_volume_share_pct": 2.0,
+        "bitget_volume_share_pct": 1.5,
+    }
+    scored = bot._goal_score_frame(
+        pd.DataFrame(
+            [
+                {**base, "symbol": "CLEANUSDT"},
+                {
+                    **base,
+                    "symbol": "PUMPEDUSDT",
+                    "recent_max_pump_60d_pct": 82.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": False,
+                },
+                {
+                    **base,
+                    "symbol": "MISSINGUSDT",
+                    "history_days": pd.NA,
+                    "recent_max_pump_60d_pct": pd.NA,
+                    "recent_pump_60d_days": pd.NA,
+                    "no_large_pump_60d_flag": pd.NA,
+                },
+            ]
+        ),
+        min_transfer_tokens=20_000,
+    ).set_index("symbol")
+
+    assert bool(scored.loc["CLEANUSDT", "_goal_no_recent_pump_pass"])
+    assert bool(scored.loc["CLEANUSDT", "_goal_all_pass"])
+    assert not bool(scored.loc["PUMPEDUSDT", "_goal_no_recent_pump_pass"])
+    assert not bool(scored.loc["PUMPEDUSDT", "_goal_all_pass"])
+    assert not bool(scored.loc["MISSINGUSDT", "_goal_no_recent_pump_pass"])
+    assert not bool(scored.loc["MISSINGUSDT", "_goal_all_pass"])
 
 
 def test_goal_score_ignores_relaxed_holder_and_venue_flags() -> None:
@@ -3130,6 +3199,10 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "low_float_score": 80.0,
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 78.0,
                 "binance_volume_share_pct": 6.0,
                 "bitget_volume_share_pct": 1.2,
@@ -3154,6 +3227,10 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "low_float_score": 80.0,
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "dormant_short_fuse_score": 78.0,
                 "gate_volume_share_pct": 2.0,
                 "scan_mode": "Deep",
