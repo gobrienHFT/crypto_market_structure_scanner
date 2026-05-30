@@ -347,6 +347,50 @@ def test_scan_cex_deposit_flow_does_not_fetch_when_concentration_gate_fails(monk
     assert "no large labelled CEX transfer flow" in result["cex_deposit_flow_evidence_summary"]
 
 
+def test_scan_cex_deposit_flow_rejects_top100_only_concentration(monkeypatch) -> None:
+    monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition(top10_pct=55.0, top100_pct=99.0))
+
+    def _no_http(*args, **kwargs):  # pragma: no cover - this should never run
+        raise AssertionError("CEX transfer sources should not be fetched without top10 control")
+
+    monkeypatch.setattr(cex.requests, "get", _no_http)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "TOP100ONLYUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+        }
+    )
+
+    assert result["cex_deposit_flow_flag"] is False
+    assert result["cex_deposit_flow_source"] == "holder_gate"
+    assert "top10 55.0% / top100 99.0%" in result["cex_deposit_concentration_gate"]
+    assert "requires top10 >= 90.0%" in result["cex_deposit_concentration_gate"]
+
+
+def test_scan_cex_deposit_flow_rejects_precomputed_top100_only_concentration(monkeypatch) -> None:
+    def _no_holder_fetch(*args, **kwargs):  # pragma: no cover - this should never run
+        raise AssertionError("precomputed top10 failure should stop before holder fetch")
+
+    monkeypatch.setattr(cex, "fetch_holder_composition", _no_holder_fetch)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "TOP100ONLYUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+            "top10_holder_pct": 55.0,
+            "top100_holder_pct": 99.0,
+        }
+    )
+
+    assert result["cex_deposit_flow_flag"] is False
+    assert result["cex_deposit_flow_source"] == "precomputed_holder_gate"
+    assert "top10 55.0% / top100 99.0%" in result["cex_deposit_concentration_gate"]
+    assert "requires top10 >= 90.0%" in result["cex_deposit_concentration_gate"]
+
+
 def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
     row = {
         "symbol": "PLAYUSDT",

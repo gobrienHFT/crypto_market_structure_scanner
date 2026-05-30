@@ -629,8 +629,8 @@ def _holder_gate(
         top100 = composition.observed_top_pct
         if not isinstance(top100, (int, float)) or not math.isfinite(float(top100)):
             top100 = None
-    gate = (top10 is not None and top10 >= min_top10_pct) or (top100 is not None and top100 >= min_top100_pct)
-    gate_text = f"top10 {_fmt_pct(top10)} / top100 {_fmt_pct(top100)}"
+    gate = top10 is not None and top10 >= min_top10_pct
+    gate_text = f"top10 {_fmt_pct(top10)} / top100 {_fmt_pct(top100)}; requires top10 >= {_fmt_pct(min_top10_pct)}"
     return gate, top10, top100, gate_text
 
 
@@ -642,10 +642,10 @@ def _precomputed_gate(
 ) -> tuple[bool, str] | None:
     top10 = _pct_value(row.get("top10_holder_pct")) if hasattr(row, "get") else None
     top100 = _pct_value(row.get("top100_holder_pct")) if hasattr(row, "get") else None
-    if top10 is None or top100 is None:
+    if top10 is None:
         return None
-    gate = top10 >= min_top10_pct or top100 >= min_top100_pct
-    return gate, f"top10 {_fmt_pct(top10)} / top100 {_fmt_pct(top100)}"
+    gate = top10 >= min_top10_pct
+    return gate, f"top10 {_fmt_pct(top10)} / top100 {_fmt_pct(top100)}; requires top10 >= {_fmt_pct(min_top10_pct)}"
 
 
 def _flow_score(
@@ -678,7 +678,7 @@ def _flow_score(
             score += 8.0
     if target_count >= 2:
         score += 10.0
-    if (top10 is not None and top10 >= 90.0) or (top100 is not None and top100 >= 95.0):
+    if top10 is not None and top10 >= 90.0:
         score += 10.0
     if whale_sender_count > 0:
         score += 12.0

@@ -3072,11 +3072,6 @@ CEX_DEPOSIT_FLOW_MIN_TOP10_PCT = _parse_env_float(
     default=90.0,
     minimum=0.0,
 )
-CEX_DEPOSIT_FLOW_MIN_TOP100_PCT = _parse_env_float(
-    _env_value("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", default="90"),
-    default=90.0,
-    minimum=0.0,
-)
 CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS = _parse_env_int(
     _env_value("CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS", default="12"),
     default=12,
@@ -4737,7 +4732,6 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         lookback_hours=CEX_DEPOSIT_FLOW_LOOKBACK_HOURS,
         min_transfer_tokens=CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS,
         min_top10_pct=CEX_DEPOSIT_FLOW_MIN_TOP10_PCT,
-        min_top100_pct=CEX_DEPOSIT_FLOW_MIN_TOP100_PCT,
     )
     all_df = apply_terminal_model(all_df)
     all_df = apply_archetype_model(all_df)
@@ -7479,7 +7473,7 @@ def render_breakout_dashboard() -> None:
                 "Wallet-to-CEX flow monitor: for mapped perp tokens, the scanner checks Etherscan-style "
                 "Advanced Filter transfer pages for large token transfers into labelled CEX wallets over the last "
                 f"{CEX_DEPOSIT_FLOW_LOOKBACK_HOURS}h. Rows are only scored when holder concentration already meets the "
-                f"gate: top 10 >= {CEX_DEPOSIT_FLOW_MIN_TOP10_PCT:.0f}% or top 100 >= {CEX_DEPOSIT_FLOW_MIN_TOP100_PCT:.0f}%. "
+                f"gate: top 10 >= {CEX_DEPOSIT_FLOW_MIN_TOP10_PCT:.0f}%. Top 100 concentration is context only. "
                 "This is venue-flow evidence for structural-risk research, not trade instruction or an intent conclusion."
             )
             flow_score = pd.to_numeric(
