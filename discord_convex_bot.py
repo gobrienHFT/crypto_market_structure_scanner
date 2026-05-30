@@ -932,6 +932,28 @@ def _parse_breakout_days(days: Any) -> int | None:
     return parsed if 1 <= parsed <= MAX_DYNAMIC_BREAKOUT_DAYS else None
 
 
+def _parse_breakout_window_list(windows: Any, *, default: tuple[int, ...] = (1, 2, 3, 4, 5, 20)) -> tuple[list[int], list[str]]:
+    text = str(windows or "").strip()
+    if not text:
+        return list(default), []
+    if text.lower() in {"0", "off", "false", "none", "no"}:
+        return [], []
+
+    parsed: list[int] = []
+    ignored: list[str] = []
+    for token in re.split(r"[,;\s]+", text):
+        token = token.strip()
+        if not token:
+            continue
+        days = _parse_breakout_days(token)
+        if days is None:
+            ignored.append(token)
+            continue
+        if days not in parsed:
+            parsed.append(days)
+    return parsed[:8], ignored
+
+
 def _breakout_window_help() -> str:
     common = ", ".join(f"{window}D" for window in COMMON_BREAKOUT_WINDOWS)
     return f"any 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D window; common dashboard columns: {common}"
@@ -1034,6 +1056,78 @@ def _apply_dynamic_breakout_window(frame: pd.DataFrame, *, direction: str, days:
         out.at[idx, level_column] = float(level)
         out.at[idx, used_days_column] = int(used_days)
         stats["checked"] += 1
+    return out, stats
+
+
+def _apply_ravelab_high_breakout_windows(frame: pd.DataFrame, windows: list[int]) -> tuple[pd.DataFrame, dict[str, int]]:
+    out = frame.copy()
+    out["_ravelab_breakout_any"] = False
+    out["_ravelab_breakout_windows"] = "disabled" if not windows else "none"
+    stats = {"checked": 0, "errors": 0, "insufficient": 0, "cached": 0}
+    if out.empty or not windows:
+        return out, stats
+    if "symbol" not in out.columns:
+        stats["errors"] = len(out)
+        out["_ravelab_breakout_windows"] = "missing symbol"
+        return out, stats
+
+    windows = sorted(dict.fromkeys(int(window) for window in windows if 1 <= int(window) <= MAX_DYNAMIC_BREAKOUT_DAYS))
+    missing_windows = [window for window in windows if f"broke_high_{window}d" not in out.columns]
+    timeout = _env_int("DISCORD_BREAKOUT_HTTP_TIMEOUT_SECONDS", _env_int("HTTP_TIMEOUT", 12, minimum=3), minimum=3)
+    rps = _env_float("DISCORD_BREAKOUT_REQUESTS_PER_SECOND", 6.0, minimum=0.5)
+    client = BinanceFuturesPublic(timeout=timeout, requests_per_second=rps) if missing_windows else None
+    max_missing = max(missing_windows) if missing_windows else 0
+
+    for idx, row in out.iterrows():
+        hits: list[str] = []
+        misses = 0
+        unavailable = 0
+        klines: list[list[Any]] | None = None
+        observed: float | None = None
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip()
+
+        for window in windows:
+            static_column = f"broke_high_{window}d"
+            if static_column in out.columns:
+                stats["cached"] += 1
+                if _boolish_scalar(row.get(static_column)):
+                    hits.append(f"{window}D")
+                else:
+                    misses += 1
+                continue
+
+            if client is None or not symbol:
+                unavailable += 1
+                continue
+            try:
+                if klines is None:
+                    klines = client.klines_1d(symbol, limit=min(MAX_DYNAMIC_BREAKOUT_DAYS + 1, max_missing + 1))
+                    observed = _current_breakout_observation(row, klines, direction="high")
+                level, used_days = _breakout_level_from_klines(klines, days=window, direction="high")
+            except Exception:
+                stats["errors"] += 1
+                unavailable += 1
+                continue
+            if level is None or observed is None:
+                stats["insufficient"] += 1
+                unavailable += 1
+                continue
+            stats["checked"] += 1
+            if observed > level:
+                suffix = f"({used_days}d)" if used_days and used_days < window else ""
+                hits.append(f"{window}D{suffix}")
+            else:
+                misses += 1
+
+        out.at[idx, "_ravelab_breakout_any"] = bool(hits)
+        if hits:
+            out.at[idx, "_ravelab_breakout_windows"] = ",".join(hits)
+        elif unavailable and not misses:
+            out.at[idx, "_ravelab_breakout_windows"] = "unchecked"
+        elif unavailable:
+            out.at[idx, "_ravelab_breakout_windows"] = f"none ({unavailable} unchecked)"
+        else:
+            out.at[idx, "_ravelab_breakout_windows"] = "none"
     return out, stats
 
 
@@ -2978,6 +3072,7 @@ def _ravelab_line(row: pd.Series) -> str:
     squeeze = _safe_float(row.get("_ravelab_squeeze_score")) or 0.0
     breakout = _safe_float(row.get("_ravelab_breakout_score")) or 0.0
     history_days = _safe_float(row.get("_ravelab_history_days"))
+    breakout_windows = _clip_text(row.get("_ravelab_breakout_windows", ""), 44) or "n/a"
     has_binance = "Y" if _boolish_scalar(row.get("_ravelab_has_binance")) else "N"
     has_bitget = "Y" if _boolish_scalar(row.get("_ravelab_has_bitget")) else "N"
     has_gate = "Y" if _boolish_scalar(row.get("_ravelab_has_gate")) else "N"
@@ -2997,7 +3092,7 @@ def _ravelab_line(row: pd.Series) -> str:
         f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
         f"gates whale {whale_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
         f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
-        f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | breakout {breakout:.0f} | "
+        f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
         f"CEX {targets} {cex_count}tx max {max_amount} | control {control:.0f} float {float_score:.0f} | "
         f"quiet {quiet:.0f} heat {heat:.0f} | dashboard {setup:.0f} latent {latent:.0f}{anchor} | next: {next_check}"
     )
@@ -3013,11 +3108,13 @@ def _load_ravelab_list(
     min_history_days: int = 60,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
+    breakout_windows: str = "1D,2D,3D,4D,5D,20D",
     style: str = "both",
     require_quiet: bool = True,
     require_target_flow: bool = False,
     require_binance_bitget: bool = True,
     require_dormant_2m: bool = True,
+    require_breakout_high: bool = False,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
@@ -3026,6 +3123,13 @@ def _load_ravelab_list(
     style_key = str(style or "both").strip().lower()
     if style_key not in {"both", "rave", "lab"}:
         style_key = "both"
+    breakout_days, ignored_breakout_windows = _parse_breakout_window_list(breakout_windows)
+    breakout_label = ",".join(f"{days}D" for days in breakout_days) if breakout_days else "disabled"
+    ignored_breakout_text = (
+        f" | Ignored breakout windows: {', '.join(ignored_breakout_windows[:5])}"
+        if ignored_breakout_windows
+        else ""
+    )
     header = (
         "Strict RAVE/LAB crime-pump early radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
@@ -3033,7 +3137,8 @@ def _load_ravelab_list(
         f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
-        f"Quiet required: {require_quiet} | Target flow required: {require_target_flow}\n"
+        f"Quiet required: {require_quiet} | Target flow required: {require_target_flow} | "
+        f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high}{ignored_breakout_text}\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
     if frame.empty:
@@ -3058,6 +3163,11 @@ def _load_ravelab_list(
         selected = selected[_boolish_series(selected.get("_ravelab_early_gate"), index=selected.index)].copy()
     if require_target_flow:
         selected = selected[_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index)].copy()
+    breakout_stats = {"checked": 0, "errors": 0, "insufficient": 0, "cached": 0}
+    if not selected.empty:
+        selected, breakout_stats = _apply_ravelab_high_breakout_windows(selected, breakout_days)
+        if require_breakout_high:
+            selected = selected[_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index)].copy()
 
     if selected.empty:
         gate_counts = (
@@ -3080,6 +3190,10 @@ def _load_ravelab_list(
         lines = [
             header,
             gate_counts,
+            (
+                f"Breakout high checks: {breakout_label} | dynamic checks {breakout_stats['checked']} | "
+                f"errors {breakout_stats['errors']} | insufficient {breakout_stats['insufficient']}"
+            ),
             "",
             "No rows passed the requested strict filters. Nearest rows, with failed gates visible:",
             "",
@@ -3091,13 +3205,14 @@ def _load_ravelab_list(
         [
             "_ravelab_alert_flag",
             "_ravelab_target_flow",
+            "_ravelab_breakout_any",
             "_ravelab_whale_pct",
             "_ravelab_early_score",
             "_ravelab_squeeze_score",
             "_ravelab_archetype_score",
             "symbol",
         ],
-        ascending=[False, False, False, False, False, False, True],
+        ascending=[False, False, False, False, False, False, False, True],
     ).head(min(max(int(limit), 1), 100))
     target_count = int(_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index).sum())
     rave_count = int(selected["_ravelab_side"].astype(str).eq("RAVE-like").sum())
@@ -3117,6 +3232,10 @@ def _load_ravelab_list(
             f"Target-flow rows: {target_count} | Read: historical-analogue screen, not trade instruction."
         ),
         gate_summary,
+        (
+            f"Breakout high checks: {breakout_label} | dynamic checks {breakout_stats['checked']} | "
+            f"cached flags {breakout_stats['cached']} | errors {breakout_stats['errors']} | insufficient {breakout_stats['insufficient']}"
+        ),
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",
         "",
@@ -4100,11 +4219,13 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
+        breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
         style="Show both, RAVE-like, or LAB-like structures.",
         require_quiet="Require early/no-chase heat gate.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_binance_bitget="Require both Binance and Bitget venue evidence.",
         require_dormant_2m="Require no 90D/180D high break and low recent heat.",
+        require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
     )
     @app_commands.choices(
         style=[
@@ -4123,11 +4244,13 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens: float = 20_000.0,
         limit: int = 20,
         lookback_hours: int = 24,
+        breakout_windows: str = "1D,2D,3D,4D,5D,20D",
         style: str = "both",
         require_quiet: bool = True,
         require_target_flow: bool = False,
         require_binance_bitget: bool = True,
         require_dormant_2m: bool = True,
+        require_breakout_high: bool = False,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -4146,11 +4269,13 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_history_days=max(1, int(min_history_days)),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            breakout_windows=breakout_windows,
             style=style,
             require_quiet=require_quiet,
             require_target_flow=require_target_flow,
             require_binance_bitget=require_binance_bitget,
             require_dormant_2m=require_dormant_2m,
+            require_breakout_high=require_breakout_high,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
         embed.set_footer(text=DISCORD_FOOTER)

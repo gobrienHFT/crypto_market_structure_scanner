@@ -1609,6 +1609,21 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
 
+    class FakeBinance:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def klines_1d(self, symbol: str, limit: int = 200, **kwargs):
+            if symbol == "CAPUSDT":
+                closed = [[0, 0, high, 1, 0] for high in range(1, max(limit, 2))]
+                return [*closed, [0, 0, 100, 1, 0]]
+            if symbol == "LABXUSDT":
+                closed = [[0, 0, 100, 1, 0] for _ in range(max(limit - 1, 1))]
+                return [*closed, [0, 0, 50, 1, 0]]
+            return []
+
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
+
     title, chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000)
     output = "\n".join(chunks)
 
@@ -1616,9 +1631,12 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Anchors: RAVEUSDT 2026-04-18" in output
     assert "Whale gate: >= 90.0%" in output
     assert "History gate: >= 60d" in output
+    assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
+    assert "Breakout high checks:" in output
     assert "All shown rows passed whale >= 90.0%, Binance+Bitget, history >= 60d and dormant2m, squeeze >= 50." in output
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
+    assert "highs 1D,2D,3D,4D,5D,20D" in output
     assert "/LABXUSDT" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "gates whale Y venue Y dormant2m Y squeeze Y" in output
@@ -1633,6 +1651,17 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     rave_output = "\n".join(rave_chunks)
     assert "/CAPUSDT | RAVE-like" in rave_output
     assert "/LABXUSDT" not in rave_output
+
+    _, breakout_chunks = bot._load_ravelab_list(
+        10,
+        min_score=58,
+        min_archetype=0,
+        min_tokens=20_000,
+        require_breakout_high=True,
+    )
+    breakout_output = "\n".join(breakout_chunks)
+    assert "/CAPUSDT | RAVE-like" in breakout_output
+    assert "/LABXUSDT" not in breakout_output
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:

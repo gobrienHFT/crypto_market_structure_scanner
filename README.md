@@ -215,7 +215,7 @@ Supported commands include:
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_quiet] [require_behavior_gate]
-/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [min_tokens] [limit] [lookback_hours] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m]
+/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_breakout_high]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_venue_gate]
 /setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict]
 /flowproof <symbol> [min_tokens] [lookback_hours]
@@ -256,7 +256,7 @@ The bot can retrieve:
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
-- a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration, Binance+Bitget venue evidence, at least 60 days of history plus 2-month no-chase/dormancy, and squeeze priming before ranking RAVE/LAB analogues
+- a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration, Binance+Bitget venue evidence, at least 60 days of history plus 2-month no-chase/dormancy, and squeeze priming before ranking RAVE/LAB analogues, with optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, whale dominance, low float/high FDV, short crowding, and not-late structure
 - symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps
