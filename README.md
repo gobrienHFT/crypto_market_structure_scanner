@@ -259,7 +259,7 @@ The bot can retrieve:
 - a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration with ETH/BNB/ARB chain+contract holder evidence, Binance+Bitget trading evidence, at least 60 days of history plus 2-month no-pump/no-chase dormancy, and squeeze priming before ranking RAVE/LAB analogues, with compact holder source/count/chain/contract evidence, 60D recent-pump evidence, venue provenance, and optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, whale dominance, low float/high FDV, short crowding, and not-late structure
-- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps
+- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, including top-holder sender provenance when the transfer origin matches a scanned holder wallet
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
 - top terminal market-structure evidence rows
 - top timing-quality rows

@@ -428,6 +428,7 @@ def _cex_attempt_amount_text(row: pd.Series, *, min_transfer_tokens: float | Non
     total_amount = _safe_float(row.get("cex_deposit_24h_token_amount"))
     max_amount = _safe_float(row.get("cex_deposit_24h_max_amount"))
     total_pct = _safe_pct(row.get("cex_deposit_24h_total_pct_supply"))
+    whale_sender = _whale_sender_text(row, include_amount=True)
 
     if count > 0 or (total_amount is not None and total_amount > 0):
         parts: list[str] = []
@@ -439,9 +440,11 @@ def _cex_attempt_amount_text(row: pd.Series, *, min_transfer_tokens: float | Non
             parts.append(f"max {_fmt_compact_number(max_amount)}")
         if total_pct is not None:
             parts.append(f"{total_pct:.2f}% supply")
+        if whale_sender:
+            parts.append(whale_sender)
         return " | ".join(parts)
 
-    error = str(row.get("cex_deposit_flow_error", "") or "")
+    error = _clean_scalar_text(row.get("cex_deposit_flow_error", ""))
     if "no labelled CEX destination matches" in error:
         return "API fallback reached token transfers; no labelled CEX destination matched"
     if error and min_transfer_tokens is not None:
@@ -449,6 +452,29 @@ def _cex_attempt_amount_text(row: pd.Series, *, min_transfer_tokens: float | Non
     if error:
         return "no confirmed CEX transfer parsed"
     return ""
+
+
+def _whale_sender_text(row: pd.Series, *, include_amount: bool = False) -> str:
+    count = int(_safe_float(row.get("cex_deposit_24h_whale_sender_count")) or 0)
+    if count <= 0:
+        return ""
+    parts = [f"{count} top-holder sender tx"]
+    amount = _safe_float(row.get("cex_deposit_24h_whale_sender_token_amount"))
+    if include_amount and amount is not None and amount > 0:
+        parts.append(f"whale-origin {_fmt_compact_number(amount)}")
+    rank = _safe_float(row.get("cex_deposit_24h_top_sender_rank"))
+    pct = _safe_pct(row.get("cex_deposit_24h_top_sender_pct"))
+    address = _short_contract_text(row.get("cex_deposit_24h_top_sender_address", ""))
+    detail: list[str] = []
+    if rank is not None and rank > 0:
+        detail.append(f"r{int(rank)}")
+    if pct is not None:
+        detail.append(f"{pct:.1f}%")
+    if address:
+        detail.append(address)
+    if detail:
+        parts.append(" ".join(detail))
+    return " | ".join(parts)
 
 
 def _cex_flow_attempt_symbol_lines(
@@ -2572,18 +2598,18 @@ def _goal_score_frame(
 
 
 def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
-    if bool(row.get("_goal_all_pass")) and (_safe_float(row.get("_goal_setup_score")) or 0.0) >= min_score:
+    if _boolish_scalar(row.get("_goal_all_pass")) and (_safe_float(row.get("_goal_setup_score")) or 0.0) >= min_score:
         return "PASS"
-    if not bool(row.get("_goal_target_flow")):
-        return "DATA GAP" if bool(row.get("_goal_any_flow")) or str(row.get("cex_deposit_flow_error", "") or "").strip() else "REJECT"
+    if not _boolish_scalar(row.get("_goal_target_flow")):
+        return "DATA GAP" if _boolish_scalar(row.get("_goal_any_flow")) or _clean_scalar_text(row.get("cex_deposit_flow_error", "")) else "REJECT"
     missing: list[str] = []
-    if not bool(row.get("_goal_whale_pass")):
+    if not _boolish_scalar(row.get("_goal_whale_pass")):
         missing.append("whale")
-    if not bool(row.get("_goal_short_pass")):
+    if not _boolish_scalar(row.get("_goal_short_pass")):
         missing.append("short")
-    if not bool(row.get("_goal_float_pass")):
+    if not _boolish_scalar(row.get("_goal_float_pass")):
         missing.append("float")
-    if not bool(row.get("_goal_structure_pass")):
+    if not _boolish_scalar(row.get("_goal_structure_pass")):
         missing.append("timing")
     return "WATCH" if missing else "WATCH"
 
@@ -3429,12 +3455,13 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
         verdict = "VERIFIED target-CEX transfer evidence"
     elif any_confirmed:
         verdict = "VERIFIED non-target CEX transfer; not Binance/Gate/Bitget"
-    elif str(row.get("cex_deposit_flow_error", "") or "").strip():
+    elif _clean_scalar_text(row.get("cex_deposit_flow_error", "")):
         verdict = "DATA GAP: transfer source blocked/error or no labelled destination match"
     else:
         verdict = "NO VERIFIED CEX transfer at this floor/lookback"
     top_tx = _clip_text(row.get("cex_deposit_24h_top_tx", ""), 90) or "n/a"
     source_url = _clip_text(row.get("cex_deposit_24h_source_url", ""), 240)
+    whale_sender = _whale_sender_text(row, include_amount=True)
     lines = [
         f"{symbol} flow proof",
         f"Verdict: {verdict}",
@@ -3448,6 +3475,7 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
         f"Total notional: {_fmt_compact_number(row.get('cex_deposit_24h_notional_usd'))}",
         f"Total supply pct: {(_safe_pct(row.get('cex_deposit_24h_total_pct_supply')) or 0.0):.2f}%",
         f"Largest supply pct: {(_safe_pct(row.get('cex_deposit_24h_max_pct_supply')) or 0.0):.2f}%",
+        *( [f"Whale sender: {whale_sender}"] if whale_sender else [] ),
         f"Top tx/hash: {top_tx}",
         f"Flow source: {_clip_text(row.get('cex_deposit_flow_source', ''), 80) or 'n/a'}",
         f"Concentration gate: {_clip_text(row.get('cex_deposit_concentration_gate', ''), 120) or 'n/a'}",
@@ -3675,11 +3703,13 @@ def _load_cex_targets_list(
     lines = [header, f"Rows: {len(rows)}" + (f" | {counts}" if counts else ""), "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
     for _, row in rows.iterrows():
         symbol = str(row.get("symbol", "") or "").upper().strip() or "UNKNOWN"
+        whale_sender = _whale_sender_text(row)
         lines.append(
             f"/{symbol} | {_target_cex_text(row)} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.0f}/100 | "
             f"{int(_safe_float(row.get('cex_deposit_24h_count')) or 0)} tx | total {_fmt_compact_number(row.get('cex_deposit_24h_token_amount'))} | "
             f"max {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))} | top tx {_clip_text(row.get('cex_deposit_24h_top_tx', ''), 48) or 'n/a'} | "
             f"source {_clip_text(row.get('cex_deposit_flow_source', ''), 38) or 'n/a'}"
+            f"{f' | {whale_sender}' if whale_sender else ''}"
         )
     return "Target CEX transfer board", _chunk_text_lines(lines)
 

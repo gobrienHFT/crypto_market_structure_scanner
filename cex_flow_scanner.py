@@ -32,6 +32,12 @@ CEX_DEPOSIT_FLOW_COLUMNS = [
     "cex_deposit_24h_max_notional_usd",
     "cex_deposit_24h_total_pct_supply",
     "cex_deposit_24h_max_pct_supply",
+    "cex_deposit_24h_whale_sender_count",
+    "cex_deposit_24h_whale_sender_token_amount",
+    "cex_deposit_24h_whale_sender_max_amount",
+    "cex_deposit_24h_top_sender_address",
+    "cex_deposit_24h_top_sender_rank",
+    "cex_deposit_24h_top_sender_pct",
     "cex_deposit_24h_notional_to_ask_depth_pct",
     "cex_deposit_24h_max_notional_to_ask_depth_pct",
     "cex_deposit_24h_notional_to_volume_pct",
@@ -74,6 +80,8 @@ CEX_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("robinhood", "Robinhood"),
 )
 
+ADDRESS_RE = re.compile(r"0x[a-fA-F0-9]{40}")
+
 ETHERSCAN_V2_API_URL = "https://api.etherscan.io/v2/api"
 
 TOKEN_TRANSFER_API_CONFIGS: dict[str, dict[str, Any]] = {
@@ -98,6 +106,12 @@ def _default_result(note: str = "", error: str = "") -> dict[str, Any]:
         "cex_deposit_24h_max_notional_usd": math.nan,
         "cex_deposit_24h_total_pct_supply": math.nan,
         "cex_deposit_24h_max_pct_supply": math.nan,
+        "cex_deposit_24h_whale_sender_count": 0,
+        "cex_deposit_24h_whale_sender_token_amount": 0.0,
+        "cex_deposit_24h_whale_sender_max_amount": 0.0,
+        "cex_deposit_24h_top_sender_address": "",
+        "cex_deposit_24h_top_sender_rank": math.nan,
+        "cex_deposit_24h_top_sender_pct": math.nan,
         "cex_deposit_24h_notional_to_ask_depth_pct": math.nan,
         "cex_deposit_24h_max_notional_to_ask_depth_pct": math.nan,
         "cex_deposit_24h_notional_to_volume_pct": math.nan,
@@ -177,8 +191,27 @@ def _row_value(row: Mapping[str, Any] | pd.Series, key: str, default: Any = "") 
 
 
 def _clean_text(value: Any) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    return "" if text.lower() in {"nan", "none", "null"} else text
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    text = re.sub(r"\s+", " ", str(value).strip())
+    return "" if text.lower() in {"nan", "none", "null", "<na>"} else text
+
+
+def _extract_address(value: Any) -> str:
+    match = ADDRESS_RE.search(_clean_text(value))
+    return match.group(0).lower() if match else ""
+
+
+def _short_address(value: Any) -> str:
+    address = _extract_address(value)
+    if not address:
+        return ""
+    return f"{address[:6]}...{address[-4:]}"
 
 
 def _exchange_label(value: Any) -> str:
@@ -310,6 +343,7 @@ def _read_advanced_filter_rows(html_text: str, *, lookback_hours: int) -> list[d
             from_text = _clean_text(row.get(from_col))
             if _exchange_label(from_text):
                 continue
+            from_address = _extract_address(from_text)
             amount = _safe_float(row.get(amount_col))
             if amount is None or amount <= 0:
                 continue
@@ -318,6 +352,7 @@ def _read_advanced_filter_rows(html_text: str, *, lookback_hours: int) -> list[d
                     "tx": _clean_text(row.get(tx_col)),
                     "age_hours": age_hours,
                     "from": from_text,
+                    "from_address": from_address,
                     "to": to_text,
                     "exchange": exchange,
                     "amount": amount,
@@ -368,7 +403,7 @@ def _parse_cex_address_labels(raw: str) -> dict[tuple[str, str], str]:
                 chain, address, label = "*", parts[0], parts[1]
             else:
                 chain, address, label = normalize_chain(parts[0]), parts[1], parts[2]
-        match = re.search(r"0x[a-fA-F0-9]{40}", str(address or ""))
+        match = ADDRESS_RE.search(_clean_text(address))
         clean_label = _clean_text(label)
         if match and clean_label:
             labels[(chain, match.group(0).lower())] = clean_label
@@ -391,9 +426,9 @@ def load_cex_address_book(path: Path | None = None) -> dict[tuple[str, str], str
             chain_col = lower_columns.get("chain") or lower_columns.get("network")
             if address_col and label_col:
                 for _, row in frame.iterrows():
-                    match = re.search(r"0x[a-fA-F0-9]{40}", str(row.get(address_col, "")))
+                    match = ADDRESS_RE.search(str(row.get(address_col, "")))
                     label = _clean_text(row.get(label_col, ""))
-                    chain = normalize_chain(str(row.get(chain_col, "*") or "*")) if chain_col else "*"
+                    chain = normalize_chain(_clean_text(row.get(chain_col, "*")) or "*") if chain_col else "*"
                     if match and label:
                         labels[(chain, match.group(0).lower())] = label
     return labels
@@ -478,8 +513,8 @@ def _read_token_transfer_api_rows(
         amount = _token_amount_from_api_row(item)
         if amount is None or amount < min_transfer_tokens:
             continue
-        to_address = str(item.get("to") or item.get("To") or "").lower().strip()
-        from_address = str(item.get("from") or item.get("From") or "").lower().strip()
+        to_address = _extract_address(item.get("to")) or _extract_address(item.get("To"))
+        from_address = _extract_address(item.get("from")) or _extract_address(item.get("From"))
         to_label = (
             label_by_address.get(to_address, "")
             or _row_label(item, "toName", "toLabel", "to_label", "to_address_label", "toContractName")
@@ -498,6 +533,7 @@ def _read_token_transfer_api_rows(
                 "tx": _clean_text(item.get("hash") or item.get("transactionHash") or item.get("tx_hash")),
                 "age_hours": age_hours,
                 "from": from_label or from_address,
+                "from_address": from_address,
                 "to": to_label or to_address,
                 "exchange": exchange,
                 "amount": amount,
@@ -597,6 +633,8 @@ def _flow_score(
     target_count: int,
     top10: float | None,
     top100: float | None,
+    whale_sender_count: int = 0,
+    whale_sender_max_pct: float | None = None,
 ) -> float:
     if count <= 0:
         return 0.0
@@ -619,6 +657,13 @@ def _flow_score(
         score += 10.0
     if (top10 is not None and top10 >= 90.0) or (top100 is not None and top100 >= 95.0):
         score += 10.0
+    if whale_sender_count > 0:
+        score += 12.0
+    if whale_sender_max_pct is not None:
+        if whale_sender_max_pct >= 5.0:
+            score += 12.0
+        elif whale_sender_max_pct >= 1.0:
+            score += 6.0
     return max(0.0, min(100.0, score))
 
 
@@ -704,6 +749,53 @@ def _inventory_stress_metrics(
     }
 
 
+def _sender_holder_evidence(
+    rows: list[dict[str, Any]],
+    composition: HolderComposition,
+) -> dict[str, Any]:
+    holders_by_address = {
+        _extract_address(getattr(holder, "address", "")): holder
+        for holder in composition.top_holders
+        if _extract_address(getattr(holder, "address", ""))
+    }
+    whale_rows: list[dict[str, Any]] = []
+    for item in rows:
+        address = _extract_address(item.get("from_address") or item.get("from"))
+        holder = holders_by_address.get(address)
+        if holder is None:
+            continue
+        enriched = dict(item)
+        enriched["_sender_address"] = address
+        enriched["_sender_rank"] = int(getattr(holder, "rank", 0) or 0)
+        enriched["_sender_pct"] = _pct_value(getattr(holder, "percent", math.nan))
+        whale_rows.append(enriched)
+
+    if not whale_rows:
+        return {
+            "cex_deposit_24h_whale_sender_count": 0,
+            "cex_deposit_24h_whale_sender_token_amount": 0.0,
+            "cex_deposit_24h_whale_sender_max_amount": 0.0,
+            "cex_deposit_24h_top_sender_address": "",
+            "cex_deposit_24h_top_sender_rank": math.nan,
+            "cex_deposit_24h_top_sender_pct": math.nan,
+        }
+
+    total = sum(float(item.get("amount") or 0.0) for item in whale_rows)
+    top = max(whale_rows, key=lambda item: float(item.get("amount") or 0.0))
+    return {
+        "cex_deposit_24h_whale_sender_count": len(whale_rows),
+        "cex_deposit_24h_whale_sender_token_amount": total,
+        "cex_deposit_24h_whale_sender_max_amount": float(top.get("amount") or 0.0),
+        "cex_deposit_24h_top_sender_address": top.get("_sender_address", ""),
+        "cex_deposit_24h_top_sender_rank": int(top.get("_sender_rank") or 0),
+        "cex_deposit_24h_top_sender_pct": (
+            float(top["_sender_pct"])
+            if top.get("_sender_pct") is not None and math.isfinite(float(top["_sender_pct"]))
+            else math.nan
+        ),
+    }
+
+
 def infer_cex_flow_risk_level(row: Mapping[str, Any] | pd.Series) -> str:
     score = _safe_float(_row_value(row, "cex_deposit_flow_score", 0.0)) or 0.0
     inventory_stress = _safe_float(_row_value(row, "cex_deposit_inventory_stress_score", 0.0)) or 0.0
@@ -730,6 +822,11 @@ def build_cex_flow_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
     gate = _clean_text(_row_value(row, "cex_deposit_concentration_gate", "")) or "concentration gate met"
     total_pct = _pct_value(_row_value(row, "cex_deposit_24h_total_pct_supply", math.nan))
     max_pct = _pct_value(_row_value(row, "cex_deposit_24h_max_pct_supply", math.nan))
+    whale_sender_count = int(_safe_float(_row_value(row, "cex_deposit_24h_whale_sender_count", 0)) or 0)
+    whale_sender_amount = _safe_float(_row_value(row, "cex_deposit_24h_whale_sender_token_amount", 0.0)) or 0.0
+    whale_sender_rank = _safe_float(_row_value(row, "cex_deposit_24h_top_sender_rank", math.nan))
+    whale_sender_pct = _pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
+    whale_sender_address = _short_address(_row_value(row, "cex_deposit_24h_top_sender_address", ""))
     inventory_note = _clean_text(_row_value(row, "cex_deposit_inventory_stress_note", ""))
     pct_parts: list[str] = []
     if total_pct is not None:
@@ -740,6 +837,19 @@ def build_cex_flow_evidence_summary(row: Mapping[str, Any] | pd.Series) -> str:
         pct_parts.append(f"notional {_fmt_usd(notional)}")
     if inventory_note:
         pct_parts.append(inventory_note)
+    if whale_sender_count > 0:
+        sender = f"{whale_sender_count} top-holder sender tx"
+        sender += f"; whale-origin total {_fmt_amount(whale_sender_amount)}"
+        detail_parts: list[str] = []
+        if whale_sender_rank is not None and whale_sender_rank > 0:
+            detail_parts.append(f"rank {int(whale_sender_rank)}")
+        if whale_sender_pct is not None:
+            detail_parts.append(_fmt_pct(whale_sender_pct))
+        if whale_sender_address:
+            detail_parts.append(whale_sender_address)
+        if detail_parts:
+            sender += f"; top sender {' '.join(detail_parts)}"
+        pct_parts.append(sender)
     pct_text = f"; {'; '.join(pct_parts)}" if pct_parts else ""
     if count <= 0:
         return f"{gate}; no large labelled CEX transfer flow found in the active lookback."
@@ -775,9 +885,20 @@ def build_cex_flow_alert_line(row: Mapping[str, Any] | pd.Series) -> str:
     total_amount = _fmt_amount(_row_value(row, "cex_deposit_24h_token_amount", math.nan))
     total_pct = _pct_value(_row_value(row, "cex_deposit_24h_total_pct_supply", math.nan))
     inventory_stress = _safe_float(_row_value(row, "cex_deposit_inventory_stress_score", 0.0)) or 0.0
+    whale_sender_count = int(_safe_float(_row_value(row, "cex_deposit_24h_whale_sender_count", 0)) or 0)
+    whale_sender_rank = _safe_float(_row_value(row, "cex_deposit_24h_top_sender_rank", math.nan))
+    whale_sender_pct = _pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
     pct_text = f" | {total_pct:.2f}% supply" if total_pct is not None else ""
     stress_text = f" | inventory stress {inventory_stress:.0f}" if inventory_stress > 0.0 else ""
-    return f"{symbol} | flow {score:.0f}/100 | {risk} | {count} tx | {targets} | total {total_amount}{pct_text}{stress_text}"
+    whale_text = ""
+    if whale_sender_count > 0:
+        whale_parts = [f"{whale_sender_count} top-holder sender tx"]
+        if whale_sender_rank is not None and whale_sender_rank > 0:
+            whale_parts.append(f"r{int(whale_sender_rank)}")
+        if whale_sender_pct is not None:
+            whale_parts.append(_fmt_pct(whale_sender_pct))
+        whale_text = f" | {' '.join(whale_parts)}"
+    return f"{symbol} | flow {score:.0f}/100 | {risk} | {count} tx | {targets} | total {total_amount}{pct_text}{stress_text}{whale_text}"
 
 
 def build_cex_flow_discord_block(row: Mapping[str, Any] | pd.Series, *, max_chars: int = 900) -> str:
@@ -841,6 +962,9 @@ def _apply_flow_rows_to_result(
         max_pct_supply=max_pct_supply,
     )
     targets = sorted({str(item["exchange"]) for item in rows if item.get("exchange")})
+    sender_evidence = _sender_holder_evidence(rows, composition)
+    whale_sender_count = int(_safe_float(sender_evidence.get("cex_deposit_24h_whale_sender_count", 0)) or 0)
+    whale_sender_pct = _pct_value(sender_evidence.get("cex_deposit_24h_top_sender_pct"))
     score = _flow_score(
         count=len(rows),
         total_pct_supply=total_pct_supply,
@@ -848,8 +972,16 @@ def _apply_flow_rows_to_result(
         target_count=len(targets),
         top10=top10,
         top100=top100,
+        whale_sender_count=whale_sender_count,
+        whale_sender_max_pct=whale_sender_pct,
     )
     source_prefix = "API fallback " if source == "token_transfer_api" else ""
+    sender_note = (
+        f" Top-holder sender evidence: {whale_sender_count} transfer(s), "
+        f"{_fmt_amount(sender_evidence.get('cex_deposit_24h_whale_sender_token_amount'))} tokens."
+        if whale_sender_count > 0
+        else ""
+    )
     result.update(
         {
             "cex_deposit_flow_score": score,
@@ -860,12 +992,14 @@ def _apply_flow_rows_to_result(
             **inventory_stress,
             "cex_deposit_24h_total_pct_supply": total_pct_supply if total_pct_supply is not None else math.nan,
             "cex_deposit_24h_max_pct_supply": max_pct_supply if max_pct_supply is not None else math.nan,
+            **sender_evidence,
             "cex_deposit_24h_target_exchanges": ", ".join(targets),
             "cex_deposit_24h_top_tx": str(rows[0].get("tx", "")),
             "cex_deposit_flow_source": source,
             "cex_deposit_flow_note": (
                 f"{source_prefix}concentration-gated CEX deposit flow: {len(rows)} large transfer(s) into "
                 f"{', '.join(targets)} in {lookback_hours}h; {gate_text}; total {_fmt_amount(total_amount)} tokens."
+                f"{sender_note}"
             ),
         }
     )

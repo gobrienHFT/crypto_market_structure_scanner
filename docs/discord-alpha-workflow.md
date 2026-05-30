@@ -70,7 +70,7 @@ Use `/pumpwatch` as the fastest catch board. It does not force every row to have
 
 Use `/setupscore` as the strict full-thesis ranking. It requires confirmed recent transfer evidence into Binance, Gate.io, or Bitget, whale concentration, short-account dominance, low-float/high-FDV evidence, and a not-late/dormant structure. Use `strict:false` when you want the nearest misses for diagnosis.
 
-Use `/flowproof` when a transfer claim needs audit detail. It prints the verdict, transfer count, total and largest token amount, top tx/hash, target CEX labels, source path, concentration gate, data error, and query URL. A row is only called verified when the active scan has count > 0, largest transfer above the floor, and a labelled destination.
+Use `/flowproof` when a transfer claim needs audit detail. It prints the verdict, transfer count, total and largest token amount, top-holder sender evidence when the sender matches a scanned holder wallet, top tx/hash, target CEX labels, source path, concentration gate, data error, and query URL. A row is only called verified when the active scan has count > 0, largest transfer above the floor, and a labelled destination.
 
 Use `/coincheck` for one-symbol pass/fail triage across the full checklist: target-CEX flow, whale dominance, short dominance, low-float/high-FDV, and dormant/not-late structure.
 

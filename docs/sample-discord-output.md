@@ -143,6 +143,7 @@ Targets: Bitget, GateIO
 Transfers: 3
 Total token amount: 26.00M
 Largest transfer: 12.00M
+Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111
 Top tx/hash: 0xprime
 Flow source: token_transfer_api
 Concentration gate: top10 91.0% / top100 99.0%

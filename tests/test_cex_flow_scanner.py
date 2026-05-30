@@ -110,7 +110,7 @@ def test_scan_cex_deposit_flow_falls_back_to_token_transfer_api_after_403(monkey
                     {
                         "hash": "0xapi",
                         "timeStamp": str(int(now - 60 * 60)),
-                        "from": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "from": "0x1111111111111111111111111111111111111111",
                         "to": deposit_address,
                         "value": str(1_500_000 * 10**18),
                         "tokenDecimal": "18",
@@ -142,7 +142,16 @@ def test_scan_cex_deposit_flow_falls_back_to_token_transfer_api_after_403(monkey
     assert result["cex_deposit_24h_token_amount"] == 1_500_000
     assert result["cex_deposit_24h_target_exchanges"] == "Bitget"
     assert result["cex_deposit_24h_top_tx"] == "0xapi"
+    assert result["cex_deposit_24h_whale_sender_count"] == 1
+    assert result["cex_deposit_24h_whale_sender_token_amount"] == 1_500_000
+    assert result["cex_deposit_24h_top_sender_rank"] == 1
+    assert result["cex_deposit_24h_top_sender_pct"] == 91.0
     assert "API fallback concentration-gated CEX deposit flow" in result["cex_deposit_flow_note"]
+    assert "Top-holder sender evidence" in result["cex_deposit_flow_note"]
+    assert "1 top-holder sender tx" in result["cex_deposit_flow_evidence_summary"]
+    assert "whale-origin total 1.50M" in result["cex_deposit_flow_evidence_summary"]
+    assert "rank 1 91.0%" in result["cex_deposit_flow_evidence_summary"]
+    assert "1 top-holder sender tx r1 91.0%" in result["cex_deposit_flow_alert_line"]
     assert "api.etherscan.io/v2/api" in result["cex_deposit_24h_source_url"]
     assert "chainid=8453" in result["cex_deposit_24h_source_url"]
 
@@ -287,6 +296,11 @@ def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
         "cex_deposit_inventory_stress_note": "venue-inventory stress 72/100; total notional $750.00K",
         "cex_deposit_24h_total_pct_supply": 2.5,
         "cex_deposit_24h_max_pct_supply": 1.2,
+        "cex_deposit_24h_whale_sender_count": 1,
+        "cex_deposit_24h_whale_sender_token_amount": 1_200_000,
+        "cex_deposit_24h_top_sender_address": "0x1111111111111111111111111111111111111111",
+        "cex_deposit_24h_top_sender_rank": 1,
+        "cex_deposit_24h_top_sender_pct": 91.0,
         "cex_deposit_24h_target_exchanges": "Bitget, Gate",
         "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
         "cex_deposit_24h_source_url": "https://basescan.org/advanced-filter?tkn=0xabc",
@@ -297,6 +311,8 @@ def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
     assert "/PLAYUSDT" in output
     assert "CEX Flow Score: 88/100 | Risk: High" in output
     assert "Evidence:" in output
+    assert "whale-origin total 1.20M" in output
+    assert "top sender rank 1 91.0% 0x1111...1111" in output
     assert "Venue-flow read:" in output
     assert "Inventory stress:" in output
     assert "Next check:" in output

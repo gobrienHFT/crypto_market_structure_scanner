@@ -1842,6 +1842,11 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "cex_deposit_24h_notional_usd": 4_100_000,
                 "cex_deposit_24h_total_pct_supply": 2.5,
                 "cex_deposit_24h_max_pct_supply": 1.4,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 12_000_000,
+                "cex_deposit_24h_top_sender_address": "0x1111111111111111111111111111111111111111",
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
                 "cex_deposit_24h_target_exchanges": "Binance",
                 "cex_deposit_24h_top_tx": "0xprime",
                 "cex_deposit_flow_source": "token_transfer_api",
@@ -1870,6 +1875,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Top tx/hash: 0xprime" in proof
     assert "Total token amount: 20.50M" in proof
     assert "Largest transfer: 12.00M" in proof
+    assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
