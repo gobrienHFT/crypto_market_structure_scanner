@@ -3302,17 +3302,25 @@ def _ravelab_line(row: pd.Series) -> str:
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
-    return (
-        f"/{symbol} | {side} | {state} | core {core_count}/{core_total} miss {missing_core} | thesis {thesis_score:.0f}/100 early {score:.0f}/100 | "
-        f"RAVE {rave:.0f} LAB {lab:.0f} | "
-        f"gates whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} noPump {no_pump} dormant2m {dormant} squeeze {squeeze_gate} | "
-        f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | venue ev {venue_evidence} | "
-        f"whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
-        f"holder ev {holder_evidence} | "
-        f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | pump60 {pump_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
-        f"CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | control {control:.0f} float {float_score:.0f} | "
-        f"quiet {quiet:.0f} heat {heat:.0f} | dashboard {setup:.0f} latent {latent:.0f}{anchor} | next: {next_check}"
+    headline = (
+        f"/{symbol} | {side} | {state} | core {core_count}/{core_total} | "
+        f"thesis {thesis_score:.0f}/100 early {score:.0f}/100 | miss {missing_core}"
     )
+    hard_gates = (
+        f"  hard gates: whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} "
+        f"noPump {no_pump} dormant2m {dormant} squeeze {squeeze_gate} | "
+        f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | highs {breakout_windows}"
+    )
+    evidence = (
+        f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | holder {holder_evidence} | "
+        f"venue {venue_evidence} | squeeze {squeeze:.0f} shorts {short_text} | history {history_text} pump60 {pump_text}"
+    )
+    flow = (
+        f"  flow/timing: CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | "
+        f"breakout {breakout:.0f} | control {control:.0f} float {float_score:.0f} | quiet {quiet:.0f} heat {heat:.0f} | "
+        f"RAVE {rave:.0f} LAB {lab:.0f} dashboard {setup:.0f} latent {latent:.0f}{anchor}"
+    )
+    return "\n".join([headline, hard_gates, evidence, flow, f"  next: {next_check}"])
 
 
 def _ravelab_holder_evidence_counts(frame: pd.DataFrame) -> tuple[int, int, int]:

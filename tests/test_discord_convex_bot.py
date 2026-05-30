@@ -1754,16 +1754,17 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
-    assert "holder ev chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
-    assert "venue ev Bn perp,8.0%; Bg 2.0%; Gate no" in output
+    assert "holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
+    assert "venue Bn perp,8.0%; Bg 2.0%; Gate no" in output
     assert "/LABXUSDT" in output
-    assert "holder ev chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
-    assert "venue ev Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
+    assert "holder chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
+    assert "venue Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "WHALE-FLOW PRIMED" in output
-    assert "core 5/5 miss none" in output
+    assert "core 5/5 | thesis" in output
+    assert "miss none" in output
     assert "whaleCEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
-    assert "gates whale Y holderEv Y venue Y noPump Y dormant2m Y squeeze Y" in output
+    assert "hard gates: whale Y holderEv Y venue Y noPump Y dormant2m Y squeeze Y" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
@@ -1813,9 +1814,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     diagnostic_output = "\n".join(diagnostic_chunks)
     assert "Holder evidence required: False" in diagnostic_output
     assert "/PCTONLYUSDT" in diagnostic_output
-    assert "holder ev pct-only; needs ETH/BNB/ARB chain+contract+source/count" in diagnostic_output
+    assert "holder pct-only; needs ETH/BNB/ARB chain+contract+source/count" in diagnostic_output
     assert "/COUNTONLYUSDT" in diagnostic_output
-    assert "holder ev holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
+    assert "holder holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
