@@ -3626,7 +3626,7 @@ def _score_ravelab_early_frame(
     whale_gate = whale_pct.ge(float(min_whale_pct))
     venue_gate = has_binance & has_bitget
     structure_gate = whale_gate & venue_gate & dormant_2m & ((control >= 55.0) | (float_score >= 55.0))
-    early_gate = ((quiet >= 45.0) | (not_late >= 58.0)) & (heat < 68.0) & (~major_excluded)
+    early_gate = ((quiet >= 45.0) | (not_late >= 58.0)) & heat.lt(68.0) & exhaustion.lt(70.0) & (~major_excluded)
 
     scored["_ravelab_rave_score"] = rave
     scored["_ravelab_lab_score"] = lab

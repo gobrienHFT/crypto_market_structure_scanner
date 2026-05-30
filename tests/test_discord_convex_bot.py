@@ -2388,6 +2388,53 @@ def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
     assert "/LOWFLOWUSDT" not in output
 
 
+def test_ravelab_exhaustion_blocks_core_prime() -> None:
+    base = {
+        "history_days": 160,
+        **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+        "top10_holder_pct": 92.0,
+        "centralized_ownership_score": 88.0,
+        "terminal_control_plane_score": 86.0,
+        "low_float_score": 84.0,
+        "float_trap_score": 80.0,
+        "fdv_to_market_cap": 9.0,
+        "locked_supply_pct": 65.0,
+        "short_account_pct": 58.0,
+        "short_dominance_score": 62.0,
+        "short_account_build_score": 58.0,
+        "silent_oi_accumulation_score": 56.0,
+        "oi_delta_pct": 4.0,
+        "binance_volume_share_pct": 9.0,
+        "bitget_volume_share_pct": 2.0,
+        "pre_pump_precision_score": 40.0,
+        "low_volatility_coil_score": 80.0,
+        "hour_return_pct": 0.3,
+        "day_return_pct": 1.0,
+        "price_change_24h_pct": 1.0,
+        "range_24h_pct": 3.5,
+    }
+    frame = pd.DataFrame(
+        [
+            {**base, "symbol": "CLEANUSDT", "crime_exhaustion_score": 18.0},
+            {**base, "symbol": "EXHAUSTUSDT", "crime_exhaustion_score": 82.0},
+        ]
+    )
+
+    scored = bot._score_ravelab_early_frame(frame)
+    holder_evidence_mask, _ = bot._ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0).set_index("symbol")
+
+    assert bool(scored.loc["CLEANUSDT", "_ravelab_early_gate"])
+    assert int(scored.loc["CLEANUSDT", "_ravelab_core_gate_count"]) == 5
+    assert bot._ravelab_stage_label(scored.loc["CLEANUSDT"]) == "A1 CORE PRIME"
+    assert not bool(scored.loc["EXHAUSTUSDT", "_ravelab_early_gate"])
+    assert int(scored.loc["EXHAUSTUSDT", "_ravelab_core_gate_count"]) == 4
+    assert scored.loc["EXHAUSTUSDT", "_ravelab_missing_core_gates"] == "early/no-chase"
+    assert bot._ravelab_stage_label(scored.loc["EXHAUSTUSDT"]) == "B1 BLOCKED"
+    assert "avoid chase/late risk" in bot._ravelab_next_check(scored.loc["EXHAUSTUSDT"])
+
+
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
     row = pd.Series(
         {
