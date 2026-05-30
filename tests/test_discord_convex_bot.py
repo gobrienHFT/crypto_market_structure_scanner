@@ -1961,6 +1961,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Near misses: 5" in output
     assert "Trigger filter: all" in output
+    assert "Gate funnel:" in output
+    assert "holderSrc" in output
+    assert "shown 2" in output
+    assert "Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2" in output
     assert "Core 5/5: 2" in output
     assert "Whale-origin CEX rows: 1" in output
     assert "Near misses shown: 2" in output
@@ -2044,6 +2048,8 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     )
     trigger_flow_output = "\n".join(trigger_flow_chunks)
     assert "Trigger filter: flow" in trigger_flow_output
+    assert "trigger:flow 1" in trigger_flow_output
+    assert "Trigger lanes before filter: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 1" in trigger_flow_output
     assert "/LABXUSDT | LAB-like" in trigger_flow_output
     assert "/CAPUSDT" not in trigger_flow_output
 
@@ -2067,6 +2073,8 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Crime-pump early queue" in crime_output
     assert "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
     assert "Trigger: all" in crime_output
+    assert "Gate funnel:" in crime_output
+    assert "Trigger lanes: triggered 2" in crime_output
     assert "Matches: 2 | Core 5/5: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in crime_output
     assert "Trigger queue:" in crime_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in crime_output

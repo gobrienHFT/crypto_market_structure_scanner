@@ -3961,6 +3961,80 @@ def _ravelab_trigger_filter_mask(frame: pd.DataFrame, trigger_filter: str) -> pd
     return pd.Series(True, index=frame.index)
 
 
+def _ravelab_base_funnel_mask_and_steps(
+    scored: pd.DataFrame,
+    *,
+    min_score: float,
+    min_archetype: float,
+    require_holder_evidence: bool,
+    require_binance_bitget: bool,
+    require_dormant_2m: bool,
+    require_quiet: bool,
+    require_target_flow: bool,
+    require_whale_origin_flow: bool,
+    style_key: str,
+) -> tuple[pd.Series, list[tuple[str, int]]]:
+    if scored.empty:
+        return pd.Series(False, index=scored.index), [("scan", 0)]
+    index = scored.index
+    mask = (
+        _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
+        & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
+    )
+    steps: list[tuple[str, int]] = [("scan", len(scored)), ("score", int(mask.sum()))]
+
+    mask = mask & _boolish_series(scored.get("_ravelab_whale_gate"), index=index)
+    steps.append(("whale90", int(mask.sum())))
+    if require_holder_evidence:
+        mask = mask & _boolish_series(scored.get("_ravelab_holder_evidence_gate"), index=index)
+        steps.append(("holderSrc", int(mask.sum())))
+    if require_binance_bitget:
+        mask = mask & _boolish_series(scored.get("_ravelab_venue_gate"), index=index)
+        steps.append(("Bn+Bg", int(mask.sum())))
+    mask = mask & _boolish_series(scored.get("_ravelab_squeeze_gate"), index=index)
+    steps.append(("squeeze", int(mask.sum())))
+    if require_dormant_2m:
+        mask = mask & _boolish_series(scored.get("_ravelab_dormant_2m_gate"), index=index)
+        steps.append(("dormant", int(mask.sum())))
+    if style_key == "rave":
+        mask = mask & scored["_ravelab_side"].astype(str).isin(["RAVE-like", "Mixed RAVE/LAB"])
+        steps.append(("raveStyle", int(mask.sum())))
+    elif style_key == "lab":
+        mask = mask & scored["_ravelab_side"].astype(str).isin(["LAB-like", "Mixed RAVE/LAB"])
+        steps.append(("labStyle", int(mask.sum())))
+    if require_quiet:
+        mask = mask & _boolish_series(scored.get("_ravelab_early_gate"), index=index)
+        steps.append(("early", int(mask.sum())))
+    if require_target_flow:
+        mask = mask & _boolish_series(scored.get("_ravelab_target_flow"), index=index)
+        steps.append(("targetCEX", int(mask.sum())))
+    if require_whale_origin_flow:
+        mask = mask & _boolish_series(scored.get("_ravelab_whale_origin_flow"), index=index)
+        steps.append(("whale-CEX", int(mask.sum())))
+    return mask.fillna(False), steps
+
+
+def _ravelab_funnel_line(steps: list[tuple[str, int]]) -> str:
+    return "Gate funnel: " + " -> ".join(f"{label} {count}" for label, count in steps)
+
+
+def _ravelab_lane_counts_line(frame: pd.DataFrame, *, trigger_filter_key: str = "all", shown_count: int | None = None) -> str:
+    label = "Trigger lanes before filter" if _normalize_ravelab_trigger_filter(trigger_filter_key) != "all" else "Trigger lanes"
+    shown = len(frame) if shown_count is None else int(shown_count)
+    if frame.empty:
+        return f"{label}: triggered 0 | whale-CEX 0 | target-CEX 0 | breakout 0 | core-watch 0 | shown {shown}"
+    whale_flow = _boolish_series(frame.get("_ravelab_whale_origin_flow"), index=frame.index)
+    target_flow = _boolish_series(frame.get("_ravelab_target_flow"), index=frame.index)
+    breakout = _boolish_series(frame.get("_ravelab_breakout_any"), index=frame.index)
+    core_watch = _ravelab_trigger_filter_mask(frame, "core")
+    triggered = _ravelab_trigger_filter_mask(frame, "triggered")
+    return (
+        f"{label}: triggered {int(triggered.sum())} | whale-CEX {int(whale_flow.sum())} | "
+        f"target-CEX {int(target_flow.sum())} | breakout {int(breakout.sum())} | "
+        f"core-watch {int(core_watch.sum())} | shown {shown}"
+    )
+
+
 def _load_ravelab_list(
     limit: int,
     *,
@@ -4047,36 +4121,35 @@ def _load_ravelab_list(
         days=60,
     )
     scored = _ravelab_apply_thesis_columns(scored, min_squeeze_score=min_squeeze_score)
-    selected = scored[
-        _num_series(scored, "_ravelab_early_score").ge(max(0.0, float(min_score)))
-        & _num_series(scored, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
-        & _boolish_series(scored.get("_ravelab_whale_gate"), index=scored.index)
-        & _boolish_series(scored.get("_ravelab_squeeze_gate"), index=scored.index)
-    ].copy()
-    if require_holder_evidence:
-        selected = selected[_boolish_series(selected.get("_ravelab_holder_evidence_gate"), index=selected.index)].copy()
-    if require_binance_bitget:
-        selected = selected[_boolish_series(selected.get("_ravelab_venue_gate"), index=selected.index)].copy()
-    if require_dormant_2m:
-        selected = selected[_boolish_series(selected.get("_ravelab_dormant_2m_gate"), index=selected.index)].copy()
-    if style_key == "rave":
-        selected = selected[selected["_ravelab_side"].astype(str).isin(["RAVE-like", "Mixed RAVE/LAB"])].copy()
-    elif style_key == "lab":
-        selected = selected[selected["_ravelab_side"].astype(str).isin(["LAB-like", "Mixed RAVE/LAB"])].copy()
-    if require_quiet:
-        selected = selected[_boolish_series(selected.get("_ravelab_early_gate"), index=selected.index)].copy()
-    if require_target_flow:
-        selected = selected[_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index)].copy()
-    if require_whale_origin_flow:
-        selected = selected[_boolish_series(selected.get("_ravelab_whale_origin_flow"), index=selected.index)].copy()
+    base_mask, funnel_steps = _ravelab_base_funnel_mask_and_steps(
+        scored,
+        min_score=min_score,
+        min_archetype=min_archetype,
+        require_holder_evidence=require_holder_evidence,
+        require_binance_bitget=require_binance_bitget,
+        require_dormant_2m=require_dormant_2m,
+        require_quiet=require_quiet,
+        require_target_flow=require_target_flow,
+        require_whale_origin_flow=require_whale_origin_flow,
+        style_key=style_key,
+    )
+    selected = scored[base_mask].copy()
     breakout_stats = {"checked": 0, "errors": 0, "insufficient": 0, "cached": 0}
     if not selected.empty:
         selected, breakout_stats = _apply_ravelab_high_breakout_windows(selected, breakout_days)
         selected = _ravelab_apply_thesis_columns(selected, min_squeeze_score=min_squeeze_score)
         if require_breakout_high:
             selected = selected[_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index)].copy()
-    if trigger_filter_key != "all" and not selected.empty:
-        selected = selected[_ravelab_trigger_filter_mask(selected, trigger_filter_key)].copy()
+    if require_breakout_high:
+        funnel_steps.append(("breakout", len(selected)))
+    lanes_before_trigger = selected.copy()
+    if trigger_filter_key != "all":
+        if not selected.empty:
+            selected = selected[_ravelab_trigger_filter_mask(selected, trigger_filter_key)].copy()
+        funnel_steps.append((f"trigger:{trigger_filter_key}", len(selected)))
+    funnel_steps.append(("shown", len(selected)))
+    funnel_line = _ravelab_funnel_line(funnel_steps)
+    lane_counts_line = _ravelab_lane_counts_line(lanes_before_trigger, trigger_filter_key=trigger_filter_key, shown_count=len(selected))
     holder_evidence_rows, holder_contract_rows, holder_pct_only_rows = _ravelab_holder_evidence_counts(selected)
 
     if selected.empty:
@@ -4099,6 +4172,8 @@ def _load_ravelab_list(
                 ),
                 "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.",
                 gate_counts,
+                funnel_line,
+                lane_counts_line,
                 "",
                 "No hard-gated early crime-pump candidates passed the current operator filters.",
                 "Use `/ravelab near_miss_limit:5 detail:true` for blockers and data-coverage diagnostics.",
@@ -4122,6 +4197,8 @@ def _load_ravelab_list(
         lines = [
             header,
             gate_counts,
+            funnel_line,
+            lane_counts_line,
             (
                 f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source | "
                 f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
@@ -4198,6 +4275,8 @@ def _load_ravelab_list(
                 f"Matches: {len(selected)} | Core 5/5: {core_count} | Triggered: {triggered_count} | "
                 f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | Breakout highs: {breakout_count}"
             ),
+            funnel_line,
+            lane_counts_line,
         ]
         if queue_summary:
             lines.extend(queue_summary)
@@ -4213,6 +4292,8 @@ def _load_ravelab_list(
             f"Core 5/5: {core_count} | Target-flow rows: {target_count} | Whale-origin CEX rows: {whale_origin_count} | "
             f"Near misses shown: {len(near_misses)} | Read: historical-analogue screen, not trade instruction."
         ),
+        funnel_line,
+        lane_counts_line,
     ]
     if queue_summary:
         lines.extend(queue_summary)
