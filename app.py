@@ -5860,6 +5860,7 @@ def render_breakout_dashboard() -> None:
             "early_pump_binance_bitget_gate": st.column_config.CheckboxColumn("Binance+Bitget"),
             "early_pump_venue_gate": st.column_config.CheckboxColumn("Venue Gate"),
             "early_pump_not_late_gate": st.column_config.CheckboxColumn("Not-Late Gate"),
+            "early_pump_no_recent_pump_gate": st.column_config.CheckboxColumn("60D No Pump"),
             "early_pump_alert_flag": st.column_config.CheckboxColumn("Pump Watch"),
             "early_pump_state": st.column_config.TextColumn("Pump State"),
             "early_pump_primary_signal": st.column_config.TextColumn("Pump Signal"),
@@ -5886,6 +5887,7 @@ def render_breakout_dashboard() -> None:
             "pre_activity_structure_gate": st.column_config.CheckboxColumn("Pre Structure"),
             "pre_activity_behavior_gate": st.column_config.CheckboxColumn("Pre Behaviour"),
             "pre_activity_quiet_gate": st.column_config.CheckboxColumn("Pre Quiet Gate"),
+            "pre_activity_no_recent_pump_gate": st.column_config.CheckboxColumn("Pre 60D No Pump"),
             "pre_activity_alert_flag": st.column_config.CheckboxColumn("Pre-Activity Watch"),
             "pre_activity_state": st.column_config.TextColumn("Pre-Activity State"),
             "pre_activity_primary_signal": st.column_config.TextColumn("Pre-Activity Signal"),
@@ -8118,7 +8120,7 @@ def render_breakout_dashboard() -> None:
         with screener_tabs[13]:
             st.caption(
                 "One-board triage for the exact early move pattern: explorer-backed top10 whale control, Binance+Bitget trading evidence, "
-                "confirmed Binance/Bitget/Gate wallet-to-CEX flow when available, short-account squeeze fuel, low-float structure, and not-late timing."
+                "60D no-pump/dormancy proof, confirmed Binance/Bitget/Gate wallet-to-CEX flow when available, short-account squeeze fuel, low-float structure, and not-late timing."
             )
             pump_cols = [
                 "symbol",
@@ -8137,6 +8139,7 @@ def render_breakout_dashboard() -> None:
                 "early_pump_binance_bitget_gate",
                 "early_pump_venue_gate",
                 "early_pump_not_late_gate",
+                "early_pump_no_recent_pump_gate",
                 "early_pump_flow_score",
                 "early_pump_whale_score",
                 "early_pump_float_score",
@@ -8203,13 +8206,14 @@ def render_breakout_dashboard() -> None:
                     ascending=[False, False, False, False, False, True],
                 )
 
-            watch_mask = (
-                pump_df.get("early_pump_alert_flag", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool)
-                | pd.to_numeric(pump_df.get("early_pump_radar_score", pd.Series(0.0, index=pump_df.index)), errors="coerce").fillna(0.0).ge(55.0)
+            pump_dormant_gate = pump_df.get("early_pump_no_recent_pump_gate", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool)
+            watch_mask = pump_df.get("early_pump_alert_flag", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool) | (
+                pd.to_numeric(pump_df.get("early_pump_radar_score", pd.Series(0.0, index=pump_df.index)), errors="coerce").fillna(0.0).ge(55.0)
+                & pump_dormant_gate
             )
             pump_watch_df = pump_df[watch_mask].copy()
             prime_count = int((pump_df.get("early_pump_state", pd.Series("", index=pump_df.index)).astype(str) == "Prime early squeeze").sum())
-            flow_count = int(pump_df.get("early_pump_confirmed_target_flow", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool).sum())
+            dormant_count = int(pump_dormant_gate.sum())
             p1, p2, p3, p4 = st.columns(4)
             p1.metric(
                 "Top pump radar",
@@ -8219,7 +8223,7 @@ def render_breakout_dashboard() -> None:
             )
             p2.metric("Watch rows", int(len(pump_watch_df)))
             p3.metric("Prime early squeezes", prime_count)
-            p4.metric("Target-flow rows", flow_count)
+            p4.metric("60D no-pump rows", dormant_count)
 
             st.subheader("Early Pump Catch Board")
             if pump_watch_df.empty:
@@ -8246,7 +8250,7 @@ def render_breakout_dashboard() -> None:
         with screener_tabs[14]:
             st.caption(
                 "Pre-activity radar: explorer-backed top10 holder control, Binance+Bitget trading evidence, controlled float, target-CEX inventory tells, "
-                "short-fuse perp positioning, and thin books, while filtering out names that already have chase heat."
+                "60D no-pump/dormancy proof, short-fuse perp positioning, and thin books, while filtering out names that already have chase heat."
             )
             pre_activity_cols = [
                 "symbol",
@@ -8264,6 +8268,7 @@ def render_breakout_dashboard() -> None:
                 "pre_activity_structure_gate",
                 "pre_activity_behavior_gate",
                 "pre_activity_quiet_gate",
+                "pre_activity_no_recent_pump_gate",
                 "pre_activity_control_score",
                 "pre_activity_float_score",
                 "pre_activity_behavior_score",
@@ -8312,9 +8317,10 @@ def render_breakout_dashboard() -> None:
                     ],
                     ascending=[False, False, False, False, False, True],
                 )
-            pre_watch_mask = (
-                pre_df.get("pre_activity_alert_flag", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool)
-                | pd.to_numeric(pre_df.get("pre_activity_pump_score", pd.Series(0.0, index=pre_df.index)), errors="coerce").fillna(0.0).ge(58.0)
+            pre_dormant_gate = pre_df.get("pre_activity_no_recent_pump_gate", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool)
+            pre_watch_mask = pre_df.get("pre_activity_alert_flag", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool) | (
+                pd.to_numeric(pre_df.get("pre_activity_pump_score", pd.Series(0.0, index=pre_df.index)), errors="coerce").fillna(0.0).ge(58.0)
+                & pre_dormant_gate
             )
             pre_watch_df = pre_df[pre_watch_mask].copy()
             latent_flow_count = int(
@@ -8329,8 +8335,8 @@ def render_breakout_dashboard() -> None:
             )
             q2.metric("Watch rows", int(len(pre_watch_df)))
             q3.metric(
-                "Quiet-gated rows",
-                int(pre_df.get("pre_activity_quiet_gate", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool).sum()),
+                "60D no-pump rows",
+                int(pre_dormant_gate.sum()),
             )
             q4.metric("Target-flow rows", latent_flow_count)
 

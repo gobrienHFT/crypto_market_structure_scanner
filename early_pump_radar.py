@@ -28,6 +28,7 @@ EARLY_PUMP_RADAR_COLUMNS = [
     "early_pump_binance_bitget_gate",
     "early_pump_venue_gate",
     "early_pump_not_late_gate",
+    "early_pump_no_recent_pump_gate",
     "early_pump_alert_flag",
     "early_pump_state",
     "early_pump_primary_signal",
@@ -50,6 +51,12 @@ def _num(frame: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(default, index=frame.index, dtype="float64")
     return pd.to_numeric(frame[column], errors="coerce").fillna(default).astype("float64")
+
+
+def _raw_num(frame: pd.DataFrame, column: str, default: float = float("nan")) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[column], errors="coerce")
 
 
 def _boolish(series: Any, *, index: pd.Index) -> pd.Series:
@@ -126,6 +133,25 @@ def _target_cex_text(row: Mapping[str, Any] | pd.Series) -> str:
     return text if TARGET_CEX_RE.search(text) else ""
 
 
+def _no_recent_pump_gate(
+    frame: pd.DataFrame,
+    *,
+    min_history_days: int = 60,
+    max_recent_pump_pct: float = 35.0,
+) -> pd.Series:
+    min_days = max(1, int(min_history_days))
+    proof_days = max(1, min(60, min_days))
+    history_days = _raw_num(frame, "history_days", default=0.0).fillna(0.0)
+    recent_pump_days = _raw_num(frame, "recent_pump_60d_days", default=0.0).fillna(0.0)
+    recent_pump = _raw_num(frame, "recent_max_pump_60d_pct")
+    no_large_flag = _boolish(frame.get("no_large_pump_60d_flag"), index=frame.index)
+    coverage = history_days.ge(min_days) | recent_pump_days.ge(proof_days)
+    pump_window_ready = recent_pump_days.ge(proof_days)
+    numeric_pass = recent_pump.notna() & recent_pump.lt(max(0.0, float(max_recent_pump_pct))) & pump_window_ready
+    flag_pass = no_large_flag & pump_window_ready
+    return (coverage & (numeric_pass | flag_pass)).fillna(False)
+
+
 def _primary_signal(row: Mapping[str, Any] | pd.Series) -> str:
     flow_score = _first_float(row, "early_pump_flow_score") or 0.0
     if _row_bool(row, "early_pump_confirmed_target_flow") and flow_score >= 35.0:
@@ -147,6 +173,8 @@ def _primary_signal(row: Mapping[str, Any] | pd.Series) -> str:
 def _state(row: Mapping[str, Any] | pd.Series) -> str:
     score = _first_float(row, "early_pump_radar_score") or 0.0
     timing_late = _first_float(row, "timing_too_late_score") or 0.0
+    if not _row_bool(row, "early_pump_no_recent_pump_gate"):
+        return "Dormancy unproven"
     if not _row_bool(row, "early_pump_not_late_gate") or timing_late >= 72.0:
         return "Too late / fragile"
     if (
@@ -179,6 +207,8 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
 
 def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
     missing: list[str] = []
+    if not _row_bool(row, "early_pump_no_recent_pump_gate"):
+        return "wait for 60D no-pump proof; reject if recent daily high expansion is already large"
     if not _row_bool(row, "early_pump_confirmed_target_flow"):
         missing.append("fresh labelled Binance/Bitget/Gate transfer")
     if not _row_bool(row, "early_pump_whale_gate"):
@@ -215,6 +245,7 @@ def _note(row: Mapping[str, Any] | pd.Series, *, min_transfer_tokens: float = 0.
         f"radar {score:.0f}/100",
         _clean_text(row.get("early_pump_state") if hasattr(row, "get") else ""),
         _clean_text(row.get("early_pump_primary_signal") if hasattr(row, "get") else ""),
+        "60D no-pump" if _row_bool(row, "early_pump_no_recent_pump_gate") else "60D no-pump unproven",
         targets,
     ]
     archetype = _clean_text(row.get("archetype_best_match") if hasattr(row, "get") else "")
@@ -357,6 +388,7 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
     float_gate = float_score.ge(55.0)
     venue_gate = venue_pair_gate
     not_late_gate = not_late.ge(45.0)
+    no_recent_pump_gate = _no_recent_pump_gate(output)
 
     balanced = (
         flow_score * 0.18
@@ -379,6 +411,7 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
         + short_gate.astype(float) * 3.0
         + venue_gate.astype(float) * 2.0
         - (~not_late_gate).astype(float) * 20.0
+        - (~no_recent_pump_gate).astype(float) * 22.0
     )
 
     output["early_pump_radar_score"] = radar_score
@@ -398,7 +431,17 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
     output["early_pump_binance_bitget_gate"] = venue_pair_gate
     output["early_pump_venue_gate"] = venue_gate
     output["early_pump_not_late_gate"] = not_late_gate
-    output["early_pump_alert_flag"] = radar_score.ge(65.0) & whale_gate & short_gate & float_gate & venue_gate & not_late_gate & target_flow
+    output["early_pump_no_recent_pump_gate"] = no_recent_pump_gate
+    output["early_pump_alert_flag"] = (
+        radar_score.ge(65.0)
+        & whale_gate
+        & short_gate
+        & float_gate
+        & venue_gate
+        & not_late_gate
+        & no_recent_pump_gate
+        & target_flow
+    )
     output["early_pump_state"] = output.apply(_state, axis=1)
     output["early_pump_primary_signal"] = output.apply(_primary_signal, axis=1)
     output["early_pump_next_check"] = output.apply(_next_check, axis=1)

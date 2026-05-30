@@ -36,6 +36,10 @@ def test_early_pump_radar_prioritizes_target_flow_whales_and_shorts() -> None:
                     "low_float_score": 82,
                     "float_trap_score": 78,
                     "fdv_to_market_cap": 8,
+                    "history_days": 180,
+                    "recent_max_pump_60d_pct": 8.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": True,
                     "short_account_pct": 64,
                     "short_dominance_score": 80,
                     "short_account_build_score": 74,
@@ -59,6 +63,7 @@ def test_early_pump_radar_prioritizes_target_flow_whales_and_shorts() -> None:
     assert bool(row["early_pump_confirmed_target_flow"]) is True
     assert bool(row["early_pump_holder_evidence_gate"]) is True
     assert bool(row["early_pump_binance_bitget_gate"]) is True
+    assert bool(row["early_pump_no_recent_pump_gate"]) is True
     assert bool(row["early_pump_alert_flag"]) is True
     assert row["early_pump_state"] == "Prime early squeeze"
     assert "target CEX flow" in row["early_pump_primary_signal"]
@@ -78,6 +83,10 @@ def test_early_pump_radar_marks_late_heat_fragile() -> None:
                     "top100_holder_pct": 99,
                     "short_account_pct": 68,
                     "low_float_score": 90,
+                    "history_days": 180,
+                    "recent_max_pump_60d_pct": 8.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": True,
                     "timing_too_late_score": 88,
                     "day_return_pct": 140,
                     "hour_upper_wick_pct": 42,
@@ -89,6 +98,49 @@ def test_early_pump_radar_marks_late_heat_fragile() -> None:
     assert bool(row["early_pump_not_late_gate"]) is False
     assert row["early_pump_state"] == "Too late / fragile"
     assert bool(row["early_pump_alert_flag"]) is False
+
+
+def test_early_pump_radar_alert_requires_60d_no_pump_proof() -> None:
+    row = _score(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "RECENTPUMPUSDT",
+                    "cex_deposit_flow_score": 94,
+                    "cex_deposit_flow_flag": True,
+                    "cex_deposit_24h_count": 3,
+                    "cex_deposit_24h_max_amount": 12_000_000,
+                    "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                    "token_platform": "ethereum",
+                    "token_contract": "0x3333333333333333333333333333333333333333",
+                    "holder_source": "Etherscan holder endpoint",
+                    "top10_holder_pct": 92,
+                    "top100_holder_pct": 99,
+                    "centralized_ownership_score": 86,
+                    "low_float_score": 82,
+                    "float_trap_score": 78,
+                    "fdv_to_market_cap": 8,
+                    "history_days": 180,
+                    "recent_max_pump_60d_pct": 88.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": False,
+                    "short_account_pct": 64,
+                    "short_dominance_score": 80,
+                    "short_account_build_score": 74,
+                    "pre_pump_precision_score": 76,
+                    "hour_return_pct": 0.6,
+                    "day_return_pct": 2.0,
+                    "binance_volume_share_pct": 6.0,
+                    "bitget_volume_share_pct": 2.4,
+                }
+            ]
+        )
+    ).iloc[0]
+
+    assert bool(row["early_pump_no_recent_pump_gate"]) is False
+    assert bool(row["early_pump_alert_flag"]) is False
+    assert row["early_pump_state"] == "Dormancy unproven"
+    assert "60D no-pump proof" in row["early_pump_next_check"]
 
 
 def test_early_pump_radar_handles_missing_target_exchange_text() -> None:

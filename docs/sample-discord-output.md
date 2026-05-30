@@ -25,14 +25,14 @@ RAVEUSDT | brief 74.1 | terminal 81 | timing 58 | CEX 36 | shorts 68.5% | Coilin
 
 ```text
 Pre-activity crime-pump radar
-Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Quiet required: True | Behaviour gate required: True
-Gate rows: strict holder 9 | Binance+Bitget 5 | Shown after latent filters 2
+Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Quiet required: True | Behaviour gate required: True | 60D no-pump required: True
+Gate rows: strict holder 9 | Binance+Bitget 5 | 60D no-pump 3 | Shown after latent filters 2
 Matches: 2 | Target-flow rows: 1 | Quiet-gated rows: 2 | Read: structural-risk evidence, not trade instruction.
 
 Candidates: /SLEEPUSDT /COILUSDT
 
-/SLEEPUSDT | Stealth inventory setup | latent 79/100 | target CEX flow 92/100 | CEX-tell 92 Binance, Gate.io 2tx max 240.00K | control 91 | float 86 | thin-book 94 | quiet 82 heat 12 | top10 90.0%, top100 99.0% | shorts 63.0% | anchor LABUSDT 2026-05-11 | next: watch for absorption, OI expansion, and first volume lift while price remains below chase heat
-/COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | top10 91.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
+/SLEEPUSDT | Stealth inventory setup | latent 79/100 | target CEX flow 92/100 | CEX-tell 92 Binance, Gate.io 2tx max 240.00K | control 91 | float 86 | thin-book 94 | quiet 82 heat 12 | noPump60 Y | top10 90.0%, top100 99.0% | shorts 63.0% | anchor LABUSDT 2026-05-11 | next: watch for absorption, OI expansion, and first volume lift while price remains below chase heat
+/COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | noPump60 Y | top10 91.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
 ```
 
 ## `/radar`
@@ -165,14 +165,14 @@ Candidates: /PRIMEUSDT /FLOWUSDT
 
 ```text
 Early pump watch
-Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Additional venue gate: target-CEX/venue-support check enabled
-Gate rows: strict holder 12 | Binance+Bitget 7 | Shown after radar filters 3
+Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | 60D no-pump required: True | Additional venue gate: target-CEX/venue-support check enabled
+Gate rows: strict holder 12 | Binance+Bitget 7 | 60D no-pump 4 | Shown after radar filters 3
 Matches: 3 | Confirmed target-flow rows: 2 | Read: rank-order evidence, not an execution instruction.
 
 Candidates: /PRIMEUSDT /STOUSDT /SIRENUSDT
 
-/PRIMEUSDT | Prime early squeeze | radar 89/100 | target CEX flow 92/100 | flow 92 Bitget, GateIO 3tx max 12.00M | top10 91.0%, top100 99.0% | shorts 64.0% | float 82 | timing 78 | not-late 95 | LAB-style venue-inventory stress | next: check whether deposited inventory is absorbed while OI/volume expand and rejection wicks stay muted
-/STOUSDT | Flow-first watch | radar 76/100 | target CEX flow 74/100 | flow 74 Binance 1tx max 3.20M | top10 92.0%, top100 96.0% | shorts 58.0% | float 70 | timing 64 | not-late 88 | STO-style target-venue squeeze
+/PRIMEUSDT | Prime early squeeze | radar 89/100 | target CEX flow 92/100 | flow 92 Bitget, GateIO 3tx max 12.00M | top10 91.0%, top100 99.0% | shorts 64.0% | float 82 | timing 78 | not-late 95 | noPump60 Y | LAB-style venue-inventory stress | next: check whether deposited inventory is absorbed while OI/volume expand and rejection wicks stay muted
+/STOUSDT | Flow-first watch | radar 76/100 | target CEX flow 74/100 | flow 74 Binance 1tx max 3.20M | top10 92.0%, top100 96.0% | shorts 58.0% | float 70 | timing 64 | not-late 88 | noPump60 Y | STO-style target-venue squeeze
 ```
 
 ## `/flowproof symbol:PRIMEUSDT min_tokens:20000`

@@ -29,6 +29,7 @@ PRE_ACTIVITY_RADAR_COLUMNS = [
     "pre_activity_structure_gate",
     "pre_activity_behavior_gate",
     "pre_activity_quiet_gate",
+    "pre_activity_no_recent_pump_gate",
     "pre_activity_alert_flag",
     "pre_activity_state",
     "pre_activity_primary_signal",
@@ -145,6 +146,25 @@ def _target_cex_text(row: Mapping[str, Any] | pd.Series) -> str:
     return text if TARGET_CEX_RE.search(text) else ""
 
 
+def _no_recent_pump_gate(
+    frame: pd.DataFrame,
+    *,
+    min_history_days: int = 60,
+    max_recent_pump_pct: float = 35.0,
+) -> pd.Series:
+    min_days = max(1, int(min_history_days))
+    proof_days = max(1, min(60, min_days))
+    history_days = _raw_num(frame, "history_days", default=0.0).fillna(0.0)
+    recent_pump_days = _raw_num(frame, "recent_pump_60d_days", default=0.0).fillna(0.0)
+    recent_pump = _raw_num(frame, "recent_max_pump_60d_pct")
+    no_large_flag = _boolish(frame.get("no_large_pump_60d_flag"), index=frame.index)
+    coverage = history_days.ge(min_days) | recent_pump_days.ge(proof_days)
+    pump_window_ready = recent_pump_days.ge(proof_days)
+    numeric_pass = recent_pump.notna() & recent_pump.lt(max(0.0, float(max_recent_pump_pct))) & pump_window_ready
+    flag_pass = no_large_flag & pump_window_ready
+    return (coverage & (numeric_pass | flag_pass)).fillna(False)
+
+
 def _primary_signal(row: Mapping[str, Any] | pd.Series) -> str:
     behavior = _row_float(row, "pre_activity_behavior_score") or 0.0
     if _row_bool(row, "pre_activity_confirmed_target_flow") and behavior >= 35.0:
@@ -169,6 +189,8 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
     structure = _row_bool(row, "pre_activity_structure_gate")
     flow = _row_bool(row, "pre_activity_confirmed_target_flow")
     venue = _row_bool(row, "pre_activity_binance_bitget_gate")
+    if not _row_bool(row, "pre_activity_no_recent_pump_gate"):
+        return "Dormancy unproven"
     if heat >= 70.0 or not quiet:
         return "Already active / chase risk"
     if score >= 76.0 and flow and structure and venue:
@@ -181,6 +203,8 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
 
 
 def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
+    if not _row_bool(row, "pre_activity_no_recent_pump_gate"):
+        return "wait for 60D no-pump proof before treating this as pre-activity"
     if not _row_bool(row, "pre_activity_quiet_gate"):
         return "wait for heat to reset; the setup is no longer pre-activity"
     missing: list[str] = []
@@ -220,6 +244,7 @@ def _note(row: Mapping[str, Any] | pd.Series, *, min_transfer_tokens: float = 0.
         _clean_text(row.get("pre_activity_primary_signal") if hasattr(row, "get") else ""),
         f"quiet {quiet:.0f}/100",
         f"heat {heat:.0f}/100",
+        "60D no-pump" if _row_bool(row, "pre_activity_no_recent_pump_gate") else "60D no-pump unproven",
         target_note,
     ]
     return " | ".join(part for part in parts if part)
@@ -404,6 +429,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     structure_gate = whale_gate & ((float_score >= 45.0) | (thin_book_score >= 55.0))
     behavior_gate = target_flow | behavior_score.ge(58.0) | ((venue_score >= 55.0) & (short_fuse_score >= 52.0))
     quiet_gate = quiet_score.ge(50.0) & activity_heat.lt(62.0)
+    no_recent_pump_gate = _no_recent_pump_gate(output)
 
     raw_score = (
         control_score * 0.18
@@ -418,6 +444,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
         + structure_gate.astype(float) * 3.0
         + behavior_gate.astype(float) * 2.0
         - (activity_heat - 55.0).clip(lower=0.0) * 0.32
+        - (~no_recent_pump_gate).astype(float) * 18.0
     )
     score = raw_score.where(~major_excluded, other=0.0).clip(lower=0.0, upper=100.0)
 
@@ -438,11 +465,13 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     output["pre_activity_structure_gate"] = structure_gate & (~major_excluded)
     output["pre_activity_behavior_gate"] = behavior_gate & (~major_excluded)
     output["pre_activity_quiet_gate"] = quiet_gate & (~major_excluded)
+    output["pre_activity_no_recent_pump_gate"] = no_recent_pump_gate & (~major_excluded)
     output["pre_activity_alert_flag"] = (
         score.ge(62.0)
         & structure_gate
         & behavior_gate
         & quiet_gate
+        & no_recent_pump_gate
         & venue_pair_gate
         & short_fuse_score.ge(50.0)
         & (~major_excluded)

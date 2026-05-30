@@ -953,8 +953,8 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "Thesis drilldown:",
         "/coincheck <symbol> - one-symbol pass/fail checklist across holder, venue, squeeze, dormant/not-late, float, and CEX flow.",
         "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /radar, not before it.",
-        "/precrime - quiet pre-activity board after hard holder and Binance+Bitget gates.",
-        "/pumpwatch - broader hard-gated early-pump catch board after holder and Binance+Bitget gates.",
+        "/precrime - quiet pre-activity board after hard holder, Binance+Bitget, and 60D no-pump gates.",
+        "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, and 60D no-pump gates.",
         "/setupscore - strict full-thesis ranking with transfer, holder, venue, short, float, and not-late checks.",
         "",
         "Flow and holder diagnostics:",
@@ -3189,6 +3189,7 @@ def _load_pump_watch_list(
     require_binance_bitget: bool = True,
     require_target_flow: bool = False,
     require_venue_gate: bool = True,
+    require_dormant_60d: bool = True,
 ) -> tuple[str, list[str]]:
     require_holder_evidence = True
     require_binance_bitget = True
@@ -3205,6 +3206,7 @@ def _load_pump_watch_list(
         f"Min radar: {float(min_score):.0f} | Holder gate: top10 >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
+        f"60D no-pump required: {require_dormant_60d} | "
         f"{'Additional venue gate: target-CEX/venue-support check enabled' if require_venue_gate else 'Additional venue gate: disabled for this command'}"
     )
     if frame.empty:
@@ -3235,6 +3237,16 @@ def _load_pump_watch_list(
         scored = scored[venue_gate].copy()
     if scored.empty:
         return "Early pump watch", [header + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count}. No rows survived the venue gate."]
+    dormant_gate = _boolish_series(scored.get("early_pump_no_recent_pump_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    dormant_count = int(dormant_gate.sum())
+    if require_dormant_60d:
+        scored = scored[dormant_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count}. No rows had enough 60D no-pump/dormancy proof."
+        ]
 
     score = _num_series(scored, "early_pump_radar_score")
     target_flow = _boolish_series(scored.get("early_pump_confirmed_target_flow", pd.Series(False, index=scored.index)), index=scored.index)
@@ -3269,7 +3281,7 @@ def _load_pump_watch_list(
     target_count = int(_boolish_series(selected.get("early_pump_confirmed_target_flow"), index=selected.index).sum())
     lines = [
         header,
-        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | Shown after radar filters {len(selected)}",
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Shown after radar filters {len(selected)}",
         f"Matches: {len(selected)} | Confirmed target-flow rows: {target_count} | Read: rank-order evidence, not an execution instruction.",
         "",
         "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist()),
@@ -3298,6 +3310,7 @@ def _pump_watch_line(row: pd.Series) -> str:
     float_score = _safe_float(row.get("early_pump_float_score")) or 0.0
     timing = _safe_float(row.get("early_pump_timing_score")) or 0.0
     not_late = _safe_float(row.get("early_pump_not_late_score")) or 0.0
+    no_pump = "Y" if _boolish_scalar(row.get("early_pump_no_recent_pump_gate")) else "N"
     archetype = _clip_text(row.get("archetype_best_match", ""), 36)
     next_check = _clip_text(row.get("early_pump_next_check", ""), 96)
     archetype_suffix = f" | {archetype}" if archetype and archetype != "No strong case-study analogue" else ""
@@ -3306,7 +3319,7 @@ def _pump_watch_line(row: pd.Series) -> str:
         f"/{symbol} | {state} | radar {radar:.0f}/100 | {signal} | "
         f"flow {flow_score:.0f} {targets} {cex_count}tx max {max_amount} | "
         f"top10 {top10_text}, top100 {top100_text} | shorts {short_text} | "
-        f"float {float_score:.0f} | timing {timing:.0f} | not-late {not_late:.0f}"
+        f"float {float_score:.0f} | timing {timing:.0f} | not-late {not_late:.0f} | noPump60 {no_pump}"
         f"{archetype_suffix}{next_suffix}"
     )
 
@@ -3334,12 +3347,13 @@ def _precrime_line(row: pd.Series) -> str:
     top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
     next_check = _clip_text(row.get("pre_activity_next_check", ""), 100)
+    no_pump = "Y" if _boolish_scalar(row.get("pre_activity_no_recent_pump_gate")) else "N"
     ref_suffix = f" | anchor {ref_symbol} {ref_date}".rstrip() if ref_symbol or ref_date else ""
     return (
         f"/{symbol} | {state} | latent {score:.0f}/100 | {signal} | "
         f"CEX-tell {behavior:.0f} {targets} {cex_count}tx max {max_amount} | "
         f"control {control:.0f} | float {float_score:.0f} | thin-book {thin:.0f} | "
-        f"quiet {quiet:.0f} heat {heat:.0f} | top10 {top10_text}, top100 {top100_text} | shorts {short_text}"
+        f"quiet {quiet:.0f} heat {heat:.0f} | noPump60 {no_pump} | top10 {top10_text}, top100 {top100_text} | shorts {short_text}"
         f"{ref_suffix}{f' | next: {next_check}' if next_check else ''}"
     )
 
@@ -3356,6 +3370,7 @@ def _load_precrime_list(
     require_target_flow: bool = False,
     require_quiet: bool = True,
     require_behavior_gate: bool = True,
+    require_dormant_60d: bool = True,
 ) -> tuple[str, list[str]]:
     require_holder_evidence = True
     require_binance_bitget = True
@@ -3371,7 +3386,8 @@ def _load_precrime_list(
         f"Min latent score: {float(min_score):.0f} | Holder gate: top10 >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
-        f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate}"
+        f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate} | "
+        f"60D no-pump required: {require_dormant_60d}"
     )
     if frame.empty:
         return "Pre-activity radar", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -3397,6 +3413,16 @@ def _load_precrime_list(
         scored = scored[venue_pair_gate].copy()
     if scored.empty:
         return "Pre-activity radar", [header + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count}. No rows met the required trading-venue evidence."]
+    dormant_gate = _boolish_series(scored.get("pre_activity_no_recent_pump_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    dormant_count = int(dormant_gate.sum())
+    if require_dormant_60d:
+        scored = scored[dormant_gate].copy()
+    if scored.empty:
+        return "Pre-activity radar", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count}. No rows had enough 60D no-pump/dormancy proof."
+        ]
 
     score = _num_series(scored, "pre_activity_pump_score")
     selected = scored[score.ge(max(0.0, float(min_score)))].copy()
@@ -3446,7 +3472,7 @@ def _load_precrime_list(
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
     lines = [
         header,
-        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | Shown after latent filters {len(selected)}",
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Shown after latent filters {len(selected)}",
         f"Matches: {len(selected)} | Target-flow rows: {target_count} | Quiet-gated rows: {quiet_count} | Read: structural-risk evidence, not trade instruction.",
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",
@@ -5693,6 +5719,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
+        require_dormant_60d="Require 60D no-pump/dormancy proof before showing score-only rows.",
     )
     async def pumpwatch(
         interaction: discord.Interaction,
@@ -5702,6 +5729,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours: int = 24,
         min_whale_pct: float = 90.0,
         require_target_flow: bool = False,
+        require_dormant_60d: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5718,6 +5746,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             require_target_flow=require_target_flow,
+            require_dormant_60d=require_dormant_60d,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xEF4444)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -5739,6 +5768,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_quiet="Require the no-chase quiet/low-activity gate.",
         require_behavior_gate="Require target CEX flow, venue-inventory tell, or short-fuse venue behaviour.",
+        require_dormant_60d="Require 60D no-pump/dormancy proof before showing score-only rows.",
     )
     async def precrime(
         interaction: discord.Interaction,
@@ -5750,6 +5780,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow: bool = False,
         require_quiet: bool = True,
         require_behavior_gate: bool = True,
+        require_dormant_60d: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5768,6 +5799,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_target_flow=require_target_flow,
             require_quiet=require_quiet,
             require_behavior_gate=require_behavior_gate,
+            require_dormant_60d=require_dormant_60d,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x8B5CF6)
         embed.set_footer(text=DISCORD_FOOTER)

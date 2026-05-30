@@ -18,6 +18,10 @@ def test_pre_activity_radar_prioritizes_quiet_controlled_cex_setup() -> None:
                 "float_trap_score": 80,
                 "fdv_to_market_cap": 12,
                 "locked_supply_pct": 72,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "cex_deposit_flow_flag": True,
                 "cex_deposit_flow_score": 92,
                 "cex_deposit_inventory_stress_score": 78,
@@ -53,6 +57,7 @@ def test_pre_activity_radar_prioritizes_quiet_controlled_cex_setup() -> None:
     assert bool(row["pre_activity_holder_evidence_gate"]) is True
     assert bool(row["pre_activity_whale_gate"]) is True
     assert bool(row["pre_activity_binance_bitget_gate"]) is True
+    assert bool(row["pre_activity_no_recent_pump_gate"]) is True
     assert bool(row["pre_activity_alert_flag"]) is True
     assert bool(row["pre_activity_confirmed_target_flow"]) is True
     assert bool(row["pre_activity_quiet_gate"]) is True
@@ -68,6 +73,10 @@ def test_pre_activity_radar_penalizes_already_active_heat() -> None:
                 "top10_holder_pct": 90,
                 "top100_holder_pct": 99,
                 "low_float_score": 88,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 8.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
                 "cex_deposit_flow_flag": True,
                 "cex_deposit_flow_score": 95,
                 "cex_deposit_24h_count": 2,
@@ -93,6 +102,57 @@ def test_pre_activity_radar_penalizes_already_active_heat() -> None:
     assert bool(row["pre_activity_quiet_gate"]) is False
     assert bool(row["pre_activity_alert_flag"]) is False
     assert row["pre_activity_state"] == "Already active / chase risk"
+
+
+def test_pre_activity_radar_requires_60d_no_pump_proof_for_alerts() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "RECENTPUMPUSDT",
+                "token_platform": "bsc",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "holder_source": "BscScan holder endpoint",
+                "top10_holder_pct": 92,
+                "top100_holder_pct": 99,
+                "holder_count": 8_000,
+                "low_float_score": 84,
+                "float_trap_score": 80,
+                "fdv_to_market_cap": 12,
+                "locked_supply_pct": 72,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 82.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": False,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_inventory_stress_score": 78,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_max_amount": 250_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                "inventory_transfer_risk_score": 74,
+                "short_account_pct": 62,
+                "short_account_change_max_pp": 1.8,
+                "oi_to_24h_volume_pct": 9,
+                "binance_bitget_gate_share_pct": 56,
+                "bitget_volume_share_pct": 2.0,
+                "ask_depth_1pct_usdt": 42_000,
+                "ask_depth_to_24h_volume_pct": 0.03,
+                "day_return_pct": 0.9,
+                "price_change_24h_pct": 0.9,
+                "hour_return_pct": 0.2,
+                "range_24h_pct": 3.2,
+                "low_volatility_coil_score": 82,
+                "pre_pump_precision_score": 78,
+            }
+        ]
+    )
+
+    row = apply_pre_activity_radar(frame).iloc[0]
+
+    assert bool(row["pre_activity_no_recent_pump_gate"]) is False
+    assert bool(row["pre_activity_alert_flag"]) is False
+    assert row["pre_activity_state"] == "Dormancy unproven"
+    assert "60D no-pump proof" in row["pre_activity_next_check"]
 
 
 def test_pre_activity_radar_target_flow_respects_transfer_floor() -> None:
