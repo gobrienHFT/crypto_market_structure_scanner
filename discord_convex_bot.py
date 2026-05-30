@@ -300,6 +300,7 @@ def _tier_allows(tier: str, required: str) -> bool:
 def _feature_required_tier(feature: str) -> str:
     defaults = {
         "convex": "free",
+        "commands": "free",
         "coin": "paid",
         "scoreboard": "paid",
         "archive": "pro",
@@ -630,6 +631,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
     symbol = match.group(1).upper()
     if symbol in {
         "CONVEX",
+        "COMMANDS",
         "CONVEX_STATUS",
         "CONVEX_SCOREBOARD",
         "CONVEX_ARCHIVE",
@@ -934,6 +936,54 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     if source.startswith("cached fallback"):
         title = f"Cached scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     return title, description
+
+
+def _load_command_guide() -> tuple[str, list[str]]:
+    lines = [
+        "Discord operator command guide",
+        "Use /radar first. It is the clean hard-gated queue for the thesis: explorer-backed top10 whale control, Binance+Bitget trading evidence, low-float/FDV structure, 60D no-pump/dormancy, squeeze fuel, and early/no-chase tape.",
+        "",
+        "Primary queue:",
+        "/commands - this operator map.",
+        "/radar [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - default operator queue; trigger can show all, triggered, whale-CEX, target-CEX, breakout, or core-watch rows.",
+        "/prime - short alias for /radar.",
+        "/alpha [limit] - compact thesis-gated brief across structure, timing, CEX flow, scanner score, and short fuel.",
+        "/convex [limit] - legacy market-structure sample after the shared strict thesis gate.",
+        "",
+        "Thesis drilldown:",
+        "/coincheck <symbol> - one-symbol pass/fail checklist across holder, venue, squeeze, dormant/not-late, float, and CEX flow.",
+        "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /radar, not before it.",
+        "/precrime - quiet pre-activity board after hard holder and Binance+Bitget gates.",
+        "/pumpwatch - broader hard-gated early-pump catch board after holder and Binance+Bitget gates.",
+        "/setupscore - strict full-thesis ranking with transfer, holder, venue, short, float, and not-late checks.",
+        "",
+        "Flow and holder diagnostics:",
+        "/cexflow [min_tokens] - concentration-gated labelled wallet-to-CEX flow; use require_venue_gate:false only for diagnostics.",
+        "/cexdiag - explains empty /cexflow results: attempts, explorer errors, holder-gate survival, and venue-gate survival.",
+        "/earlyflow - smaller-transfer sweep for low-float names.",
+        "/flowproof <symbol> - audit transfer proof for one symbol.",
+        "/flowcoin <symbol> - one-symbol wallet-to-CEX flow check.",
+        "/flowstress - CEX deposit inventory stress versus visible liquidity.",
+        "/flowblocked - symbols blocked by explorer/API source errors.",
+        "/flowhealth - API key, chain fallback, and CEX label coverage.",
+        "/whales - holder concentration board; diagnostic unless top10 + holder evidence are present.",
+        "",
+        "Market context:",
+        "/high <days> and /low <days> - breakout highs/lows for any 1D-1499D window; use thesis_only:true for hard-gated rows.",
+        "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
+        "/shorts - all cached symbols with short-account majority.",
+        "/funding - Binance funding/carry board.",
+        "/floattrap, /squeezeready, /cextargets, /terminal, /timing - single-lens context boards.",
+        "",
+        "Runtime and records:",
+        "/dossier <symbol>, /coin <symbol> - symbol detail views.",
+        "/startbot, /stopbot, /tradebot_status - trade-bot runtime controls.",
+        "/convex_status, /convex_scoreboard, /convex_archive - proof/archive status.",
+        "/sync_commands - refresh slash-command schema after deploy.",
+        "",
+        "Rule of thumb: /radar for candidates, /coincheck for one name, /cexdiag or /flowhealth for data problems, /ravelab detail:true for the full evidence stack.",
+    ]
+    return "Discord command guide", _chunk_text_lines(lines)
 
 
 def _load_terminal_list(limit: int) -> tuple[str, str]:
@@ -5435,6 +5485,26 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed = discord.Embed(title=title, description=description, color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
+
+    commands_kwargs = {"name": "commands", "description": "Show the recommended Discord operator command map."}
+    if guild is not None:
+        commands_kwargs["guild"] = guild
+
+    @tree.command(**commands_kwargs)
+    async def commands(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("commands")):
+            await interaction.response.send_message(_access_denied_message("commands"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(_load_command_guide)
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x38BDF8)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
 
     shorts_kwargs = {"name": "shorts", "description": "List every cached token with more than 50% of accounts short."}
     if guild is not None:

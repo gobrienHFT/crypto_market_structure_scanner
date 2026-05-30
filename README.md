@@ -218,6 +218,7 @@ The repository also includes a lightweight Discord bot interface for querying ca
 Supported commands include:
 
 ```text
+/commands
 /alpha [limit]
 /convex [limit]
 /shorts
@@ -259,6 +260,8 @@ Supported commands include:
 /sync_commands
 /<configured-symbol-alias>
 ```
+
+Use `/commands` inside Discord when you want the operator map. It labels `/radar` as the primary hard-gated queue, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
 
 The bot can retrieve:
 

@@ -32,6 +32,7 @@ def test_normalize_symbol_query_accepts_fast_coin_forms() -> None:
 
 def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/convex") == ""
+    assert bot._normalize_symbol_query("/commands") == ""
     assert bot._normalize_symbol_query("/convex_status") == ""
     assert bot._normalize_symbol_query("/coin") == ""
     assert bot._normalize_symbol_query("/whales") == ""
@@ -64,6 +65,19 @@ def test_normalize_symbol_query_rejects_bot_commands() -> None:
     assert bot._normalize_symbol_query("/sethflow") == ""
     assert bot._normalize_symbol_query("/alpha") == ""
     assert bot._normalize_symbol_query("/sync_commands") == ""
+
+
+def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
+    title, chunks = bot._load_command_guide()
+    output = "\n".join(chunks)
+
+    assert title == "Discord command guide"
+    assert "/commands - this operator map" in output
+    assert "Use /radar first" in output
+    assert "/ravelab - diagnostic microscope" in output
+    assert "/cexdiag" in output
+    assert "/flowhealth" in output
+    assert "Rule of thumb: /radar for candidates" in output
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
