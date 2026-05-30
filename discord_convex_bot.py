@@ -3307,7 +3307,12 @@ def _ravelab_anchor_for_side(side: str, rave_score: float, lab_score: float) -> 
     return (exemplar.symbol, exemplar.event_date) if exemplar is not None else ("", "")
 
 
-def _ravelab_apply_thesis_columns(frame: pd.DataFrame, *, min_squeeze_score: float) -> pd.DataFrame:
+def _ravelab_apply_thesis_columns(
+    frame: pd.DataFrame,
+    *,
+    min_squeeze_score: float,
+    min_transfer_tokens: float = 0.0,
+) -> pd.DataFrame:
     output = frame.copy()
     if output.empty:
         return output
@@ -3321,9 +3326,11 @@ def _ravelab_apply_thesis_columns(frame: pd.DataFrame, *, min_squeeze_score: flo
     target_flow = _boolish_series(output.get("_ravelab_target_flow"), index=index)
     breakout_any = _boolish_series(output.get("_ravelab_breakout_any"), index=index)
     squeeze_gate = _ravelab_squeeze_gate_series(output, min_squeeze_score=min_squeeze_score)
+    transfer_floor = max(0.0, float(min_transfer_tokens or 0.0))
     whale_origin_flow = (
         _num_series(output, "cex_deposit_24h_whale_sender_count").gt(0.0)
         & _num_series(output, "cex_deposit_24h_count").gt(0.0)
+        & _num_series(output, "cex_deposit_24h_whale_sender_token_amount").ge(transfer_floor)
         & target_flow
     )
     core_gates = {
@@ -3407,6 +3414,7 @@ def _score_ravelab_early_frame(
     min_whale_pct: float = 90.0,
     min_history_days: int = 60,
     max_recent_pump_pct: float = 35.0,
+    min_transfer_tokens: float = 0.0,
 ) -> pd.DataFrame:
     scored = frame.loc[:, ~frame.columns.duplicated()].copy()
     scored = apply_terminal_model(scored)
@@ -3516,13 +3524,7 @@ def _score_ravelab_early_frame(
         + has_gate.astype(float) * 12.0
         + _num_series(scored, "binance_bitget_gate_share_pct").clip(lower=0.0, upper=100.0) * 0.10
     ).clip(lower=0.0, upper=100.0)
-    target_flow = (
-        _boolish_series(scored.get("pre_activity_confirmed_target_flow"), index=index)
-        | (
-            _num_series(scored, "cex_deposit_24h_count").gt(0.0)
-            & targets.str.contains(TARGET_CEX_PATTERN, regex=True, na=False)
-        )
-    )
+    target_flow = _confirmed_cex_flow_mask(scored, min_transfer_tokens=min_transfer_tokens, target_only=True)
     broke_90d = _boolish_series(scored.get("broke_high_90d"), index=index)
     broke_180d = _boolish_series(scored.get("broke_high_180d"), index=index)
     day_return_abs = _num_series(scored, "day_return_pct", default=float("nan")).abs()
@@ -4099,6 +4101,7 @@ def _load_ravelab_list(
         min_whale_pct=min_whale_pct,
         min_history_days=min_history_days,
         max_recent_pump_pct=max_recent_pump_pct,
+        min_transfer_tokens=effective_min_transfer,
     )
     holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
     scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
@@ -4120,7 +4123,7 @@ def _load_ravelab_list(
         max_recent_pump_pct=float(max_recent_pump_pct),
         days=60,
     )
-    scored = _ravelab_apply_thesis_columns(scored, min_squeeze_score=min_squeeze_score)
+    scored = _ravelab_apply_thesis_columns(scored, min_squeeze_score=min_squeeze_score, min_transfer_tokens=effective_min_transfer)
     base_mask, funnel_steps = _ravelab_base_funnel_mask_and_steps(
         scored,
         min_score=min_score,
@@ -4137,7 +4140,7 @@ def _load_ravelab_list(
     breakout_stats = {"checked": 0, "errors": 0, "insufficient": 0, "cached": 0}
     if not selected.empty:
         selected, breakout_stats = _apply_ravelab_high_breakout_windows(selected, breakout_days)
-        selected = _ravelab_apply_thesis_columns(selected, min_squeeze_score=min_squeeze_score)
+        selected = _ravelab_apply_thesis_columns(selected, min_squeeze_score=min_squeeze_score, min_transfer_tokens=effective_min_transfer)
         if require_breakout_high:
             selected = selected[_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index)].copy()
     if require_breakout_high:
@@ -5409,7 +5412,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_dormant_2m="Require no 90D/180D high break and low recent heat.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
-        require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet.",
+        require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears min_tokens.",
         trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch only.",
         near_miss_limit="Blocked high-signal rows to show after strict matches. Use 0 to hide.",
         detail="Show full multi-line evidence instead of the compact staged read.",

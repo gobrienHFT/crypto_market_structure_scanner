@@ -2214,6 +2214,84 @@ def test_ravelab_trigger_text_prioritizes_whale_flow_then_breakout() -> None:
     assert bot._ravelab_trigger_text(row) == "whale-CEX 1.50M, breakout 1D,2D"
 
 
+def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
+    def flow_row(symbol: str, amount: float, contract: str) -> dict[str, object]:
+        return {
+            "symbol": symbol,
+            "history_days": 160,
+            "token_platform": "ethereum",
+            "token_contract": contract,
+            "holder_source": "Etherscan holder endpoint",
+            "cex_deposit_flow_score": 94,
+            "cex_deposit_flow_flag": True,
+            "cex_deposit_24h_count": 1,
+            "cex_deposit_24h_token_amount": amount,
+            "cex_deposit_24h_max_amount": amount,
+            "cex_deposit_24h_whale_sender_count": 1,
+            "cex_deposit_24h_whale_sender_token_amount": amount,
+            "cex_deposit_24h_target_exchanges": "Binance, Gate.io",
+            "cex_deposit_inventory_stress_score": 96,
+            "inventory_transfer_risk_score": 94,
+            "terminal_distribution_pressure_score": 92,
+            "terminal_control_plane_score": 86,
+            "top10_holder_pct": 91.0,
+            "top100_holder_pct": 99.2,
+            "holder_count": 8_000,
+            "centralized_ownership_score": 88.0,
+            "low_float_score": 84.0,
+            "float_trap_score": 80.0,
+            "fdv_to_market_cap": 9.0,
+            "locked_supply_pct": 65.0,
+            "short_account_pct": 51.0,
+            "short_dominance_score": 58.0,
+            "short_account_build_score": 52.0,
+            "silent_oi_accumulation_score": 56.0,
+            "binance_volume_share_pct": 9.0,
+            "bitget_volume_share_pct": 2.0,
+            "pre_pump_precision_score": 38.0,
+            "low_volatility_coil_score": 80.0,
+            "hour_return_pct": 0.3,
+            "day_return_pct": 1.0,
+            "price_change_24h_pct": 1.0,
+            "range_24h_pct": 3.5,
+            "scan_mode": "Deep",
+            "scanned_at_utc": "now",
+        }
+
+    fresh = pd.DataFrame(
+        [
+            flow_row("LOWFLOWUSDT", 10_000, "0x1111111111111111111111111111111111111111"),
+            flow_row("BIGFLOWUSDT", 30_000, "0x2222222222222222222222222222222222222222"),
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    class FakeBinance:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def klines_1d(self, symbol: str, limit: int = 200, **kwargs):
+            closed = [[0, 100, 102, 98, 100] for _ in range(max(limit - 1, 1))]
+            return [*closed, [0, 100, 101, 99, 100]]
+
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
+
+    _, chunks = bot._load_ravelab_list(
+        10,
+        min_score=0,
+        min_archetype=0,
+        min_tokens=20_000,
+        trigger_filter="flow",
+        near_miss_limit=0,
+    )
+    output = "\n".join(chunks)
+
+    assert "trigger:flow 1" in output
+    assert "Trigger lanes before filter: triggered 1 | whale-CEX 1 | target-CEX 1" in output
+    assert "/BIGFLOWUSDT" in output
+    assert "/LOWFLOWUSDT" not in output
+
+
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
     row = pd.Series(
         {
