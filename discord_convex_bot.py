@@ -4058,6 +4058,10 @@ def _load_ravelab_list(
             f"Core 5/5: {core_count} | Target-flow rows: {target_count} | Whale-origin CEX rows: {whale_origin_count} | "
             f"Near misses shown: {len(near_misses)} | Read: historical-analogue screen, not trade instruction."
         ),
+    ]
+    if queue_summary:
+        lines.extend(queue_summary)
+    lines.extend([
         gate_summary,
         (
             f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract source/count | "
@@ -4074,10 +4078,7 @@ def _load_ravelab_list(
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",
         "",
-    ]
-    if queue_summary:
-        lines.extend(queue_summary)
-        lines.append("")
+    ])
     for _, row in selected.iterrows():
         lines.append(_ravelab_line(row, detail=detail))
     if not near_misses.empty:

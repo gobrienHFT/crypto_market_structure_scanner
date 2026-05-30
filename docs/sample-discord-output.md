@@ -44,14 +44,13 @@ No-pump proof: requires 60D closed daily-candle pump history; missing/insufficie
 Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 5/5: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
+Trigger queue: /LABXUSDT A3 (whaleCEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
 Holder evidence rows: 2 with ETH/BNB/ARB chain+contract source/count | contract rows 2 | pct-only rows 0
 Breakout high checks: 1D,2D,3D,4D,5D,20D | dynamic checks 8 | cached flags 4 | errors 0 | insufficient 0
 Daily pump checks: cached 0 | Binance checked 2 | errors 0 | insufficient 0 | skipped 0
 
 Candidates: /CAPUSDT /LABXUSDT
-
-Trigger queue: /LABXUSDT A3 (whaleCEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D)
 
 /CAPUSDT | RAVE-like | A2 BREAKOUT PRIME | core 5/5 | thesis 86/100 crime 36/100 early 73/100 | blockers none | anchor RAVEUSDT 2026-04-18
   proof: whale 99.8% holderEv Y | venues Bn Y/Bg Y/Gate N | noPump Y pump60 8.4%/60d binance60d | hist 180d dormant2m Y | squeeze 62(Y) fuel 52 ssq 48 flip N shortMaj Y shorts 54.0% | highs 1D,2D,3D,4D,5D | CEX no target flow 0tx max n/a | holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111 | venue Bn perp,8.0%; Bg 2.0%; Gate no

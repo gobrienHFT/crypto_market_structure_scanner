@@ -1969,6 +1969,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Trigger queue:" in output
     assert "/LABXUSDT A3 (whaleCEX 360.00K)" in output
     assert "/CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)" in output
+    assert output.index("Trigger queue:") < output.index("Holder evidence rows:")
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
     assert "holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
@@ -2117,6 +2118,33 @@ def test_ravelab_squeeze_gate_uses_funding_flip_model() -> None:
     assert "crime " in line
     assert "ssq " in line
     assert "flip N" in line
+
+
+def test_ravelab_queue_summary_splits_triggers_and_core_watch() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "FLOWUSDT",
+                "_ravelab_core_gate_count": 5,
+                "_ravelab_core_gate_total": 5,
+                "_ravelab_whale_origin_flow": True,
+                "_ravelab_breakout_any": False,
+                "cex_deposit_24h_whale_sender_token_amount": 2_500_000,
+            },
+            {
+                "symbol": "COREUSDT",
+                "_ravelab_core_gate_count": 5,
+                "_ravelab_core_gate_total": 5,
+            },
+        ]
+    )
+
+    lines = bot._ravelab_queue_summary_lines(frame)
+
+    assert lines == [
+        "Trigger queue: /FLOWUSDT A3 (whaleCEX 2.50M)",
+        "Core watch: /COREUSDT A1 (core watch)",
+    ]
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
