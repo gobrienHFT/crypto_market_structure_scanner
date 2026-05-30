@@ -1966,6 +1966,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Daily pump checks:" in output
     assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
     assert "Candidates:" in output
+    assert "Trigger queue:" in output
+    assert "/LABXUSDT A3 (whaleCEX 360.00K)" in output
+    assert "/CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)" in output
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
     assert "holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output

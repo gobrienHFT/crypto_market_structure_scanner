@@ -3647,6 +3647,41 @@ def _ravelab_stage_label(row: pd.Series) -> str:
     return f"B{max(0, core_total - core_count)} BLOCKED"
 
 
+def _ravelab_queue_summary_lines(frame: pd.DataFrame, *, limit: int = 8) -> list[str]:
+    if frame.empty:
+        return []
+    trigger_entries: list[str] = []
+    core_entries: list[str] = []
+    for _, row in frame.head(max(1, int(limit))).iterrows():
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        stage = _ravelab_stage_label(row).split()[0]
+        catalysts: list[str] = []
+        if _boolish_scalar(row.get("_ravelab_whale_origin_flow")):
+            amount_value = row.get("cex_deposit_24h_whale_sender_token_amount")
+            if _safe_float(amount_value) is None:
+                amount_value = row.get("cex_deposit_24h_max_amount")
+            catalysts.append(f"whaleCEX {_fmt_compact_number(amount_value)}")
+        elif _boolish_scalar(row.get("_ravelab_target_flow")):
+            catalysts.append(f"CEX {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))}")
+        if _boolish_scalar(row.get("_ravelab_breakout_any")):
+            catalysts.append(f"breakout {_clip_text(row.get('_ravelab_breakout_windows', ''), 24) or 'yes'}")
+        if _boolish_scalar(row.get("fresh_flip_flag")):
+            catalysts.append("fundingFlip")
+        if not catalysts:
+            catalysts.append("core watch")
+        entry = f"/{symbol} {stage} ({', '.join(catalysts[:3])})"
+        if stage in {"A2", "A3", "A4"}:
+            trigger_entries.append(entry)
+        elif stage == "A1":
+            core_entries.append(entry)
+    lines: list[str] = []
+    if trigger_entries:
+        lines.append("Trigger queue: " + " | ".join(trigger_entries))
+    if core_entries:
+        lines.append("Core watch: " + " | ".join(core_entries))
+    return lines
+
+
 def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
     score = _safe_float(row.get("_ravelab_early_score")) or 0.0
@@ -4015,6 +4050,7 @@ def _load_ravelab_list(
         f", squeeze stack >= {float(min_squeeze_score):.0f}."
     )
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
+    queue_summary = _ravelab_queue_summary_lines(selected)
     lines = [
         header,
         (
@@ -4039,6 +4075,9 @@ def _load_ravelab_list(
         f"Candidates: {symbols}" if symbols else "Candidates: none",
         "",
     ]
+    if queue_summary:
+        lines.extend(queue_summary)
+        lines.append("")
     for _, row in selected.iterrows():
         lines.append(_ravelab_line(row, detail=detail))
     if not near_misses.empty:

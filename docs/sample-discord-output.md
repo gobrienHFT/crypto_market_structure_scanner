@@ -51,6 +51,8 @@ Daily pump checks: cached 0 | Binance checked 2 | errors 0 | insufficient 0 | sk
 
 Candidates: /CAPUSDT /LABXUSDT
 
+Trigger queue: /LABXUSDT A3 (whaleCEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D)
+
 /CAPUSDT | RAVE-like | A2 BREAKOUT PRIME | core 5/5 | thesis 86/100 crime 36/100 early 73/100 | blockers none | anchor RAVEUSDT 2026-04-18
   proof: whale 99.8% holderEv Y | venues Bn Y/Bg Y/Gate N | noPump Y pump60 8.4%/60d binance60d | hist 180d dormant2m Y | squeeze 62(Y) fuel 52 ssq 48 flip N shortMaj Y shorts 54.0% | highs 1D,2D,3D,4D,5D | CEX no target flow 0tx max n/a | holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111 | venue Bn perp,8.0%; Bg 2.0%; Gate no
   next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
