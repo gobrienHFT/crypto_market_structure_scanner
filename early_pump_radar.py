@@ -126,8 +126,9 @@ def _primary_signal(row: Mapping[str, Any] | pd.Series) -> str:
     flow_score = _first_float(row, "early_pump_flow_score") or 0.0
     if _row_bool(row, "early_pump_confirmed_target_flow") and flow_score >= 35.0:
         return f"target CEX flow {flow_score:.0f}/100"
+    flow_label = "exchange-flow stress" if _target_cex_text(row) else "flow stress"
     candidates = {
-        "target CEX flow": flow_score,
+        flow_label: flow_score,
         "short-squeeze fuel": _first_float(row, "early_pump_short_squeeze_score") or 0.0,
         "whale/control plane": _first_float(row, "early_pump_whale_score") or 0.0,
         "low-float pressure": _first_float(row, "early_pump_float_score") or 0.0,
@@ -191,9 +192,19 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
     return "watch for OI expansion, constructive close location, volume lift, and no chase-extension wick"
 
 
-def _note(row: Mapping[str, Any] | pd.Series) -> str:
+def _note(row: Mapping[str, Any] | pd.Series, *, min_transfer_tokens: float = 0.0) -> str:
     score = _first_float(row, "early_pump_radar_score") or 0.0
-    targets = _target_cex_text(row) or "no confirmed target CEX"
+    target_text = _target_cex_text(row)
+    targets = target_text if _row_bool(row, "early_pump_confirmed_target_flow") else "no confirmed target CEX"
+    max_amount = _first_float(row, "cex_deposit_24h_max_amount")
+    if (
+        target_text
+        and not _row_bool(row, "early_pump_confirmed_target_flow")
+        and min_transfer_tokens > 0.0
+        and max_amount is not None
+        and max_amount < min_transfer_tokens
+    ):
+        targets = f"{target_text} below transfer floor"
     parts = [
         f"radar {score:.0f}/100",
         _clean_text(row.get("early_pump_state") if hasattr(row, "get") else ""),
@@ -206,7 +217,7 @@ def _note(row: Mapping[str, Any] | pd.Series) -> str:
     return " | ".join(part for part in parts if part)
 
 
-def apply_early_pump_radar(frame: pd.DataFrame) -> pd.DataFrame:
+def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 0.0) -> pd.DataFrame:
     if frame.empty:
         output = frame.copy()
         for column in EARLY_PUMP_RADAR_COLUMNS:
@@ -214,10 +225,12 @@ def apply_early_pump_radar(frame: pd.DataFrame) -> pd.DataFrame:
         return output
 
     output = frame.loc[:, ~frame.columns.duplicated()].copy()
+    transfer_floor = max(0.0, _safe_float(min_transfer_tokens) or 0.0)
     targets = _text(output, "cex_deposit_24h_target_exchanges")
     target_flow = (
         (_boolish(output.get("cex_deposit_flow_flag"), index=output.index) | _num(output, "cex_deposit_flow_score").gt(0.0))
         & _num(output, "cex_deposit_24h_count").gt(0.0)
+        & _num(output, "cex_deposit_24h_max_amount").ge(transfer_floor)
         & targets.str.contains(TARGET_CEX_RE, regex=True)
     )
 
@@ -379,5 +392,5 @@ def apply_early_pump_radar(frame: pd.DataFrame) -> pd.DataFrame:
     output["early_pump_state"] = output.apply(_state, axis=1)
     output["early_pump_primary_signal"] = output.apply(_primary_signal, axis=1)
     output["early_pump_next_check"] = output.apply(_next_check, axis=1)
-    output["early_pump_note"] = output.apply(_note, axis=1)
+    output["early_pump_note"] = output.apply(lambda row: _note(row, min_transfer_tokens=transfer_floor), axis=1)
     return output

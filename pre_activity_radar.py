@@ -189,22 +189,33 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
     return "watch for absorption, OI expansion, and first volume lift while price remains below chase heat"
 
 
-def _note(row: Mapping[str, Any] | pd.Series) -> str:
+def _note(row: Mapping[str, Any] | pd.Series, *, min_transfer_tokens: float = 0.0) -> str:
     score = _row_float(row, "pre_activity_pump_score") or 0.0
     quiet = _row_float(row, "pre_activity_quiet_score") or 0.0
     heat = _row_float(row, "pre_activity_heat_score") or 0.0
+    target_text = _target_cex_text(row)
+    target_note = target_text if _row_bool(row, "pre_activity_confirmed_target_flow") else "no confirmed target CEX"
+    max_amount = _row_float(row, "cex_deposit_24h_max_amount")
+    if (
+        target_text
+        and not _row_bool(row, "pre_activity_confirmed_target_flow")
+        and min_transfer_tokens > 0.0
+        and max_amount is not None
+        and max_amount < min_transfer_tokens
+    ):
+        target_note = f"{target_text} below transfer floor"
     parts = [
         f"latent {score:.0f}/100",
         _clean_text(row.get("pre_activity_state") if hasattr(row, "get") else ""),
         _clean_text(row.get("pre_activity_primary_signal") if hasattr(row, "get") else ""),
         f"quiet {quiet:.0f}/100",
         f"heat {heat:.0f}/100",
-        _target_cex_text(row) or "no confirmed target CEX",
+        target_note,
     ]
     return " | ".join(part for part in parts if part)
 
 
-def apply_pre_activity_radar(frame: pd.DataFrame) -> pd.DataFrame:
+def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 0.0) -> pd.DataFrame:
     """Score latent abnormal-market-structure setups before obvious activity.
 
     The model is intentionally different from an ignition score: it rewards
@@ -220,6 +231,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame) -> pd.DataFrame:
 
     output = frame.loc[:, ~frame.columns.duplicated()].copy()
     index = output.index
+    transfer_floor = max(0.0, _safe_float(min_transfer_tokens) or 0.0)
 
     top10 = _pct_series(output, "top10_holder_pct").fillna(0.0)
     top100 = _pct_series(output, "top100_holder_pct").fillna(0.0)
@@ -267,6 +279,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame) -> pd.DataFrame:
     target_flow = (
         (_boolish(output.get("cex_deposit_flow_flag"), index=index) | _num(output, "cex_deposit_flow_score").gt(0.0))
         & _num(output, "cex_deposit_24h_count").gt(0.0)
+        & _num(output, "cex_deposit_24h_max_amount").ge(transfer_floor)
         & targets.str.contains(TARGET_CEX_RE, regex=True)
     )
     raw_behavior_score = _clip(
@@ -413,5 +426,5 @@ def apply_pre_activity_radar(frame: pd.DataFrame) -> pd.DataFrame:
     output["pre_activity_state"] = output.apply(_state, axis=1)
     output["pre_activity_primary_signal"] = output.apply(_primary_signal, axis=1)
     output["pre_activity_next_check"] = output.apply(_next_check, axis=1)
-    output["pre_activity_note"] = output.apply(_note, axis=1)
+    output["pre_activity_note"] = output.apply(lambda row: _note(row, min_transfer_tokens=transfer_floor), axis=1)
     return output

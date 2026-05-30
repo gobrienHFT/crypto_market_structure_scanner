@@ -1531,6 +1531,47 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
     assert "WEAKUSDT" not in output
 
 
+def test_pumpwatch_target_flow_respects_min_transfer_floor(monkeypatch) -> None:
+    base = {
+        **_holder_evidence(),
+        "cex_deposit_flow_score": 92,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 1,
+        "cex_deposit_24h_target_exchanges": "Binance",
+        "cex_deposit_inventory_stress_score": 84,
+        "top10_holder_pct": 92.0,
+        "centralized_ownership_score": 86.0,
+        "low_float_score": 82.0,
+        "float_trap_score": 78.0,
+        "fdv_to_market_cap": 8.0,
+        "short_account_pct": 64.0,
+        "short_dominance_score": 80.0,
+        "short_account_build_score": 74.0,
+        "dormant_short_fuse_score": 82.0,
+        "pre_pump_precision_score": 76.0,
+        "bitget_volume_share_pct": 2.4,
+        "binance_volume_share_pct": 12.0,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "now",
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "BIGFLOWUSDT", "cex_deposit_24h_max_amount": 30_000},
+            {**base, "symbol": "LOWFLOWUSDT", "cex_deposit_24h_max_amount": 10_000},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_pump_watch_list(10, min_score=0, min_tokens=20_000, require_target_flow=True)
+    output = "\n".join(chunks)
+
+    assert title == "Early pump watch"
+    assert "Transfer floor: 20.00K tokens" in output
+    assert "Confirmed target-flow rows: 1" in output
+    assert "/BIGFLOWUSDT" in output
+    assert "/LOWFLOWUSDT" not in output
+
+
 def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [
@@ -1620,6 +1661,61 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
     assert "Binance, Gate.io 2tx max 240.00K" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/HOTUSDT" not in output
+
+
+def test_precrime_target_flow_respects_min_transfer_floor(monkeypatch) -> None:
+    base = {
+        **_holder_evidence(chain="bsc", contract="0x2222222222222222222222222222222222222222"),
+        "cex_deposit_flow_score": 92,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 1,
+        "cex_deposit_24h_target_exchanges": "Binance",
+        "cex_deposit_inventory_stress_score": 84,
+        "inventory_transfer_risk_score": 74,
+        "top10_holder_pct": 92.0,
+        "centralized_ownership_score": 88.0,
+        "low_float_score": 86.0,
+        "float_trap_score": 82.0,
+        "fdv_to_market_cap": 11.0,
+        "locked_supply_pct": 70.0,
+        "short_account_pct": 62.0,
+        "short_account_change_max_pp": 1.8,
+        "oi_to_24h_volume_pct": 9.0,
+        "ask_depth_1pct_usdt": 42_000,
+        "ask_depth_to_24h_volume_pct": 0.03,
+        "binance_bitget_gate_share_pct": 35.0,
+        "bitget_volume_share_pct": 1.8,
+        "binance_volume_share_pct": 12.0,
+        "day_return_pct": 0.9,
+        "price_change_24h_pct": 0.9,
+        "hour_return_pct": 0.2,
+        "range_24h_pct": 3.2,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "now",
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "BIGFLOWUSDT", "cex_deposit_24h_max_amount": 30_000},
+            {**base, "symbol": "LOWFLOWUSDT", "cex_deposit_24h_max_amount": 10_000},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_precrime_list(
+        10,
+        min_score=0,
+        min_tokens=20_000,
+        require_target_flow=True,
+        require_quiet=False,
+        require_behavior_gate=False,
+    )
+    output = "\n".join(chunks)
+
+    assert title == "Pre-activity radar"
+    assert "Transfer floor: 20.00K tokens" in output
+    assert "Target-flow rows: 1" in output
+    assert "/BIGFLOWUSDT" in output
+    assert "/LOWFLOWUSDT" not in output
 
 
 def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None:
@@ -2329,6 +2425,104 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
 
 def test_clip_text_treats_pandas_na_as_empty_text() -> None:
     assert bot._clip_text(pd.NA, 12) == ""
+
+
+def test_ravelab_line_prints_forced_flow_mechanics_and_exhaustion() -> None:
+    row = pd.Series(
+        {
+            "symbol": "MECHUSDT",
+            "_ravelab_early_score": 78.0,
+            "_ravelab_thesis_score": 84.0,
+            "_ravelab_side": "LAB-like",
+            "_ravelab_rave_score": 45.0,
+            "_ravelab_lab_score": 80.0,
+            "_ravelab_core_gate_count": 5,
+            "_ravelab_core_gate_total": 5,
+            "_ravelab_whale_gate": True,
+            "_ravelab_holder_evidence_gate": True,
+            "_ravelab_venue_gate": True,
+            "_ravelab_has_binance": True,
+            "_ravelab_has_bitget": True,
+            "_ravelab_has_gate": False,
+            "_ravelab_no_large_pump_gate": True,
+            "_ravelab_dormant_2m_gate": True,
+            "_ravelab_squeeze_gate": True,
+            "_ravelab_short_majority_gate": True,
+            "_ravelab_early_gate": True,
+            "_ravelab_target_flow": True,
+            "_ravelab_history_days": 120,
+            "_ravelab_recent_max_pump_pct": 8.0,
+            "_ravelab_recent_pump_days": 60,
+            "_ravelab_forced_flow_score": 76.0,
+            "_ravelab_exhaustion_score": 18.0,
+            "_ravelab_short_build_pp": 2.4,
+            "_ravelab_short_drop_pp": 0.0,
+            "_ravelab_oi_delta_pct": 5.1,
+            "_ravelab_volume_multiple": 2.2,
+            "_ravelab_squeeze_score": 72.0,
+            "_ravelab_squeeze_fuel_score": 68.0,
+            "short_account_pct": 64.0,
+            "cex_deposit_24h_target_exchanges": "Binance",
+            "cex_deposit_24h_count": 1,
+            "cex_deposit_24h_max_amount": 250_000,
+            "top10_holder_pct": 94.0,
+            "top100_holder_pct": 99.4,
+            "token_platform": "ethereum",
+            "token_contract": "0x1111111111111111111111111111111111111111",
+            "holder_source": "Etherscan holder endpoint",
+            "bitget_volume_share_pct": 1.2,
+            "binance_volume_share_pct": 10.0,
+        }
+    )
+
+    output = bot._ravelab_line(row)
+
+    assert "flowMech FORCED 76/100 exh 18 shorts 64.0% +short 2.4pp OI +5.1% volx 2.2" in output
+    assert "next: watch for absorption after target-CEX inventory movement and first perp response" in output
+
+
+def test_ravelab_line_marks_short_fade_as_exhaustion_context() -> None:
+    row = pd.Series(
+        {
+            "symbol": "FADEUSDT",
+            "_ravelab_early_score": 70.0,
+            "_ravelab_thesis_score": 80.0,
+            "_ravelab_side": "RAVE-like",
+            "_ravelab_rave_score": 78.0,
+            "_ravelab_lab_score": 42.0,
+            "_ravelab_core_gate_count": 5,
+            "_ravelab_core_gate_total": 5,
+            "_ravelab_whale_gate": True,
+            "_ravelab_holder_evidence_gate": True,
+            "_ravelab_venue_gate": True,
+            "_ravelab_has_binance": True,
+            "_ravelab_has_bitget": True,
+            "_ravelab_has_gate": False,
+            "_ravelab_no_large_pump_gate": True,
+            "_ravelab_dormant_2m_gate": True,
+            "_ravelab_squeeze_gate": True,
+            "_ravelab_short_majority_gate": False,
+            "_ravelab_history_days": 120,
+            "_ravelab_recent_max_pump_pct": 8.0,
+            "_ravelab_recent_pump_days": 60,
+            "_ravelab_forced_flow_score": 40.0,
+            "_ravelab_exhaustion_score": 74.0,
+            "_ravelab_short_build_pp": 0.0,
+            "_ravelab_short_drop_pp": 4.2,
+            "_ravelab_oi_delta_pct": -1.0,
+            "_ravelab_volume_multiple": 6.0,
+            "_ravelab_squeeze_score": 55.0,
+            "_ravelab_squeeze_fuel_score": 50.0,
+            "short_account_pct": 44.0,
+            "top10_holder_pct": 94.0,
+            "top100_holder_pct": 99.4,
+        }
+    )
+
+    output = bot._ravelab_line(row)
+
+    assert "flowMech EXHAUST 40/100 exh 74 shorts 44.0% shorts fade 4.2pp OI -1.0% volx 6.0" in output
+    assert "next: avoid chase/late risk until short crowd, OI, funding, and volume reset" in output
 
 
 def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypatch) -> None:

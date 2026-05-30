@@ -8,8 +8,11 @@ from terminal_engine import apply_terminal_model
 from timing_engine import apply_timing_model
 
 
-def _score(frame: pd.DataFrame) -> pd.DataFrame:
-    return apply_early_pump_radar(apply_timing_model(apply_archetype_model(apply_terminal_model(frame))))
+def _score(frame: pd.DataFrame, *, min_transfer_tokens: float = 0.0) -> pd.DataFrame:
+    return apply_early_pump_radar(
+        apply_timing_model(apply_archetype_model(apply_terminal_model(frame))),
+        min_transfer_tokens=min_transfer_tokens,
+    )
 
 
 def test_early_pump_radar_prioritizes_target_flow_whales_and_shorts() -> None:
@@ -101,3 +104,29 @@ def test_early_pump_radar_handles_missing_target_exchange_text() -> None:
 
     assert row["early_pump_note"]
     assert "no confirmed target CEX" in row["early_pump_note"]
+
+
+def test_early_pump_radar_target_flow_respects_transfer_floor() -> None:
+    scored = _score(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "SMALLFLOWUSDT",
+                    "cex_deposit_flow_score": 90,
+                    "cex_deposit_flow_flag": True,
+                    "cex_deposit_24h_count": 1,
+                    "cex_deposit_24h_max_amount": 9_999,
+                    "cex_deposit_24h_target_exchanges": "Binance",
+                    "top100_holder_pct": 99,
+                    "short_account_pct": 60,
+                    "low_float_score": 80,
+                }
+            ]
+        ),
+        min_transfer_tokens=10_000,
+    )
+    row = scored.iloc[0]
+
+    assert bool(row["early_pump_confirmed_target_flow"]) is False
+    assert "Binance below transfer floor" in row["early_pump_note"]
+    assert "target CEX flow" not in row["early_pump_primary_signal"]

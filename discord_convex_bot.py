@@ -3048,7 +3048,7 @@ def _load_pump_watch_list(
     scored = apply_terminal_model(scored)
     scored = apply_archetype_model(scored)
     scored = apply_timing_model(scored)
-    scored = apply_early_pump_radar(scored)
+    scored = apply_early_pump_radar(scored, min_transfer_tokens=effective_min_transfer)
     holder_gate = _strict_cex_holder_gate_mask(
         scored,
         min_whale_pct=max(0.0, float(min_whale_pct)),
@@ -3211,8 +3211,8 @@ def _load_precrime_list(
     scored = apply_terminal_model(scored)
     scored = apply_archetype_model(scored)
     scored = apply_timing_model(scored)
-    scored = apply_early_pump_radar(scored)
-    scored = apply_pre_activity_radar(scored)
+    scored = apply_early_pump_radar(scored, min_transfer_tokens=effective_min_transfer)
+    scored = apply_pre_activity_radar(scored, min_transfer_tokens=effective_min_transfer)
     holder_gate = _strict_cex_holder_gate_mask(
         scored,
         min_whale_pct=max(0.0, float(min_whale_pct)),
@@ -3422,8 +3422,8 @@ def _score_ravelab_early_frame(
     scored = apply_timing_model(scored)
     scored = apply_lifecycle_model(scored)
     scored = apply_short_squeeze_model(scored)
-    scored = apply_early_pump_radar(scored)
-    scored = apply_pre_activity_radar(scored)
+    scored = apply_early_pump_radar(scored, min_transfer_tokens=min_transfer_tokens)
+    scored = apply_pre_activity_radar(scored, min_transfer_tokens=min_transfer_tokens)
 
     index = scored.index
     rave = _num_series(scored, "archetype_rave_score")
@@ -3491,9 +3491,45 @@ def _score_ravelab_early_frame(
         ],
         axis=1,
     ).max(axis=1).fillna(0.0)
+    short_build_pp = _num_series(scored, "short_account_change_max_pp")
+    short_drop_pp = (-_num_series(scored, "short_account_change_min_pp")).clip(lower=0.0)
+    oi_delta = _num_series(scored, "oi_delta_pct")
+    volume_multiple = _max_series(scored, "hour_volume_multiple", "daily_quote_volume_multiple", "hour_trade_count_multiple")
+    forced_flow = (
+        short_crowd_score * 0.30
+        + squeeze_fuel * 0.30
+        + _score_linear_series(short_build_pp, 0.5, 4.0) * 0.16
+        + _score_linear_series(oi_delta, 0.5, 8.0) * 0.16
+        + _score_linear_series(volume_multiple, 1.2, 5.0) * 0.08
+    ).clip(lower=0.0, upper=100.0)
     quiet = _num_series(scored, "pre_activity_quiet_score")
     heat = _num_series(scored, "pre_activity_heat_score")
     late_penalty = _max_series(scored, "rave_lab_late_penalty_score", "timing_too_late_score", "convexity_late_penalty")
+    short_fade_risk = pd.concat(
+        [
+            _score_linear_series(short_drop_pp, 1.0, 6.0),
+            _score_linear_series((50.0 - short_pct).clip(lower=0.0), 0.0, 12.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    blowoff_activity = pd.concat(
+        [
+            _score_linear_series(volume_multiple, 3.0, 12.0),
+            _score_linear_series(_num_series(scored, "hour_volume_multiple"), 3.0, 12.0),
+            _score_linear_series(_num_series(scored, "day_return_pct").abs(), 20.0, 90.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    exhaustion = pd.concat(
+        [
+            _num_series(scored, "crime_exhaustion_score"),
+            _num_series(scored, "exit_fragility_score") * 0.85,
+            late_penalty,
+            heat * 0.85,
+            short_fade_risk * 0.70 + blowoff_activity * 0.30,
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
     not_late = pd.concat(
         [
             _num_series(scored, "early_pump_not_late_score"),
@@ -3609,6 +3645,12 @@ def _score_ravelab_early_frame(
     scored["_ravelab_squeeze_score"] = squeeze
     scored["_ravelab_short_crowd_score"] = short_crowd_score
     scored["_ravelab_squeeze_fuel_score"] = squeeze_fuel
+    scored["_ravelab_forced_flow_score"] = forced_flow
+    scored["_ravelab_exhaustion_score"] = exhaustion
+    scored["_ravelab_short_build_pp"] = short_build_pp
+    scored["_ravelab_short_drop_pp"] = short_drop_pp
+    scored["_ravelab_oi_delta_pct"] = oi_delta
+    scored["_ravelab_volume_multiple"] = volume_multiple
     scored["_ravelab_short_majority_gate"] = short_pct.ge(50.0) & (~major_excluded)
     scored["_ravelab_squeeze_gate"] = _ravelab_squeeze_gate_series(scored, min_squeeze_score=50.0) & (~major_excluded)
     scored["_ravelab_history_days"] = history_days
@@ -3630,6 +3672,38 @@ def _score_ravelab_early_frame(
     return scored
 
 
+def _ravelab_forced_flow_text(row: pd.Series) -> str:
+    forced = _safe_float(row.get("_ravelab_forced_flow_score")) or 0.0
+    exhaustion = _safe_float(row.get("_ravelab_exhaustion_score")) or 0.0
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    short_build = _safe_float(row.get("_ravelab_short_build_pp")) or 0.0
+    short_drop = _safe_float(row.get("_ravelab_short_drop_pp")) or 0.0
+    oi_delta = _safe_float(row.get("_ravelab_oi_delta_pct"))
+    volume_multiple = _safe_float(row.get("_ravelab_volume_multiple"))
+    if exhaustion >= 70.0:
+        phase = "EXHAUST"
+    elif forced >= 70.0:
+        phase = "FORCED"
+    elif _boolish_scalar(row.get("_ravelab_whale_origin_flow")) or _boolish_scalar(row.get("_ravelab_target_flow")):
+        phase = "INVENTORY"
+    elif short_pct is not None and short_pct >= 50.0:
+        phase = "FUEL"
+    else:
+        phase = "WATCH"
+    parts = [f"{phase} {forced:.0f}/100", f"exh {exhaustion:.0f}"]
+    if short_pct is not None:
+        parts.append(f"shorts {short_pct:.1f}%")
+    if short_build >= 0.1:
+        parts.append(f"+short {short_build:.1f}pp")
+    if short_drop >= 1.0:
+        parts.append(f"shorts fade {short_drop:.1f}pp")
+    if oi_delta is not None and abs(oi_delta) >= 0.1:
+        parts.append(f"OI {oi_delta:+.1f}%")
+    if volume_multiple is not None and volume_multiple >= 1.2:
+        parts.append(f"volx {volume_multiple:.1f}")
+    return " ".join(parts)
+
+
 def _ravelab_next_check(row: pd.Series) -> str:
     side = _clean_scalar_text(row.get("_ravelab_side", ""))
     min_history_days = int(_safe_float(row.get("_ravelab_min_history_days")) or 60)
@@ -3637,6 +3711,11 @@ def _ravelab_next_check(row: pd.Series) -> str:
         return "skip until holder concentration clears the 90% whale gate"
     if not _boolish_scalar(row.get("_ravelab_venue_gate")):
         return "skip until Binance and Bitget venue evidence are both present"
+    exhaustion = _safe_float(row.get("_ravelab_exhaustion_score")) or 0.0
+    short_drop = _safe_float(row.get("_ravelab_short_drop_pp")) or 0.0
+    short_pct = _safe_pct(row.get("short_account_pct")) or 0.0
+    if exhaustion >= 70.0 or (short_drop >= 3.0 and short_pct < 50.0):
+        return "avoid chase/late risk until short crowd, OI, funding, and volume reset"
     has_no_pump_gate = hasattr(row, "index") and "_ravelab_no_large_pump_gate" in row.index
     if has_no_pump_gate and not _boolish_scalar(row.get("_ravelab_no_large_pump_gate")):
         pump_source = _clean_scalar_text(row.get("_ravelab_recent_pump_source", ""))
@@ -3739,6 +3818,7 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
     breakout_windows = _clip_text(row.get("_ravelab_breakout_windows", ""), 32) or "none"
     trigger_text = _ravelab_trigger_text(row)
+    mechanics_text = _ravelab_forced_flow_text(row)
     targets = _target_cex_text(row) or "no target flow"
     max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
     whale_flow = _whale_sender_text(row, include_amount=True)
@@ -3748,7 +3828,7 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     return (
         f"/{symbol} | {stage} | {side} | trigger {trigger_text} | thesis {thesis:.0f}/100 | whale {whale_text} holderEv {holder_evidence_gate} | "
         f"venues Bn/Bg/Gate {has_binance}/{has_bitget}/{has_gate} | hist {history_text} pump60 {pump_text} | "
-        f"squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shorts {short_text} | highs {breakout_windows} | CEX {flow_text}\n"
+        f"flowMech {mechanics_text} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shorts {short_text} | highs {breakout_windows} | CEX {flow_text}\n"
         f"  next: {_clip_text(_ravelab_next_check(row), 120)}"
     )
 
@@ -3820,6 +3900,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     crime_text = f" crime {crime_model:.0f}/100" if crime_model is not None and crime_model > 0 else ""
     short_squeeze_text = f" ssq {short_squeeze_model:.0f}" if short_squeeze_model is not None and short_squeeze_model > 0 else ""
     trigger_text = _ravelab_trigger_text(row)
+    mechanics_text = _ravelab_forced_flow_text(row)
     headline = (
         f"/{symbol} | {side} | {state} | core {core_count}/{core_total} | "
         f"trigger {trigger_text} | thesis {thesis_score:.0f}/100{crime_text} early {score:.0f}/100 | blockers {missing_core}{anchor}"
@@ -3827,6 +3908,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     proof = (
         f"  proof: whale {whale_text} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
         f"noPump {no_pump} pump60 {pump_text} {pump_source} | hist {history_text} dormant2m {dormant} | "
+        f"flowMech {mechanics_text} | "
         f"squeeze {squeeze:.0f}({squeeze_gate}) fuel {squeeze_fuel:.0f}{short_squeeze_text} flip {fresh_flip} shortMaj {short_majority} shorts {short_text} | highs {breakout_windows} | "
         f"CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | holder {holder_evidence} | venue {venue_evidence}"
     )
@@ -3839,7 +3921,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     )
     evidence = (
         f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | holder {holder_evidence} | "
-        f"venue {venue_evidence} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f}{short_squeeze_text} flip {fresh_flip} shortMaj {short_majority} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
+        f"venue {venue_evidence} | flowMech {mechanics_text} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f}{short_squeeze_text} flip {fresh_flip} shortMaj {short_majority} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
     )
     flow = (
         f"  flow/timing: CEX {targets} {cex_count}tx max {max_amount}{whale_flow_text} | "

@@ -76,10 +76,10 @@ Daily pump checks: cached 0 | Binance checked 2 | errors 0 | insufficient 0 | sk
 Candidates: /CAPUSDT /LABXUSDT
 
 /CAPUSDT | RAVE-like | A2 BREAKOUT PRIME | core 5/5 | trigger breakout 1D,2D,3D,4D,5D,20D | thesis 86/100 crime 36/100 early 73/100 | blockers none | anchor RAVEUSDT 2026-04-18
-  proof: whale 99.8% holderEv Y | venues Bn Y/Bg Y/Gate N | noPump Y pump60 8.4%/60d binance60d | hist 180d dormant2m Y | squeeze 62(Y) fuel 52 ssq 48 flip N shortMaj Y shorts 54.0% | highs 1D,2D,3D,4D,5D | CEX no target flow 0tx max n/a | holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111 | venue Bn perp,8.0%; Bg 2.0%; Gate no
+  proof: whale 99.8% holderEv Y | venues Bn Y/Bg Y/Gate N | noPump Y pump60 8.4%/60d binance60d | hist 180d dormant2m Y | flowMech FUEL 57/100 exh 18 shorts 54.0% +short 1.1pp OI +2.4% volx 1.4 | squeeze 62(Y) fuel 52 ssq 48 flip N shortMaj Y shorts 54.0% | highs 1D,2D,3D,4D,5D | CEX no target flow 0tx max n/a | holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111 | venue Bn perp,8.0%; Bg 2.0%; Gate no
   next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
 /LABXUSDT | LAB-like | A3 WHALE-CEX PRIME | core 5/5 | trigger whale-CEX 360.00K | thesis 90/100 crime 42/100 early 82/100 | blockers none | anchor LABUSDT 2026-05-11
-  proof: whale 99.2% holderEv Y | venues Bn Y/Bg Y/Gate Y | noPump Y pump60 11.2%/60d binance60d | hist 160d dormant2m Y | squeeze 58(Y) fuel 56 ssq 47 flip N shortMaj Y shorts 51.0% | highs none | CEX Binance, Gate.io 2tx max 360.00K whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | holder chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222 | venue Bn perp,9.0%,target; Bg 2.0%; Gate target
+  proof: whale 99.2% holderEv Y | venues Bn Y/Bg Y/Gate Y | noPump Y pump60 11.2%/60d binance60d | hist 160d dormant2m Y | flowMech INVENTORY 63/100 exh 22 shorts 51.0% +short 0.8pp OI +3.0% volx 1.8 | squeeze 58(Y) fuel 56 ssq 47 flip N shortMaj Y shorts 51.0% | highs none | CEX Binance, Gate.io 2tx max 360.00K whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | holder chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222 | venue Bn perp,9.0%,target; Bg 2.0%; Gate target
   next: watch for absorption after target-CEX inventory movement and first perp response
 
 Near misses (blocked, not eligible yet; failed gates are shown as blockers):
