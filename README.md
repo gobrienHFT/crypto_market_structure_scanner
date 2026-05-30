@@ -217,9 +217,9 @@ Supported commands include:
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_quiet] [require_behavior_gate]
 /ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [require_target_flow] [require_venue_gate]
-/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict]
+/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict] [require_holder_evidence]
 /flowproof <symbol> [min_tokens] [lookback_hours]
-/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct]
+/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct] [require_holder_evidence]
 /floattrap [min_score] [limit]
 /squeezeready [min_short_pct] [min_score] [limit]
 /cextargets [min_tokens] [limit] [lookback_hours]
@@ -236,7 +236,7 @@ Supported commands include:
 /flowstress [min_tokens] [limit] [lookback_hours] [require_venue_gate]
 /flowblocked [min_tokens] [limit] [lookback_hours]
 /flowhealth [min_tokens] [lookback_hours] [symbol_limit]
-/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [require_dormant] [require_venue_gate]
+/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [require_dormant] [require_venue_gate] [require_holder_evidence]
 /dossier <symbol>
 /coin <symbol>
 /startbot [mode] [scan_mode]
@@ -258,7 +258,7 @@ The bot can retrieve:
 - a `/precrime` radar for quiet latent setups: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
 - a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration with ETH/BNB/ARB chain+contract holder evidence, Binance+Bitget trading evidence, at least 60 days of history plus 2-month no-pump/no-chase dormancy, and squeeze priming before ranking RAVE/LAB analogues by hard-gate completion first, with compact holder source/count/chain/contract evidence, missing-gate text, 60D recent-pump evidence, venue provenance, optional top-holder-origin CEX-flow filtering, and optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk
-- a strict full-thesis `/setupscore` ranking for target-CEX flow, whale dominance, low float/high FDV, short crowding, and not-late structure
+- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ holder dominance with optional ETH/BNB/ARB chain+contract evidence, low float/high FDV, short crowding, and not-late structure
 - symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, including top-holder sender provenance when the transfer origin matches a scanned holder wallet
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
 - top terminal market-structure evidence rows
@@ -271,7 +271,7 @@ The bot can retrieve:
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
 - blocked/error rows when explorer HTML or API fallback cannot verify labelled CEX destinations
 - CEX-flow health checks covering API keys and local address-label coverage
-- a full CEX-flow -> holder concentration -> short crowd -> dormant-structure checklist via `/sethflow`
+- a full CEX-flow -> 90%+ holder concentration/evidence -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
 - high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows
 - symbol-level market structure metrics

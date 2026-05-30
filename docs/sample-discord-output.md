@@ -119,12 +119,12 @@ Long-carry candidates (negative funding; longs receive)
 
 ```text
 Insider-structure setup score
-Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Gates: top100 >= 90.0% or top10 >= 80.0%, shorts >= 50.0%, low-float/FDV, not-late structure | Strict: True
+Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Gates: observed holder >= 90.0%, holder evidence required True, shorts >= 50.0%, low-float/FDV, not-late structure | Strict: True
 Matches: 2 | Read: rank-order evidence, not an execution instruction.
 
 Candidates: /PRIMEUSDT /FLOWUSDT
 
-/PRIMEUSDT | PASS | score 86 | flow 92 Bitget, GateIO 3tx max 12.00M | whale t10 91.0% | t100 99.0% | shorts 64.0% | float 82 | FDV/MC 8.0x | structure 80 | OI 4.2%
+/PRIMEUSDT | PASS | score 86 | flow 92 Bitget, GateIO 3tx max 12.00M | whale 99.0% | holderEv Y | whale t10 91.0% | t100 99.0% | shorts 64.0% | float 82 | FDV/MC 8.0x | structure 80 | OI 4.2%
 ```
 
 ## `/pumpwatch min_tokens:20000`
@@ -316,14 +316,14 @@ API fallback readiness:
 
 ```text
 Seth flow checklist
-Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 >= 80% or top100 >= 90% | Short gate: >= 50.0% | Structure gate: dormant/early only
+Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Structure gate: dormant/early only
 Confirmed target-CEX flow rows: 3 | Whale+short+dormant pass: 1
 
 Checklist: 1 flow -> 2 whale dominated -> 3 >50% short accounts -> 4 dormant/early, not already wild -> 5 research state.
 
 Candidates: /FLOWUSDT
 
-/FLOWUSDT | RESEARCH: dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | shorts 63.0% | structure dormant candidate
+/FLOWUSDT | RESEARCH: dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | holderEv Y | shorts 63.0% | structure dormant candidate
   chart gate: range 8.0%, 24h 2.0%, setup 78 | not a trade instruction; validate OI/volume and price absorption.
 ```
 

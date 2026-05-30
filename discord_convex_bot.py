@@ -2256,6 +2256,22 @@ def _holder_evidence_text(row: pd.Series) -> str:
     return f"{detail}; needs {'+'.join(missing)}"
 
 
+def _strict_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    if frame.empty:
+        empty = pd.Series(False, index=frame.index)
+        return empty, empty
+    source_cols = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
+    contract_mask = frame.apply(lambda row: bool(_holder_contract_address(row)), axis=1).astype(bool)
+    chain_mask = frame.apply(lambda row: _holder_chain_key(row) in RAVELAB_HOLDER_EVIDENCE_CHAINS, axis=1).astype(bool)
+    if source_cols:
+        source_mask = pd.concat([_text_series(frame, column).ne("") for column in source_cols], axis=1).any(axis=1)
+    else:
+        source_mask = pd.Series(False, index=frame.index)
+    holder_count = _num_series(frame, "holder_count", default=0.0).gt(0.0)
+    evidence_mask = chain_mask & contract_mask & (source_mask | holder_count)
+    return evidence_mask.fillna(False), contract_mask.fillna(False)
+
+
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
     setup_score = max(
         _safe_float(row.get("dormant_short_fuse_score")) or 0.0,
@@ -2292,8 +2308,10 @@ def _load_seth_flow_playbook(
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
     min_short_pct: float = 50.0,
+    min_whale_pct: float = 90.0,
     require_dormant: bool = True,
     require_venue_gate: bool = False,
+    require_holder_evidence: bool = True,
     max_range_pct: float = 35.0,
     max_day_move_pct: float = 30.0,
 ) -> tuple[str, list[str]]:
@@ -2301,13 +2319,12 @@ def _load_seth_flow_playbook(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
     )
-    min_top10 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)
-    min_top100 = _env_float("CEX_DEPOSIT_FLOW_MIN_TOP100_PCT", 90.0, minimum=0.0)
     header = (
         "Seth flow checklist\n"
         f"Source: {source} | Confirmed target-CEX flow only | Min transfer: >= {_fmt_compact_number(effective_min_transfer)} tokens | "
-        f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 >= {min_top10:.0f}% or top100 >= {min_top100:.0f}% | "
-        f"Short gate: >= {min_short_pct:.1f}% | Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
+        f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: observed holder >= {float(min_whale_pct):.1f}% | "
+        f"Holder evidence required: {require_holder_evidence} | Short gate: >= {min_short_pct:.1f}% | "
+        f"Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
     )
     if "fallback" in source.lower():
         header += "\nNote: fallback cache may have been generated with a different transfer threshold."
@@ -2342,7 +2359,14 @@ def _load_seth_flow_playbook(
     top10 = pd.to_numeric(rows.get("top10_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     top100 = pd.to_numeric(rows.get("top100_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     shorts = pd.to_numeric(rows.get("short_account_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
-    rows["_seth_whale_pass"] = top10.ge(min_top10) | top100.ge(min_top100)
+    holder_evidence_mask, _ = _strict_holder_evidence_masks(rows)
+    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
+    rows["_seth_whale_pct"] = whale_pct
+    rows["_seth_holder_evidence_pass"] = holder_evidence_mask
+    rows["_seth_whale_concentration_pass"] = whale_pct.ge(float(min_whale_pct))
+    rows["_seth_whale_pass"] = rows["_seth_whale_concentration_pass"] & (
+        rows["_seth_holder_evidence_pass"] if require_holder_evidence else True
+    )
     rows["_seth_short_pass"] = shorts.ge(min_short_pct)
     structure_states: list[str] = []
     structure_passes: list[bool] = []
@@ -2368,8 +2392,7 @@ def _load_seth_flow_playbook(
         rows["_seth_flow_score"] * 0.38
         + rows["_seth_structure_score"] * 0.24
         + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.18
-        + top10.fillna(0.0).clip(upper=100.0) * 0.10
-        + top100.fillna(0.0).clip(upper=100.0) * 0.10
+        + rows["_seth_whale_pct"].fillna(0.0).clip(upper=100.0) * 0.20
     )
     rows["_seth_all_pass"] = rows["_seth_whale_pass"] & rows["_seth_short_pass"] & rows["_seth_structure_pass"]
     visible = rows[rows["_seth_all_pass"]].copy() if require_dormant else rows.copy()
@@ -2410,8 +2433,10 @@ def _load_seth_flow_playbook(
         targets_text = _target_cex_text(row) or "target CEX"
         state = str(row.get("_seth_structure_state", "structure unclear"))
         action = "RESEARCH: dormant candidate; wait for absorption/reclaim evidence"
-        if not bool(row.get("_seth_whale_pass")):
-            action = "WAIT: whale gate failed"
+        if not _boolish_scalar(row.get("_seth_whale_concentration_pass")):
+            action = "WAIT: whale concentration below floor"
+        elif require_holder_evidence and not _boolish_scalar(row.get("_seth_holder_evidence_pass")):
+            action = "WAIT: holder evidence missing"
         elif not bool(row.get("_seth_short_pass")):
             action = "WAIT: short-account gate failed"
         elif state == "volatile/late":
@@ -2422,10 +2447,11 @@ def _load_seth_flow_playbook(
         day_text = f"{day_move:.1f}%" if day_move is not None else "n/a"
         top10_text = f"{row_top10:.1f}%" if row_top10 is not None else "n/a"
         top100_text = f"{row_top100:.1f}%" if row_top100 is not None else "n/a"
+        holder_ev = "Y" if _boolish_scalar(row.get("_seth_holder_evidence_pass")) else "N"
         lines.append(
             f"/{symbol} | {action} | flow {flow_score:.0f}/100 | {cex_count} tx into {targets_text} | "
             f"total {total_amount}, max {max_transfer} | top10 {top10_text}, top100 {top100_text} | "
-            f"shorts {short_pct:.1f}% | structure {state}"
+            f"holderEv {holder_ev} | shorts {short_pct:.1f}% | structure {state}"
         )
         lines.append(
             f"  chart gate: range {range_text}, 24h {day_text}, {_clip_text(row.get('_seth_structure_reason', ''), 80)} | "
@@ -2503,6 +2529,7 @@ def _goal_score_frame(
     min_transfer_tokens: float = 0.0,
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
 ) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
@@ -2563,7 +2590,10 @@ def _goal_score_frame(
     not_late_component = (100.0 - late_risk).clip(lower=0.0, upper=100.0)
     top10 = _safe_pct_series(output, "top10_holder_pct").fillna(0.0)
     top100 = _safe_pct_series(output, "top100_holder_pct").fillna(0.0)
-    whale_pass = top10.ge(_env_float("CEX_DEPOSIT_FLOW_MIN_TOP10_PCT", 80.0, minimum=0.0)) | top100.ge(min_whale_pct)
+    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
+    holder_evidence_mask, _ = _strict_holder_evidence_masks(output)
+    whale_concentration_pass = whale_pct.ge(float(min_whale_pct))
+    whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
     short_pass = short_pct.ge(min_short_pct)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
     structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0)
@@ -2585,6 +2615,10 @@ def _goal_score_frame(
     output["_goal_target_flow"] = target_flow
     output["_goal_any_flow"] = any_flow
     output["_goal_whale_component"] = whale_component
+    output["_goal_whale_pct"] = whale_pct
+    output["_goal_whale_concentration_pass"] = whale_concentration_pass
+    output["_goal_holder_evidence_pass"] = holder_evidence_mask
+    output["_goal_holder_evidence_required"] = bool(require_holder_evidence)
     output["_goal_float_component"] = float_component
     output["_goal_short_component"] = short_component
     output["_goal_structure_component"] = structure_component
@@ -2603,8 +2637,10 @@ def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
     if not _boolish_scalar(row.get("_goal_target_flow")):
         return "DATA GAP" if _boolish_scalar(row.get("_goal_any_flow")) or _clean_scalar_text(row.get("cex_deposit_flow_error", "")) else "REJECT"
     missing: list[str] = []
-    if not _boolish_scalar(row.get("_goal_whale_pass")):
+    if not _boolish_scalar(row.get("_goal_whale_concentration_pass")):
         missing.append("whale")
+    elif _boolish_scalar(row.get("_goal_holder_evidence_required")) and not _boolish_scalar(row.get("_goal_holder_evidence_pass")):
+        missing.append("holder evidence")
     if not _boolish_scalar(row.get("_goal_short_pass")):
         missing.append("short")
     if not _boolish_scalar(row.get("_goal_float_pass")):
@@ -2624,6 +2660,8 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
     max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
     top10 = _safe_pct(row.get("top10_holder_pct"))
     top100 = _safe_pct(row.get("top100_holder_pct"))
+    whale_pct = _safe_pct(row.get("_goal_whale_pct"))
+    holder_ev = "Y" if _boolish_scalar(row.get("_goal_holder_evidence_pass")) else "N"
     short_pct = _safe_pct(row.get("short_account_pct"))
     float_score = _safe_float(row.get("_goal_float_component")) or 0.0
     fdv_ratio = _safe_float(row.get("fdv_to_market_cap"))
@@ -2634,6 +2672,8 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
         f"{status}",
         f"score {score:.0f}",
         f"flow {flow_score:.0f} {targets} {cex_count}tx max {max_amount}",
+        f"whale {whale_pct:.1f}%" if whale_pct is not None else "whale n/a",
+        f"holderEv {holder_ev}",
         f"whale t10 {top10:.1f}%" if top10 is not None else "whale t10 n/a",
         f"t100 {top100:.1f}%" if top100 is not None else "t100 n/a",
         f"shorts {short_pct:.1f}%" if short_pct is not None else "shorts n/a",
@@ -2656,6 +2696,7 @@ def _load_setup_score_list(
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
     strict: bool = True,
+    require_holder_evidence: bool = True,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
@@ -2665,7 +2706,7 @@ def _load_setup_score_list(
         "Insider-structure setup score\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
-        f"Gates: top100 >= {min_whale_pct:.1f}% or top10 >= {_env_float('CEX_DEPOSIT_FLOW_MIN_TOP10_PCT', 80.0, minimum=0.0):.1f}%, "
+        f"Gates: observed holder >= {min_whale_pct:.1f}%, holder evidence required {require_holder_evidence}, "
         f"shorts >= {min_short_pct:.1f}%, low-float/FDV, not-late structure | Strict: {strict}"
     )
     if frame.empty:
@@ -2675,6 +2716,7 @@ def _load_setup_score_list(
         min_transfer_tokens=effective_min_transfer,
         min_short_pct=min_short_pct,
         min_whale_pct=min_whale_pct,
+        require_holder_evidence=require_holder_evidence,
     )
     selected = scored[scored["_goal_setup_score"].ge(max(0.0, float(min_score)))].copy()
     if strict:
@@ -3331,19 +3373,7 @@ def _ravelab_holder_evidence_counts(frame: pd.DataFrame) -> tuple[int, int, int]
 
 
 def _ravelab_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    if frame.empty:
-        empty = pd.Series(False, index=frame.index)
-        return empty, empty
-    source_cols = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
-    contract_mask = frame.apply(lambda row: bool(_holder_contract_address(row)), axis=1).astype(bool)
-    chain_mask = frame.apply(lambda row: _holder_chain_key(row) in RAVELAB_HOLDER_EVIDENCE_CHAINS, axis=1).astype(bool)
-    if source_cols:
-        source_mask = pd.concat([_text_series(frame, column).ne("") for column in source_cols], axis=1).any(axis=1)
-    else:
-        source_mask = pd.Series(False, index=frame.index)
-    holder_count = _num_series(frame, "holder_count", default=0.0).gt(0.0)
-    evidence_mask = chain_mask & contract_mask & (source_mask | holder_count)
-    return evidence_mask.fillna(False), contract_mask.fillna(False)
+    return _strict_holder_evidence_masks(frame)
 
 
 def _load_ravelab_list(
@@ -3602,6 +3632,7 @@ def _load_coin_check(
     lookback_hours: int | None = None,
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
 ) -> tuple[str, str]:
     symbol = _normalize_symbol_query(symbol_query)
     if not symbol:
@@ -3618,6 +3649,7 @@ def _load_coin_check(
         min_transfer_tokens=effective_min_transfer,
         min_short_pct=min_short_pct,
         min_whale_pct=min_whale_pct,
+        require_holder_evidence=require_holder_evidence,
     )
     scored_row = scored.iloc[0]
     status = _goal_row_status(scored_row, min_score=min_score)
@@ -3628,6 +3660,8 @@ def _load_coin_check(
 
     top10 = _safe_pct(scored_row.get("top10_holder_pct"))
     top100 = _safe_pct(scored_row.get("top100_holder_pct"))
+    whale_pct = _safe_pct(scored_row.get("_goal_whale_pct"))
+    holder_evidence = _holder_evidence_text(scored_row)
     short_pct = _safe_pct(scored_row.get("short_account_pct"))
     float_score = _safe_float(scored_row.get("_goal_float_component")) or 0.0
     structure = _safe_float(scored_row.get("_goal_structure_component")) or 0.0
@@ -3636,15 +3670,19 @@ def _load_coin_check(
         f"Verdict: {status} | setup score {score:.0f}/100 | Source: {source}",
         f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h",
         "",
-        gate_line("target CEX flow", bool(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),
+        gate_line("target CEX flow", _boolish_scalar(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),
         gate_line(
             "whale dominance",
-            bool(scored_row.get("_goal_whale_pass")),
-            f"top10 {top10:.1f}%, top100 {top100:.1f}%" if top10 is not None and top100 is not None else "top10/top100 n/a",
+            _boolish_scalar(scored_row.get("_goal_whale_pass")),
+            (
+                f"max {whale_pct:.1f}% | top10 {top10:.1f}%, top100 {top100:.1f}% | holder {holder_evidence}"
+                if whale_pct is not None and top10 is not None and top100 is not None
+                else f"holder {holder_evidence}"
+            ),
         ),
-        gate_line("short dominance", bool(scored_row.get("_goal_short_pass")), f"short accounts {short_pct:.1f}%" if short_pct is not None else "short accounts n/a"),
-        gate_line("low-float/high-FDV", bool(scored_row.get("_goal_float_pass")), f"float {float_score:.0f}/100 | FDV/MC {_fmt_compact_number(scored_row.get('fdv_to_market_cap'))}x | locked {_fmt_compact_number(scored_row.get('locked_supply_pct'))}%"),
-        gate_line("dormant/not-late structure", bool(scored_row.get("_goal_structure_pass")), f"structure {structure:.0f}/100 | not-late {(_safe_float(scored_row.get('_goal_not_late_component')) or 0.0):.0f}/100"),
+        gate_line("short dominance", _boolish_scalar(scored_row.get("_goal_short_pass")), f"short accounts {short_pct:.1f}%" if short_pct is not None else "short accounts n/a"),
+        gate_line("low-float/high-FDV", _boolish_scalar(scored_row.get("_goal_float_pass")), f"float {float_score:.0f}/100 | FDV/MC {_fmt_compact_number(scored_row.get('fdv_to_market_cap'))}x | locked {_fmt_compact_number(scored_row.get('locked_supply_pct'))}%"),
+        gate_line("dormant/not-late structure", _boolish_scalar(scored_row.get("_goal_structure_pass")), f"structure {structure:.0f}/100 | not-late {(_safe_float(scored_row.get('_goal_not_late_component')) or 0.0):.0f}/100"),
         "",
         _setup_score_line(scored_row, min_score=min_score),
     ]
@@ -4373,8 +4411,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
-        min_whale_pct="Minimum top100 holder concentration percentage.",
+        min_whale_pct="Minimum observed top-holder concentration percentage.",
         strict="Require target CEX flow, whale, short, float, and not-late gates.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
     )
     async def setupscore(
         interaction: discord.Interaction,
@@ -4385,6 +4424,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
         strict: bool = True,
+        require_holder_evidence: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -4402,6 +4442,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             strict=strict,
+            require_holder_evidence=require_holder_evidence,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -4631,7 +4672,8 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
-        min_whale_pct="Minimum top100 holder concentration percentage.",
+        min_whale_pct="Minimum observed top-holder concentration percentage.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
     )
     async def coincheck(
         interaction: discord.Interaction,
@@ -4641,6 +4683,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours: int = 24,
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
+        require_holder_evidence: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -4657,6 +4700,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_holder_evidence=require_holder_evidence,
         )
         embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -5130,8 +5174,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage, default 50.",
+        min_whale_pct="Minimum observed top-holder concentration percentage, default 90.",
         require_dormant="Only show rows that pass the dormant/early structure gate.",
         require_venue_gate="Require Binance perp plus Bitget/Gate venue support.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
     )
     async def sethflow(
         interaction: discord.Interaction,
@@ -5139,8 +5185,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit: int = 15,
         lookback_hours: int = 24,
         min_short_pct: float = 50.0,
+        min_whale_pct: float = 90.0,
         require_dormant: bool = True,
         require_venue_gate: bool = False,
+        require_holder_evidence: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5155,8 +5203,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             require_dormant=require_dormant,
             require_venue_gate=require_venue_gate,
+            require_holder_evidence=require_holder_evidence,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x14B8A6)
         embed.set_footer(text=DISCORD_FOOTER)

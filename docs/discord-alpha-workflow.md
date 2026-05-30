@@ -68,11 +68,11 @@ Use `/ravelab` when you specifically want the strict early version of the thesis
 
 Use `/pumpwatch` as the fastest catch board. It does not force every row to have confirmed transfer evidence by default; it rank-orders target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, archetype match, and not-late risk into one watch state. Set `require_target_flow:true` when you only want verified Binance/Gate/Bitget transfer rows.
 
-Use `/setupscore` as the strict full-thesis ranking. It requires confirmed recent transfer evidence into Binance, Gate.io, or Bitget, whale concentration, short-account dominance, low-float/high-FDV evidence, and a not-late/dormant structure. Use `strict:false` when you want the nearest misses for diagnosis.
+Use `/setupscore` as the strict full-thesis ranking. It requires confirmed recent transfer evidence into Binance, Gate.io, or Bitget, observed 90%+ holder concentration, ETH/BNB/ARB chain+contract holder evidence by default, short-account dominance, low-float/high-FDV evidence, and a not-late/dormant structure. Use `strict:false` when you want the nearest misses for diagnosis, and `require_holder_evidence:false` only when diagnosing missing holder-source coverage.
 
 Use `/flowproof` when a transfer claim needs audit detail. It prints the verdict, transfer count, total and largest token amount, top-holder sender evidence when the sender matches a scanned holder wallet, top tx/hash, target CEX labels, source path, concentration gate, data error, and query URL. A row is only called verified when the active scan has count > 0, largest transfer above the floor, and a labelled destination.
 
-Use `/coincheck` for one-symbol pass/fail triage across the full checklist: target-CEX flow, whale dominance, short dominance, low-float/high-FDV, and dormant/not-late structure.
+Use `/coincheck` for one-symbol pass/fail triage across the full checklist: target-CEX flow, 90%+ holder dominance plus holder evidence, short dominance, low-float/high-FDV, and dormant/not-late structure.
 
 Use `/cextargets` to view only confirmed Binance, Gate.io, and Bitget transfer rows. Use `/floattrap` for the low-float/high-FDV board and `/squeezeready` for short-crowded perp-book squeeze fuel.
 
@@ -94,7 +94,7 @@ Use `/flowblocked` to list rows where the HTML explorer path or API fallback cou
 
 Use `/flowhealth` to see API-key readiness and local CEX-address-label coverage. Configure `CEX_ADDRESS_LABELS` or `CEX_ADDRESS_BOOK_FILE` when API fallback rows need destination labels after explorer HTML blocks.
 
-Use `/sethflow` to run the whole checklist in one shot: verified Binance/Gate/Bitget wallet-to-CEX flow above the requested transfer floor, holder concentration, more than 50% short accounts by default, and then a dormant/early chart-structure gate. The output says `RESEARCH`, `WAIT`, or `SKIP`; it is a triage state, not an execution instruction.
+Use `/sethflow` to run the whole checklist in one shot: verified Binance/Gate/Bitget wallet-to-CEX flow above the requested transfer floor, observed 90%+ holder concentration with holder evidence by default, more than 50% short accounts by default, and then a dormant/early chart-structure gate. The output says `RESEARCH`, `WAIT`, or `SKIP`; it is a triage state, not an execution instruction.
 
 Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/below the selected range. The bot accepts any `1D`-`1499D` lookback; common dashboard columns such as `5D`, `20D`, `90D`, and `180D` are read directly, while custom windows are computed from live Binance daily candles. The optional `limit` parameter trims the output when the list is noisy.
 
