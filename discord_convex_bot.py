@@ -3667,6 +3667,23 @@ def _ravelab_stage_label(row: pd.Series) -> str:
     return f"B{max(0, core_total - core_count)} BLOCKED"
 
 
+def _ravelab_trigger_text(row: pd.Series, *, fallback: str = "core watch") -> str:
+    triggers: list[str] = []
+    if _boolish_scalar(row.get("_ravelab_whale_origin_flow")):
+        amount_value = row.get("cex_deposit_24h_whale_sender_token_amount")
+        if _safe_float(amount_value) is None:
+            amount_value = row.get("cex_deposit_24h_max_amount")
+        triggers.append(f"whale-CEX {_fmt_compact_number(amount_value)}")
+    elif _boolish_scalar(row.get("_ravelab_target_flow")):
+        targets = _target_cex_text(row) or "target CEX"
+        triggers.append(f"target-CEX {targets} {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))}")
+    if _boolish_scalar(row.get("_ravelab_breakout_any")):
+        triggers.append(f"breakout {_clip_text(row.get('_ravelab_breakout_windows', ''), 28) or 'yes'}")
+    if _boolish_scalar(row.get("fresh_flip_flag")):
+        triggers.append("funding flip")
+    return ", ".join(triggers[:4]) if triggers else fallback
+
+
 def _ravelab_queue_summary_lines(frame: pd.DataFrame, *, limit: int = 8) -> list[str]:
     if frame.empty:
         return []
@@ -3675,21 +3692,7 @@ def _ravelab_queue_summary_lines(frame: pd.DataFrame, *, limit: int = 8) -> list
     for _, row in frame.head(max(1, int(limit))).iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         stage = _ravelab_stage_label(row).split()[0]
-        catalysts: list[str] = []
-        if _boolish_scalar(row.get("_ravelab_whale_origin_flow")):
-            amount_value = row.get("cex_deposit_24h_whale_sender_token_amount")
-            if _safe_float(amount_value) is None:
-                amount_value = row.get("cex_deposit_24h_max_amount")
-            catalysts.append(f"whaleCEX {_fmt_compact_number(amount_value)}")
-        elif _boolish_scalar(row.get("_ravelab_target_flow")):
-            catalysts.append(f"CEX {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))}")
-        if _boolish_scalar(row.get("_ravelab_breakout_any")):
-            catalysts.append(f"breakout {_clip_text(row.get('_ravelab_breakout_windows', ''), 24) or 'yes'}")
-        if _boolish_scalar(row.get("fresh_flip_flag")):
-            catalysts.append("fundingFlip")
-        if not catalysts:
-            catalysts.append("core watch")
-        entry = f"/{symbol} {stage} ({', '.join(catalysts[:3])})"
+        entry = f"/{symbol} {stage} ({_ravelab_trigger_text(row)})"
         if stage in {"A2", "A3", "A4"}:
             trigger_entries.append(entry)
         elif stage == "A1":
@@ -3733,6 +3736,7 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     short_pct = _safe_pct(row.get("short_account_pct"))
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
     breakout_windows = _clip_text(row.get("_ravelab_breakout_windows", ""), 32) or "none"
+    trigger_text = _ravelab_trigger_text(row)
     targets = _target_cex_text(row) or "no target flow"
     max_amount = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
     whale_flow = _whale_sender_text(row, include_amount=True)
@@ -3740,7 +3744,7 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     if whale_flow:
         flow_text += f" | {whale_flow}"
     return (
-        f"/{symbol} | {stage} | {side} | thesis {thesis:.0f}/100 | whale {whale_text} holderEv {holder_evidence_gate} | "
+        f"/{symbol} | {stage} | {side} | trigger {trigger_text} | thesis {thesis:.0f}/100 | whale {whale_text} holderEv {holder_evidence_gate} | "
         f"venues Bn/Bg/Gate {has_binance}/{has_bitget}/{has_gate} | hist {history_text} pump60 {pump_text} | "
         f"squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shorts {short_text} | highs {breakout_windows} | CEX {flow_text}\n"
         f"  next: {_clip_text(_ravelab_next_check(row), 120)}"
@@ -3807,15 +3811,16 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     holder_evidence = _holder_evidence_text(row)
     venue_evidence = _venue_evidence_text(row)
     whale_flow = _whale_sender_text(row, include_amount=True)
-    whale_flow_text = f" whaleCEX {whale_flow}" if whale_flow else ""
+    whale_flow_text = f" whale-CEX {whale_flow}" if whale_flow else ""
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
     crime_text = f" crime {crime_model:.0f}/100" if crime_model is not None and crime_model > 0 else ""
     short_squeeze_text = f" ssq {short_squeeze_model:.0f}" if short_squeeze_model is not None and short_squeeze_model > 0 else ""
+    trigger_text = _ravelab_trigger_text(row)
     headline = (
         f"/{symbol} | {side} | {state} | core {core_count}/{core_total} | "
-        f"thesis {thesis_score:.0f}/100{crime_text} early {score:.0f}/100 | blockers {missing_core}{anchor}"
+        f"trigger {trigger_text} | thesis {thesis_score:.0f}/100{crime_text} early {score:.0f}/100 | blockers {missing_core}{anchor}"
     )
     proof = (
         f"  proof: whale {whale_text} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
@@ -4009,7 +4014,7 @@ def _load_ravelab_list(
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
         f"Trigger filter: {trigger_filter_key} | Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
-        "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
+        "Core gates: 90%+ chain+contract holder-source evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
     if frame.empty:
@@ -4172,7 +4177,7 @@ def _load_ravelab_list(
     mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
     gate_summary = (
         f"All shown rows passed whale >= {float(min_whale_pct):.1f}%"
-        f"{', holder evidence' if require_holder_evidence else ''}"
+        f"{', holder-source evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         f"{f', no recent pump >= {float(max_recent_pump_pct):.0f}%, history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
         f", squeeze stack >= {float(min_squeeze_score):.0f}."
@@ -5324,6 +5329,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet.",
+        trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch only.",
         near_miss_limit="Blocked high-signal rows to show after strict matches. Use 0 to hide.",
         detail="Show full multi-line evidence instead of the compact staged read.",
     )
@@ -5332,6 +5338,14 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="both", value="both"),
             app_commands.Choice(name="RAVE-like", value="rave"),
             app_commands.Choice(name="LAB-like", value="lab"),
+        ],
+        trigger_filter=[
+            app_commands.Choice(name="all hard-gated rows", value="all"),
+            app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="whale-CEX flow", value="flow"),
+            app_commands.Choice(name="target-CEX flow", value="target_flow"),
+            app_commands.Choice(name="breakout highs", value="breakout"),
+            app_commands.Choice(name="core watch only", value="core"),
         ]
     )
     async def ravelab(
@@ -5354,6 +5368,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_holder_evidence: bool = True,
         require_breakout_high: bool = False,
         require_whale_origin_flow: bool = False,
+        trigger_filter: str = "all",
         near_miss_limit: int = 5,
         detail: bool = False,
     ) -> None:
@@ -5384,6 +5399,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             require_holder_evidence=require_holder_evidence,
             require_breakout_high=require_breakout_high,
             require_whale_origin_flow=require_whale_origin_flow,
+            trigger_filter=trigger_filter,
             near_miss_limit=min(max(int(near_miss_limit), 0), 30),
             detail=detail,
         )

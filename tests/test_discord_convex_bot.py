@@ -1957,7 +1957,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence required: True" in output
     assert "Whale-origin CEX required: False" in output
     assert "No-pump proof: requires 60D closed daily-candle pump history" in output
-    assert "Core gates: 90%+ holder evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
+    assert "Core gates: 90%+ chain+contract holder-source evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Near misses: 5" in output
     assert "Trigger filter: all" in output
@@ -1967,10 +1967,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "Daily pump checks:" in output
-    assert "All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
+    assert "All shown rows passed whale >= 90.0%, holder-source evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
     assert "Candidates:" in output
     assert "Trigger queue:" in output
-    assert "/LABXUSDT A3 (whaleCEX 360.00K)" in output
+    assert "/LABXUSDT A3 (whale-CEX 360.00K)" in output
     assert "/CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)" in output
     assert output.index("Trigger queue:") < output.index("Holder evidence rows:")
     assert "/CAPUSDT" in output
@@ -1982,9 +1982,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "venue Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "A3 WHALE-CEX PRIME" in output
-    assert "core 5/5 | thesis" in output
+    assert "core 5/5 | trigger whale-CEX 360.00K | thesis" in output
+    assert "trigger breakout 1D,2D,3D,4D,5D,20D" in output
     assert "blockers none" in output
-    assert "whaleCEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
+    assert "whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
     assert "proof: whale 99.2% holderEv Y | venues Bn Y/Bg Y/Gate Y | noPump Y pump60 2.0%/60d binance60d" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
@@ -2032,6 +2033,19 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Whale-origin CEX required: True" in whale_flow_output
     assert "/LABXUSDT | LAB-like" in whale_flow_output
     assert "/CAPUSDT" not in whale_flow_output
+
+    _, trigger_flow_chunks = bot._load_ravelab_list(
+        10,
+        min_score=58,
+        min_archetype=0,
+        min_tokens=20_000,
+        trigger_filter="flow",
+        near_miss_limit=0,
+    )
+    trigger_flow_output = "\n".join(trigger_flow_chunks)
+    assert "Trigger filter: flow" in trigger_flow_output
+    assert "/LABXUSDT | LAB-like" in trigger_flow_output
+    assert "/CAPUSDT" not in trigger_flow_output
 
     _, diagnostic_chunks = bot._load_ravelab_list(
         10,
@@ -2172,9 +2186,24 @@ def test_ravelab_queue_summary_splits_triggers_and_core_watch() -> None:
     lines = bot._ravelab_queue_summary_lines(frame)
 
     assert lines == [
-        "Trigger queue: /FLOWUSDT A3 (whaleCEX 2.50M)",
+        "Trigger queue: /FLOWUSDT A3 (whale-CEX 2.50M)",
         "Core watch: /COREUSDT A1 (core watch)",
     ]
+
+
+def test_ravelab_trigger_text_prioritizes_whale_flow_then_breakout() -> None:
+    row = pd.Series(
+        {
+            "_ravelab_whale_origin_flow": True,
+            "_ravelab_breakout_any": True,
+            "_ravelab_breakout_windows": "1D,2D",
+            "cex_deposit_24h_whale_sender_token_amount": 1_500_000,
+            "cex_deposit_24h_target_exchanges": "Binance",
+            "cex_deposit_24h_max_amount": 900_000,
+        }
+    )
+
+    assert bot._ravelab_trigger_text(row) == "whale-CEX 1.50M, breakout 1D,2D"
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:

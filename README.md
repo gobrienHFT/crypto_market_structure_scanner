@@ -221,7 +221,7 @@ Supported commands include:
 /funding [side] [limit] [period] [min_abs_funding_pct]
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_quiet] [require_behavior_gate]
 /crimepump [min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [near_miss_limit] [detail]
+/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [trigger_filter] [near_miss_limit] [detail]
 /prime [min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_venue_gate]
 /setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict] [require_holder_evidence] [require_binance_bitget]
