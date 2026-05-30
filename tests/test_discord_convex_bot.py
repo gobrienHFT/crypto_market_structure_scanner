@@ -1478,6 +1478,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
             {
                 "symbol": "CAPUSDT",
                 "history_days": 180,
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
                 "top10_holder_pct": 94.0,
                 "top100_holder_pct": 99.8,
                 "holder_count": 6_000,
@@ -1509,6 +1512,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
             {
                 "symbol": "LABXUSDT",
                 "history_days": 160,
+                "token_platform": "arbitrum",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "Arbiscan holder endpoint",
                 "cex_deposit_flow_score": 94,
                 "cex_deposit_flow_flag": True,
                 "cex_deposit_24h_count": 2,
@@ -1632,12 +1638,15 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Whale gate: >= 90.0%" in output
     assert "History gate: >= 60d" in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
+    assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "All shown rows passed whale >= 90.0%, Binance+Bitget, history >= 60d and dormant2m, squeeze >= 50." in output
     assert "Candidates:" in output
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
+    assert "holder ev chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
     assert "/LABXUSDT" in output
+    assert "holder ev chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "gates whale Y venue Y dormant2m Y squeeze Y" in output
     assert "anchor LABUSDT 2026-05-11" in output

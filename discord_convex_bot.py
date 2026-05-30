@@ -2149,6 +2149,31 @@ def _target_cex_text(row: pd.Series) -> str:
     return targets if TARGET_CEX_PATTERN.search(targets) else ""
 
 
+def _short_contract_text(contract: Any) -> str:
+    text = _clean_scalar_text(contract)
+    if not text:
+        return ""
+    return f"{text[:6]}...{text[-4:]}" if len(text) > 14 else text
+
+
+def _holder_evidence_text(row: pd.Series) -> str:
+    chain = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""), row.get("token_chain", ""))
+    source = _first_nonempty_text(row.get("holder_source", ""), row.get("holder_data_source", ""), row.get("scan_mode", ""))
+    contract = _first_nonempty_text(row.get("token_contract", ""), row.get("contract_address", ""), row.get("contract", ""))
+    holders = _safe_float(row.get("holder_count"))
+
+    parts: list[str] = []
+    if chain:
+        parts.append(f"chain {chain}")
+    if holders is not None and holders > 0:
+        parts.append(f"holders {holders:.0f}")
+    if source:
+        parts.append(f"src {_clip_text(source, 28)}")
+    if contract:
+        parts.append(f"contract {_short_contract_text(contract)}")
+    return ", ".join(parts) if parts else "pct-only; verify contract/source"
+
+
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
     setup_score = max(
         _safe_float(row.get("dormant_short_fuse_score")) or 0.0,
@@ -3085,6 +3110,7 @@ def _ravelab_line(row: pd.Series) -> str:
     whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
     history_text = f"{history_days:.0f}d" if history_days is not None and history_days > 0 else "n/a"
+    holder_evidence = _holder_evidence_text(row)
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
@@ -3092,10 +3118,29 @@ def _ravelab_line(row: pd.Series) -> str:
         f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
         f"gates whale {whale_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
         f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
+        f"holder ev {holder_evidence} | "
         f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
         f"CEX {targets} {cex_count}tx max {max_amount} | control {control:.0f} float {float_score:.0f} | "
         f"quiet {quiet:.0f} heat {heat:.0f} | dashboard {setup:.0f} latent {latent:.0f}{anchor} | next: {next_check}"
     )
+
+
+def _ravelab_holder_evidence_counts(frame: pd.DataFrame) -> tuple[int, int, int]:
+    if frame.empty:
+        return 0, 0, 0
+    contract_cols = [column for column in ("token_contract", "contract_address", "contract") if column in frame.columns]
+    source_cols = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
+    if contract_cols:
+        contract_mask = pd.concat([_text_series(frame, column).ne("") for column in contract_cols], axis=1).any(axis=1)
+    else:
+        contract_mask = pd.Series(False, index=frame.index)
+    if source_cols:
+        source_mask = pd.concat([_text_series(frame, column).ne("") for column in source_cols], axis=1).any(axis=1)
+    else:
+        source_mask = pd.Series(False, index=frame.index)
+    holder_count = _num_series(frame, "holder_count", default=0.0).gt(0.0)
+    evidence_mask = contract_mask | source_mask | holder_count
+    return int(evidence_mask.sum()), int(contract_mask.sum()), int((~evidence_mask).sum())
 
 
 def _load_ravelab_list(
@@ -3168,6 +3213,7 @@ def _load_ravelab_list(
         selected, breakout_stats = _apply_ravelab_high_breakout_windows(selected, breakout_days)
         if require_breakout_high:
             selected = selected[_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index)].copy()
+    holder_evidence_rows, holder_contract_rows, holder_pct_only_rows = _ravelab_holder_evidence_counts(selected)
 
     if selected.empty:
         gate_counts = (
@@ -3190,6 +3236,10 @@ def _load_ravelab_list(
         lines = [
             header,
             gate_counts,
+            (
+                f"Holder evidence rows: {holder_evidence_rows} with source/contract/count | "
+                f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
+            ),
             (
                 f"Breakout high checks: {breakout_label} | dynamic checks {breakout_stats['checked']} | "
                 f"errors {breakout_stats['errors']} | insufficient {breakout_stats['insufficient']}"
@@ -3232,6 +3282,10 @@ def _load_ravelab_list(
             f"Target-flow rows: {target_count} | Read: historical-analogue screen, not trade instruction."
         ),
         gate_summary,
+        (
+            f"Holder evidence rows: {holder_evidence_rows} with source/contract/count | "
+            f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
+        ),
         (
             f"Breakout high checks: {breakout_label} | dynamic checks {breakout_stats['checked']} | "
             f"cached flags {breakout_stats['cached']} | errors {breakout_stats['errors']} | insufficient {breakout_stats['insufficient']}"
