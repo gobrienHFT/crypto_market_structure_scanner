@@ -1337,7 +1337,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
     assert "not a trade instruction" in output
 
 
-def test_load_seth_flow_playbook_can_show_volatile_diagnostic_rows(monkeypatch) -> None:
+def test_load_seth_flow_playbook_ignores_relaxed_dormant_toggle(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [
             {
@@ -1370,6 +1370,7 @@ def test_load_seth_flow_playbook_can_show_volatile_diagnostic_rows(monkeypatch) 
     _, chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000, require_dormant=False)
     output = "\n".join(chunks)
 
+    assert "Structure gate: dormant/early only" in output
     assert "/VOLUSDT | SKIP: already volatile/late" in output
     assert "structure volatile/late" in output
     assert "24h range 55.0%" in output
@@ -1538,6 +1539,44 @@ def test_goal_score_hard_floors_top10_whale_gate() -> None:
     assert not bool(scored.loc["TOP100ONLYUSDT", "_goal_whale_concentration_pass"])
     assert not bool(scored.loc["TOP100ONLYUSDT", "_goal_whale_pass"])
     assert bool(scored.loc["TOP10USDT", "_goal_whale_concentration_pass"])
+
+
+def test_goal_score_ignores_relaxed_holder_and_venue_flags() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "BYPASSUSDT",
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 30_000,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 64.0,
+                "low_float_score": 82.0,
+                "fdv_to_market_cap": 8.0,
+                "dormant_short_fuse_score": 80.0,
+                "pre_pump_precision_score": 75.0,
+            }
+        ]
+    )
+
+    scored = bot._goal_score_frame(
+        frame,
+        min_transfer_tokens=20_000,
+        require_holder_evidence=False,
+        require_binance_bitget=False,
+    ).iloc[0]
+
+    assert bool(scored["_goal_holder_evidence_required"])
+    assert bool(scored["_goal_venue_required"])
+    assert not bool(scored["_goal_holder_evidence_pass"])
+    assert not bool(scored["_goal_whale_pass"])
+    assert not bool(scored["_goal_venue_pass"])
+    assert not bool(scored["_goal_all_pass"])
 
 
 def test_pumpwatch_holder_gate_requires_top10_even_when_min_whale_lowered(monkeypatch) -> None:
@@ -2285,13 +2324,14 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
         min_archetype=0,
         min_tokens=20_000,
         require_holder_evidence=False,
+        require_binance_bitget=False,
+        require_dormant_2m=False,
     )
     diagnostic_output = "\n".join(diagnostic_chunks)
-    assert "Holder evidence required: False" in diagnostic_output
-    assert "/PCTONLYUSDT" in diagnostic_output
-    assert "holder top10 96.0% / top100 99.9%; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
-    assert "/COUNTONLYUSDT" in diagnostic_output
-    assert "holder holders 5000, top10 96.0% / top100 99.9%; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
+    assert "Holder evidence required: True" in diagnostic_output
+    assert "Binance+Bitget required: True | Dormant 2m required: True" in diagnostic_output
+    assert "/PCTONLYUSDT" not in diagnostic_output
+    assert "/COUNTONLYUSDT" not in diagnostic_output
 
     crime_title, crime_chunks = bot._load_crimepump_list(10, min_tokens=20_000)
     crime_output = "\n".join(crime_chunks)
@@ -3542,7 +3582,7 @@ def test_strict_holder_evidence_requires_holder_source() -> None:
     assert "needs holder snapshot" in metadata_only_text
 
 
-def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:
+def test_thesis_candidate_gate_ignores_disabled_venue_env(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
     frame = pd.DataFrame(
         [
@@ -3553,9 +3593,17 @@ def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:
                 "trade_bucket_score": 99,
                 **_holder_evidence("bsc", "0x8888888888888888888888888888888888888888"),
             },
+            {
+                "symbol": "STRICTUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 98,
+                "binance_perp_universe": True,
+                "bitget_volume_share_pct": 1.0,
+                **_holder_evidence("bsc", "0x9999999999999999999999999999999999999999"),
+            },
         ]
     )
 
     selected = bot._convex_candidates_from_frame(frame)
 
-    assert selected["symbol"].tolist() == ["NOGATEUSDT"]
+    assert selected["symbol"].tolist() == ["STRICTUSDT"]

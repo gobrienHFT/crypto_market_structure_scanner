@@ -149,7 +149,7 @@ Long-carry candidates (negative funding; longs receive)
 /COLDUSDT | funding -0.0800%/8h | ann -87.6% | mark 0.00001234 | 24h -2.5% | vol 9.90M | shorts 30.0% | longs 70.0% | next 1.0h
 ```
 
-## `/setupscore min_tokens:20000 strict:true`
+## `/setupscore min_tokens:20000`
 
 ```text
 Insider-structure setup score

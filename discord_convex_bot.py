@@ -2592,8 +2592,6 @@ def _explicit_binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series
 
 
 def _thesis_venue_header() -> str:
-    if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
-        return "Venue gate: disabled"
     return "Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only"
 
 
@@ -2619,8 +2617,6 @@ def _thesis_candidate_gate_mask(frame: pd.DataFrame, *, min_whale_pct: float = 9
         min_whale_pct=min_whale_pct,
         require_holder_evidence=True,
     )
-    if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
-        return holder_gate.fillna(False)
     return (holder_gate & _explicit_binance_bitget_trading_gate_mask(frame)).fillna(False)
 
 
@@ -2673,6 +2669,9 @@ def _load_seth_flow_playbook(
     max_range_pct: float = 35.0,
     max_day_move_pct: float = 30.0,
 ) -> tuple[str, list[str]]:
+    require_venue_gate = True
+    require_holder_evidence = True
+    require_dormant = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -2700,8 +2699,8 @@ def _load_seth_flow_playbook(
     target_mask = targets.str.contains(TARGET_CEX_PATTERN, regex=True)
     flow_mask = (flag | score.gt(0.0)) & count.gt(0.0) & max_amount.ge(effective_min_transfer) & target_mask
     raw_target_flow = frame[flow_mask].copy()
-    if require_venue_gate and not raw_target_flow.empty:
-        raw_target_flow = _apply_thesis_venue_gate(raw_target_flow)
+    if not raw_target_flow.empty:
+        raw_target_flow = raw_target_flow[_explicit_binance_bitget_trading_gate_mask(raw_target_flow)].copy()
 
     if raw_target_flow.empty:
         raw_count = int(((flag | score.gt(0.0)) & count.gt(0.0)).sum())
@@ -2894,6 +2893,8 @@ def _goal_score_frame(
 ) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
+    require_holder_evidence = True
+    require_binance_bitget = True
     effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     output = apply_timing_model(apply_terminal_model(frame.loc[:, ~frame.columns.duplicated()].copy()))
     target_flow = _confirmed_cex_flow_mask(output, min_transfer_tokens=min_transfer_tokens, target_only=True)
@@ -3070,6 +3071,9 @@ def _load_setup_score_list(
     require_holder_evidence: bool = True,
     require_binance_bitget: bool = True,
 ) -> tuple[str, list[str]]:
+    strict = True
+    require_holder_evidence = True
+    require_binance_bitget = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -3134,6 +3138,9 @@ def _load_pump_watch_list(
     require_target_flow: bool = False,
     require_venue_gate: bool = True,
 ) -> tuple[str, list[str]]:
+    require_holder_evidence = True
+    require_binance_bitget = True
+    require_venue_gate = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -3298,6 +3305,8 @@ def _load_precrime_list(
     require_quiet: bool = True,
     require_behavior_gate: bool = True,
 ) -> tuple[str, list[str]]:
+    require_holder_evidence = True
+    require_binance_bitget = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -4123,6 +4132,8 @@ def _ravelab_near_miss_rows(
     require_holder_evidence: bool,
     require_binance_bitget: bool,
 ) -> pd.DataFrame:
+    require_holder_evidence = True
+    require_binance_bitget = True
     if scored.empty or limit <= 0:
         return pd.DataFrame()
     candidates = scored.copy()
@@ -4228,6 +4239,9 @@ def _ravelab_base_funnel_mask_and_steps(
     require_whale_origin_flow: bool,
     style_key: str,
 ) -> tuple[pd.Series, list[tuple[str, int]]]:
+    require_holder_evidence = True
+    require_binance_bitget = True
+    require_dormant_2m = True
     if scored.empty:
         return pd.Series(False, index=scored.index), [("scan", 0)]
     index = scored.index
@@ -4332,6 +4346,9 @@ def _load_ravelab_list(
     detail: bool = False,
     compact: bool = False,
 ) -> tuple[str, list[str]]:
+    require_binance_bitget = True
+    require_dormant_2m = True
+    require_holder_evidence = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -4748,6 +4765,8 @@ def _load_coin_check(
     require_holder_evidence: bool = True,
     require_binance_bitget: bool = True,
 ) -> tuple[str, str]:
+    require_holder_evidence = True
+    require_binance_bitget = True
     symbol = _normalize_symbol_query(symbol_query)
     if not symbol:
         return "Coin checklist", "Use `/coincheck symbol:PLAYUSDT min_tokens:20000`."
@@ -5533,9 +5552,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        strict="Require target CEX flow, whale, short, float, and not-late gates.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
-        require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
     async def setupscore(
         interaction: discord.Interaction,
@@ -5545,9 +5561,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours: int = 24,
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
-        strict: bool = True,
-        require_holder_evidence: bool = True,
-        require_binance_bitget: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5564,9 +5577,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
-            strict=strict,
-            require_holder_evidence=require_holder_evidence,
-            require_binance_bitget=require_binance_bitget,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -5585,10 +5595,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
-        require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
-        require_venue_gate="Require Binance perp plus Bitget trading evidence. Gate is optional evidence only.",
     )
     async def pumpwatch(
         interaction: discord.Interaction,
@@ -5597,10 +5604,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit: int = 20,
         lookback_hours: int = 24,
         min_whale_pct: float = 90.0,
-        require_holder_evidence: bool = True,
-        require_binance_bitget: bool = True,
         require_target_flow: bool = False,
-        require_venue_gate: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5616,10 +5620,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
-            require_holder_evidence=require_holder_evidence,
-            require_binance_bitget=require_binance_bitget,
             require_target_flow=require_target_flow,
-            require_venue_gate=require_venue_gate,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xEF4444)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -5638,8 +5639,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
-        require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_quiet="Require the no-chase quiet/low-activity gate.",
         require_behavior_gate="Require target CEX flow, venue-inventory tell, or short-fuse venue behaviour.",
@@ -5651,8 +5650,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit: int = 20,
         lookback_hours: int = 24,
         min_whale_pct: float = 90.0,
-        require_holder_evidence: bool = True,
-        require_binance_bitget: bool = True,
         require_target_flow: bool = False,
         require_quiet: bool = True,
         require_behavior_gate: bool = True,
@@ -5671,8 +5668,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
-            require_holder_evidence=require_holder_evidence,
-            require_binance_bitget=require_binance_bitget,
             require_target_flow=require_target_flow,
             require_quiet=require_quiet,
             require_behavior_gate=require_behavior_gate,
@@ -5703,9 +5698,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         style="Show both, RAVE-like, or LAB-like structures.",
         require_quiet="Require early/no-chase heat gate.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
-        require_binance_bitget="Require both Binance and Bitget venue evidence.",
-        require_dormant_2m="Require 60D no-large-pump proof, enough history, and low recent heat.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears whale_flow_min_tokens.",
         trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch only.",
@@ -5743,9 +5735,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         style: str = "both",
         require_quiet: bool = True,
         require_target_flow: bool = False,
-        require_binance_bitget: bool = True,
-        require_dormant_2m: bool = True,
-        require_holder_evidence: bool = True,
         require_breakout_high: bool = False,
         require_whale_origin_flow: bool = False,
         trigger_filter: str = "all",
@@ -5775,9 +5764,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             style=style,
             require_quiet=require_quiet,
             require_target_flow=require_target_flow,
-            require_binance_bitget=require_binance_bitget,
-            require_dormant_2m=require_dormant_2m,
-            require_holder_evidence=require_holder_evidence,
             require_breakout_high=require_breakout_high,
             require_whale_origin_flow=require_whale_origin_flow,
             trigger_filter=trigger_filter,
@@ -5943,8 +5929,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
-        require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
     async def coincheck(
         interaction: discord.Interaction,
@@ -5954,8 +5938,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours: int = 24,
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
-        require_holder_evidence: bool = True,
-        require_binance_bitget: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5972,8 +5954,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
-            require_holder_evidence=require_holder_evidence,
-            require_binance_bitget=require_binance_bitget,
         )
         embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -6466,9 +6446,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage, default 50.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_dormant="Only show rows that pass the dormant/early structure gate.",
-        require_venue_gate="Require Binance perp plus Bitget trading evidence.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the whale gate.",
     )
     async def sethflow(
         interaction: discord.Interaction,
@@ -6477,9 +6454,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours: int = 24,
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
-        require_dormant: bool = True,
-        require_venue_gate: bool = True,
-        require_holder_evidence: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -6495,9 +6469,6 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
-            require_dormant=require_dormant,
-            require_venue_gate=require_venue_gate,
-            require_holder_evidence=require_holder_evidence,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x14B8A6)
         embed.set_footer(text=DISCORD_FOOTER)

@@ -222,14 +222,14 @@ Supported commands include:
 /convex [limit]
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
-/precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_quiet] [require_behavior_gate]
+/precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_target_flow] [require_quiet] [require_behavior_gate]
 /crimepump [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [trigger_filter] [near_miss_limit] [detail]
+/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_breakout_high] [require_whale_origin_flow] [trigger_filter] [near_miss_limit] [detail]
 /prime [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_venue_gate]
-/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict] [require_holder_evidence] [require_binance_bitget]
+/pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_target_flow]
+/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct]
 /flowproof <symbol> [min_tokens] [lookback_hours]
-/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct] [require_holder_evidence] [require_binance_bitget]
+/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct]
 /floattrap [min_score] [limit]
 /squeezeready [min_short_pct] [min_score] [limit]
 /cextargets [min_tokens] [limit] [lookback_hours]
@@ -246,7 +246,7 @@ Supported commands include:
 /flowstress [min_tokens] [limit] [lookback_hours] [require_venue_gate]
 /flowblocked [min_tokens] [limit] [lookback_hours]
 /flowhealth [min_tokens] [lookback_hours] [symbol_limit]
-/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [require_dormant] [require_venue_gate] [require_holder_evidence]
+/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct]
 /dossier <symbol>
 /coin <symbol>
 /startbot [mode] [scan_mode]
@@ -270,8 +270,8 @@ The bot can retrieve:
 - a dedicated `/ravelab` strict early-structure radar requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects `whale_flow_min_tokens` while generic target-CEX flow still respects `min_tokens`, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
 - `/prime` as a short alias for the same compact crime-pump queue
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ holder-source snapshot and Binance+Bitget gates
-- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ holder dominance with optional ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence by default, low float/high FDV, short crowding, and not-late structure
-- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate by default and showing top-holder sender provenance when the transfer origin matches a scanned holder wallet
+- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, low float/high FDV, short crowding, and not-late structure
+- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate and showing top-holder sender provenance when the transfer origin matches a scanned holder wallet
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
 - top terminal market-structure evidence rows
 - top timing-quality rows
