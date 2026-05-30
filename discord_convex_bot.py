@@ -2489,6 +2489,19 @@ def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
     return (has_binance & has_bitget).fillna(False)
 
 
+def _explicit_binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    top_venue = _text_series(frame, "top_venue")
+    explicit_binance_perp = (
+        _boolish_series(frame.get("binance_perp_universe"), index=frame.index)
+        | _boolish_series(frame.get("is_binance_perp"), index=frame.index)
+    )
+    has_binance = explicit_binance_perp | _num_series(frame, "binance_volume_share_pct").gt(0.0) | top_venue.str.contains(BINANCE_PATTERN, na=False)
+    has_bitget = _num_series(frame, "bitget_volume_share_pct").gt(0.0) | top_venue.str.contains(BITGET_PATTERN, na=False)
+    return (has_binance & has_bitget).fillna(False)
+
+
 def _thesis_venue_header() -> str:
     if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return "Venue gate: disabled"
@@ -3541,7 +3554,6 @@ def _score_ravelab_early_frame(
     ).max(axis=1).fillna(0.0)
     targets = _text_series(scored, "cex_deposit_24h_target_exchanges")
     top_venue = _text_series(scored, "top_venue")
-    symbols = _text_series(scored, "symbol")
     binance_share = _num_series(scored, "binance_volume_share_pct")
     bitget_share = _num_series(scored, "bitget_volume_share_pct")
     gate_share = _num_series(scored, "gate_volume_share_pct")
@@ -3549,9 +3561,7 @@ def _score_ravelab_early_frame(
         _boolish_series(scored.get("binance_perp_universe"), index=index)
         | _boolish_series(scored.get("is_binance_perp"), index=index)
     )
-    implicit_binance_perp = symbols.ne("") if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True) else pd.Series(False, index=index)
-    binance_perp_universe = explicit_binance_perp | implicit_binance_perp
-    has_binance = binance_perp_universe | binance_share.gt(0.0) | top_venue.str.contains(BINANCE_PATTERN, na=False)
+    has_binance = explicit_binance_perp | binance_share.gt(0.0) | top_venue.str.contains(BINANCE_PATTERN, na=False)
     has_bitget = bitget_share.gt(0.0) | top_venue.str.contains(BITGET_PATTERN, na=False)
     has_gate = gate_share.gt(0.0) | top_venue.str.contains(GATE_PATTERN, na=False) | targets.str.contains(GATE_PATTERN, na=False)
     venue_component = (
@@ -3636,7 +3646,7 @@ def _score_ravelab_early_frame(
     scored["_ravelab_whale_pct"] = whale_pct
     scored["_ravelab_whale_score"] = whale_component
     scored["_ravelab_whale_gate"] = whale_gate & (~major_excluded)
-    scored["_ravelab_binance_perp_universe"] = binance_perp_universe & (~major_excluded)
+    scored["_ravelab_binance_perp_universe"] = explicit_binance_perp & (~major_excluded)
     scored["_ravelab_has_binance"] = has_binance & (~major_excluded)
     scored["_ravelab_has_bitget"] = has_bitget & (~major_excluded)
     scored["_ravelab_has_gate"] = has_gate & (~major_excluded)

@@ -2076,10 +2076,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
     assert "holder chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
-    assert "venue Bn perp,8.0%; Bg 2.0%; Gate no" in output
+    assert "venue Bn 8.0%; Bg 2.0%; Gate no" in output
     assert "/LABXUSDT" in output
     assert "holder chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
-    assert "venue Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
+    assert "venue Bn 9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "A3 WHALE-CEX PRIME" in output
     assert "core 5/5 | trigger whale-CEX 360.00K | thesis" in output
@@ -2433,6 +2433,53 @@ def test_ravelab_exhaustion_blocks_core_prime() -> None:
     assert scored.loc["EXHAUSTUSDT", "_ravelab_missing_core_gates"] == "early/no-chase"
     assert bot._ravelab_stage_label(scored.loc["EXHAUSTUSDT"]) == "B1 BLOCKED"
     assert "avoid chase/late risk" in bot._ravelab_next_check(scored.loc["EXHAUSTUSDT"])
+
+
+def test_ravelab_requires_explicit_binance_trading_evidence(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "1")
+    base = {
+        "history_days": 160,
+        **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+        "top10_holder_pct": 92.0,
+        "centralized_ownership_score": 88.0,
+        "terminal_control_plane_score": 86.0,
+        "low_float_score": 84.0,
+        "float_trap_score": 80.0,
+        "fdv_to_market_cap": 9.0,
+        "locked_supply_pct": 65.0,
+        "short_account_pct": 58.0,
+        "short_dominance_score": 62.0,
+        "short_account_build_score": 58.0,
+        "silent_oi_accumulation_score": 56.0,
+        "oi_delta_pct": 4.0,
+        "bitget_volume_share_pct": 2.0,
+        "pre_pump_precision_score": 40.0,
+        "low_volatility_coil_score": 80.0,
+        "hour_return_pct": 0.3,
+        "day_return_pct": 1.0,
+        "price_change_24h_pct": 1.0,
+        "range_24h_pct": 3.5,
+    }
+    frame = pd.DataFrame(
+        [
+            {**base, "symbol": "SYMBOLONLYUSDT"},
+            {**base, "symbol": "MARKEDUSDT", "binance_perp_universe": True},
+            {**base, "symbol": "SHAREUSDT", "binance_volume_share_pct": 0.5},
+        ]
+    )
+
+    scored = bot._score_ravelab_early_frame(frame)
+    holder_evidence_mask, _ = bot._ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0).set_index("symbol")
+
+    assert not bool(scored.loc["SYMBOLONLYUSDT", "_ravelab_has_binance"])
+    assert not bool(scored.loc["SYMBOLONLYUSDT", "_ravelab_venue_gate"])
+    assert scored.loc["SYMBOLONLYUSDT", "_ravelab_missing_core_gates"] == "Binance+Bitget"
+    assert bool(scored.loc["MARKEDUSDT", "_ravelab_has_binance"])
+    assert bool(scored.loc["MARKEDUSDT", "_ravelab_venue_gate"])
+    assert bool(scored.loc["SHAREUSDT", "_ravelab_has_binance"])
+    assert bool(scored.loc["SHAREUSDT", "_ravelab_venue_gate"])
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
