@@ -3497,7 +3497,7 @@ def _score_ravelab_early_frame(
     latent = _num_series(scored, "pre_activity_pump_score")
     top10 = _safe_pct_series(scored, "top10_holder_pct").fillna(0.0)
     top100 = _safe_pct_series(scored, "top100_holder_pct").fillna(0.0)
-    whale_pct = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0)
+    whale_pct = top10.fillna(0.0)
     whale_component = pd.concat(
         [
             _score_linear_series(top100, 88.0, 99.5),
@@ -3702,7 +3702,7 @@ def _score_ravelab_early_frame(
         - heat.sub(62.0).clip(lower=0.0) * 0.28
     ).where(~major_excluded, other=0.0).clip(lower=0.0, upper=100.0)
     archetype_score = pd.concat([rave, lab], axis=1).max(axis=1).fillna(0.0)
-    whale_gate = whale_pct.ge(float(min_whale_pct))
+    whale_gate = _ravelab_whale_gate_series(scored, min_whale_pct=min_whale_pct)
     venue_gate = has_binance & has_bitget
     structure_gate = whale_gate & venue_gate & controlled_float_gate & dormant_2m & ((control >= 55.0) | (controlled_float_score >= 55.0))
     early_gate = ((quiet >= 45.0) | (not_late >= 58.0)) & heat.lt(68.0) & exhaustion.lt(70.0) & (~major_excluded)
@@ -4035,6 +4035,14 @@ def _ravelab_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.S
     return _strict_holder_evidence_masks(frame)
 
 
+def _ravelab_whale_control_series(frame: pd.DataFrame) -> pd.Series:
+    return _safe_pct_series(frame, "top10_holder_pct").fillna(0.0)
+
+
+def _ravelab_whale_gate_series(frame: pd.DataFrame, *, min_whale_pct: float) -> pd.Series:
+    return _ravelab_whale_control_series(frame).ge(float(min_whale_pct)).fillna(False)
+
+
 def _ravelab_near_miss_rows(
     scored: pd.DataFrame,
     selected: pd.DataFrame,
@@ -4275,7 +4283,7 @@ def _load_ravelab_list(
         "Strict RAVE/LAB crime-pump early radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
-        f"Whale gate: >= {float(min_whale_pct):.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
+        f"Whale gate: top10 >= {float(min_whale_pct):.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | Max recent pump: < {float(max_recent_pump_pct):.0f}% over 60d | "
         f"Holder evidence required: {require_holder_evidence} | "
         f"Binance+Bitget required: {require_binance_bitget} | Dormant 2m required: {require_dormant_2m} | "
@@ -4283,7 +4291,7 @@ def _load_ravelab_list(
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
         f"Trigger filter: {trigger_filter_key} | Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
-        "Core gates: 90%+ chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
+        "Core gates: top10 whale-control threshold with chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
     if frame.empty:
@@ -4368,7 +4376,7 @@ def _load_ravelab_list(
                     f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
                     f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
                 ),
-                "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+                "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
                 gate_counts,
                 funnel_line,
                 lane_counts_line,
@@ -4452,7 +4460,7 @@ def _load_ravelab_list(
     lab_count = int(selected["_ravelab_side"].astype(str).eq("LAB-like").sum())
     mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
     gate_summary = (
-        f"All shown rows passed whale >= {float(min_whale_pct):.1f}%"
+        f"All shown rows passed top10 whale-control >= {float(min_whale_pct):.1f}%"
         f"{', holder-source snapshot evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         ", float/FDV trap"
@@ -4470,7 +4478,7 @@ def _load_ravelab_list(
                 f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
                 f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
             ),
-            "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+            "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
             (
                 f"Matches: {len(selected)} | {core_label}: {core_count} | Triggered: {triggered_count} | "
                 f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | Breakout highs: {breakout_count}"
