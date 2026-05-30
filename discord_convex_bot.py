@@ -2505,12 +2505,7 @@ def _explicit_binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series
 def _thesis_venue_header() -> str:
     if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return "Venue gate: disabled"
-    binance_text = (
-        "scanner symbol universe/Binance marker or Binance venue share"
-        if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True)
-        else "explicit Binance perp marker or Binance venue share"
-    )
-    return f"Venue gate: Binance perp + Bitget trading evidence required ({binance_text}); Gate is optional evidence only"
+    return "Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only"
 
 
 def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
@@ -2523,7 +2518,7 @@ def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
 def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return frame.copy()
-    return frame[_binance_bitget_trading_gate_mask(frame)].copy()
+    return frame[_explicit_binance_bitget_trading_gate_mask(frame)].copy()
 
 
 def _thesis_candidate_gate_mask(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.Series:
@@ -2532,7 +2527,7 @@ def _thesis_candidate_gate_mask(frame: pd.DataFrame, *, min_whale_pct: float = 9
     holder_gate = _strict_cex_holder_gate_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=True)
     if not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
         return holder_gate.fillna(False)
-    return (holder_gate & _binance_bitget_trading_gate_mask(frame)).fillna(False)
+    return (holder_gate & _explicit_binance_bitget_trading_gate_mask(frame)).fillna(False)
 
 
 def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.DataFrame:
@@ -2865,7 +2860,7 @@ def _goal_score_frame(
     holder_evidence_mask, _ = _strict_holder_evidence_masks(output)
     whale_concentration_pass = whale_pct.ge(float(min_whale_pct))
     whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
-    venue_pass = _binance_bitget_trading_gate_mask(output)
+    venue_pass = _explicit_binance_bitget_trading_gate_mask(output)
     short_pass = short_pct.ge(min_short_pct)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
     structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0)
@@ -3071,7 +3066,7 @@ def _load_pump_watch_list(
     scored = scored[holder_gate].copy()
     if scored.empty:
         return "Early pump watch", [header + f"\n\nRows after strict holder gate: {holder_count}. No rows met the holder concentration/evidence gate."]
-    venue_pair_gate = _binance_bitget_trading_gate_mask(scored)
+    venue_pair_gate = _explicit_binance_bitget_trading_gate_mask(scored)
     venue_pair_count = int(venue_pair_gate.sum())
     if require_binance_bitget:
         scored = scored[venue_pair_gate].copy()
@@ -3235,7 +3230,7 @@ def _load_precrime_list(
     scored = scored[holder_gate].copy()
     if scored.empty:
         return "Pre-activity radar", [header + f"\n\nRows after strict holder gate: {holder_count}. No rows met the holder concentration/evidence gate."]
-    venue_pair_gate = _binance_bitget_trading_gate_mask(scored)
+    venue_pair_gate = _explicit_binance_bitget_trading_gate_mask(scored)
     venue_pair_count = int(venue_pair_gate.sum())
     if require_binance_bitget:
         scored = scored[venue_pair_gate].copy()

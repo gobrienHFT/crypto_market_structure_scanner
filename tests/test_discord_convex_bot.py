@@ -429,12 +429,13 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
                 "oi_delta_pct": 0.1,
                 "hour_return_pct": 0.0,
             },
-            {
-                "symbol": "BBBUSDT",
-                "terminal_edge_score": 72,
-                "short_account_pct": 62,
-                "bitget_volume_share_pct": 7.5,
-                **_holder_evidence("ethereum", "0x2222222222222222222222222222222222222222"),
+                {
+                    "symbol": "BBBUSDT",
+                    "terminal_edge_score": 72,
+                    "short_account_pct": 62,
+                    "binance_volume_share_pct": 3.0,
+                    "bitget_volume_share_pct": 7.5,
+                    **_holder_evidence("ethereum", "0x2222222222222222222222222222222222222222"),
                 "oi_delta_pct": 3.0,
                 "hour_return_pct": 2.0,
                 "hour_volume_multiple": 2.0,
@@ -458,17 +459,18 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
 def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [
-            {
-                "symbol": "FASTUSDT",
-                "broke_high_20d": True,
-                "broke_low_20d": False,
-                "price_change_24h_pct": 8.2,
+                {
+                    "symbol": "FASTUSDT",
+                    "broke_high_20d": True,
+                    "broke_low_20d": False,
+                    "price_change_24h_pct": 8.2,
                 "last_price": 0.1234,
-                "range_high_break_count": 2,
-                "range_low_break_count": 0,
-                "short_account_pct": 61.0,
-                "bitget_volume_share_pct": 2.0,
-                **_holder_evidence("ethereum", "0x9999999999999999999999999999999999999999"),
+                    "range_high_break_count": 2,
+                    "range_low_break_count": 0,
+                    "short_account_pct": 61.0,
+                    "binance_volume_share_pct": 3.0,
+                    "bitget_volume_share_pct": 2.0,
+                    **_holder_evidence("ethereum", "0x9999999999999999999999999999999999999999"),
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -796,6 +798,7 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
                 "holder_count": 6_000,
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
+                "binance_volume_share_pct": 3.0,
                 "bitget_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -878,6 +881,7 @@ def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
                 "holder_count": 4_000,
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
+                "binance_volume_share_pct": 3.0,
                 "bitget_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -1131,6 +1135,7 @@ def test_load_flow_stress_list_ranks_inventory_stress(monkeypatch) -> None:
                 "cex_deposit_24h_notional_to_ask_depth_pct": 310.0,
                 "cex_deposit_24h_target_exchanges": "Bitget",
                 "cex_deposit_flow_source": "token_transfer_api",
+                "binance_volume_share_pct": 3.0,
                 "bitget_volume_share_pct": 2.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -1229,6 +1234,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "day_return_pct": 2.0,
                 "dormant_short_fuse_score": 78.0,
                 "pre_pump_precision_score": 72.0,
+                "binance_volume_share_pct": 3.0,
                 "bitget_volume_share_pct": 1.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -1394,6 +1400,7 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
                 "range_24h_pct": 8.0,
                 "day_return_pct": 3.0,
                 "oi_delta_pct": 4.2,
+                "binance_volume_share_pct": 6.0,
                 "bitget_volume_share_pct": 1.5,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -1462,6 +1469,42 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
     assert "KRAKENUSDT" not in output
 
 
+def test_goal_score_requires_explicit_binance_bitget_evidence(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "1")
+    base = {
+        "cex_deposit_flow_score": 92,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 1,
+        "cex_deposit_24h_max_amount": 30_000,
+        "cex_deposit_24h_target_exchanges": "Binance",
+        **_holder_evidence(),
+        "top10_holder_pct": 92.0,
+        "short_account_pct": 64.0,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "dormant_short_fuse_score": 80.0,
+        "pre_pump_precision_score": 75.0,
+        "bitget_volume_share_pct": 1.5,
+    }
+    scored = bot._goal_score_frame(
+        pd.DataFrame(
+            [
+                {**base, "symbol": "SYMBOLONLYUSDT"},
+                {**base, "symbol": "MARKEDUSDT", "binance_perp_universe": True},
+                {**base, "symbol": "SHAREUSDT", "binance_volume_share_pct": 0.5},
+            ]
+        ),
+        min_transfer_tokens=20_000,
+    ).set_index("symbol")
+
+    assert not bool(scored.loc["SYMBOLONLYUSDT", "_goal_venue_pass"])
+    assert not bool(scored.loc["SYMBOLONLYUSDT", "_goal_all_pass"])
+    assert bool(scored.loc["MARKEDUSDT", "_goal_venue_pass"])
+    assert bool(scored.loc["MARKEDUSDT", "_goal_all_pass"])
+    assert bool(scored.loc["SHAREUSDT", "_goal_venue_pass"])
+    assert bool(scored.loc["SHAREUSDT", "_goal_all_pass"])
+
+
 def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [
@@ -1495,6 +1538,7 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
                 "hour_volume_multiple": 1.8,
                 "hour_trade_count_multiple": 1.5,
                 "hour_close_location_pct": 72.0,
+                "binance_volume_share_pct": 6.0,
                 "bitget_volume_share_pct": 2.4,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -1607,6 +1651,7 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
                 "ask_depth_1pct_usdt": 45_000,
                 "ask_depth_to_24h_volume_pct": 0.03,
                 "binance_bitget_gate_share_pct": 35.0,
+                "binance_volume_share_pct": 6.0,
                 "bitget_volume_share_pct": 1.8,
                 "pre_pump_precision_score": 35.0,
                 "low_volatility_coil_score": 82.0,
@@ -2654,6 +2699,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
                 "dormant_short_fuse_score": 78.0,
+                "binance_volume_share_pct": 6.0,
                 "bitget_volume_share_pct": 1.2,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
@@ -2840,6 +2886,7 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
                 "convexity_runway_score": 75,
                 "short_account_pct": 63,
                 "oi_delta_pct": 3.1,
+                "binance_volume_share_pct": 3.0,
                 "hour_return_pct": 2.0,
                 "hour_volume_multiple": 2.2,
                 "hour_trade_count_multiple": 1.8,
@@ -2898,6 +2945,7 @@ def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monk
                     "symbol": "NEWUSDT",
                     "trade_bucket": "Convex Long",
                     "trade_bucket_score": 82,
+                    "binance_volume_share_pct": 3.0,
                     "bitget_volume_share_pct": 4.2,
                     **_holder_evidence("bsc", "0x4444444444444444444444444444444444444444"),
                     "scan_mode": "Deep",
@@ -2960,12 +3008,13 @@ def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -
     fresh = pd.DataFrame(
         [
             {"symbol": "AAAUSDT", "terminal_edge_score": 10, "short_account_pct": 51, "scan_mode": "Deep", "scanned_at_utc": "now"},
-            {
-                "symbol": "BBBUSDT",
-                "terminal_edge_score": 80,
-                "short_account_pct": 61,
-                "bitget_volume_share_pct": 5.0,
-                **_holder_evidence("arbitrum", "0x5555555555555555555555555555555555555555"),
+                {
+                    "symbol": "BBBUSDT",
+                    "terminal_edge_score": 80,
+                    "short_account_pct": 61,
+                    "binance_volume_share_pct": 3.0,
+                    "bitget_volume_share_pct": 5.0,
+                    **_holder_evidence("arbitrum", "0x5555555555555555555555555555555555555555"),
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -3057,13 +3106,14 @@ def test_convex_candidates_require_binance_bitget_by_default(monkeypatch) -> Non
                 "bitget_volume_share_pct": 0.1,
                 "top100_holder_pct": 99.0,
             },
-            {
-                "symbol": "BITGETUSDT",
-                "trade_bucket": "Convex Long",
-                "trade_bucket_score": 90,
-                "bitget_volume_share_pct": 0.1,
-                **_holder_evidence("ethereum", "0x6666666666666666666666666666666666666666"),
-            },
+                {
+                    "symbol": "BITGETUSDT",
+                    "trade_bucket": "Convex Long",
+                    "trade_bucket_score": 90,
+                    "binance_volume_share_pct": 0.2,
+                    "bitget_volume_share_pct": 0.1,
+                    **_holder_evidence("ethereum", "0x6666666666666666666666666666666666666666"),
+                },
             {
                 "symbol": "GATEUSDT",
                 "trade_bucket": "Convex Long",

@@ -137,7 +137,7 @@ DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
 
-Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` for legacy broad-dashboard caches generated from the Binance perp universe; set it to `0` when auditing mixed rows so symbol text alone cannot satisfy Binance evidence. The strict `/ravelab` and `/crimepump` path does not use symbol text as Binance proof: it requires the explicit Binance perp marker, Binance venue share, or Binance top-venue text.
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` for legacy broad-dashboard caches generated from the Binance perp universe; set it to `0` when auditing mixed rows so symbol text alone cannot satisfy Binance evidence. Discord thesis screens such as `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` do not use symbol text as Binance proof: they require the explicit Binance perp marker, Binance venue share, or Binance top-venue text.
 
 For a dedicated transfer monitor:
 

@@ -198,7 +198,7 @@ DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1
 ```
 
-Fresh scans write `binance_perp_universe=true` before Discord gates run. `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` keeps older broad-dashboard cache files compatible; set it to `0` when testing mixed non-Binance rows so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Strict `/ravelab` and `/crimepump` screens always require explicit Binance evidence and do not use symbol text as proof.
+Fresh scans write `binance_perp_universe=true` before Discord gates run. `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=1` keeps older broad-dashboard cache files compatible; set it to `0` when testing mixed non-Binance rows so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Discord thesis screens such as `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` always require explicit Binance evidence and do not use symbol text as proof.
 
 Per-symbol cooldown state is stored locally in:
 
