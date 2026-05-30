@@ -2475,13 +2475,21 @@ def test_ravelab_queue_summary_splits_triggers_and_core_watch() -> None:
                 "_ravelab_core_gate_count": 5,
                 "_ravelab_core_gate_total": 5,
             },
+            {
+                "symbol": "TARGETUSDT",
+                "_ravelab_core_gate_count": 5,
+                "_ravelab_core_gate_total": 5,
+                "_ravelab_target_flow": True,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "cex_deposit_24h_max_amount": 42_000,
+            },
         ]
     )
 
     lines = bot._ravelab_queue_summary_lines(frame)
 
     assert lines == [
-        "Trigger queue: /FLOWUSDT A3 (whale-CEX 2.50M)",
+        "Trigger queue: /FLOWUSDT A3 (whale-CEX 2.50M) | /TARGETUSDT A1 (target-CEX Binance 42.00K)",
         "Core watch: /COREUSDT A1 (core watch)",
     ]
 
@@ -2499,6 +2507,71 @@ def test_ravelab_trigger_text_prioritizes_whale_flow_then_breakout() -> None:
     )
 
     assert bot._ravelab_trigger_text(row) == "whale-CEX 1.50M, breakout 1D,2D"
+
+
+def test_ravelab_whale_origin_flow_uses_separate_massive_floor(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS", raising=False)
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "SMALLWHALEUSDT",
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": True,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 62.0,
+                "short_account_pct": 54.0,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 30_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 30_000,
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
+                "cex_deposit_24h_target_exchanges": "Binance",
+            },
+            {
+                "symbol": "BIGWHALEUSDT",
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": True,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 62.0,
+                "short_account_pct": 54.0,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 150_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 150_000,
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
+                "cex_deposit_24h_target_exchanges": "Binance",
+            },
+        ]
+    )
+
+    scored = bot._ravelab_apply_thesis_columns(frame, min_squeeze_score=50.0, min_transfer_tokens=20_000)
+    scored = scored.set_index("symbol")
+
+    assert float(scored.loc["SMALLWHALEUSDT", "_ravelab_whale_flow_floor_tokens"]) == 100_000.0
+    assert bool(scored.loc["SMALLWHALEUSDT", "_ravelab_target_flow"])
+    assert not bool(scored.loc["SMALLWHALEUSDT", "_ravelab_whale_origin_flow"])
+    assert scored.loc["SMALLWHALEUSDT", "_ravelab_state"] == "A1 CORE PRIME"
+    assert bot._ravelab_trigger_text(scored.loc["SMALLWHALEUSDT"]) == "target-CEX Binance 30.00K"
+    assert bool(scored.loc["BIGWHALEUSDT", "_ravelab_whale_origin_flow"])
+    assert scored.loc["BIGWHALEUSDT", "_ravelab_state"] == "A3 WHALE-CEX PRIME"
 
 
 def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
@@ -2570,6 +2643,7 @@ def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
         min_score=0,
         min_archetype=0,
         min_tokens=20_000,
+        whale_flow_min_tokens=20_000,
         trigger_filter="flow",
         near_miss_limit=0,
     )

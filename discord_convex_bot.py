@@ -56,6 +56,7 @@ COMMON_BREAKOUT_WINDOWS = (5, 20, 90, 180)
 MAX_DYNAMIC_BREAKOUT_DAYS = 1499
 RAVELAB_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
+RAVELAB_DEFAULT_WHALE_FLOW_MIN_TOKENS = 100_000.0
 _TRADE_BOT_TASK: asyncio.Task[Any] | None = None
 _TRADE_BOT_RUNTIME: TradeBotRuntime | None = None
 _TRADE_BOT_STOP_REQUESTED = False
@@ -123,6 +124,20 @@ def _safe_float(value: Any) -> float | None:
     if pd.isna(parsed):
         return None
     return parsed
+
+
+def _ravelab_whale_flow_floor(min_transfer_tokens: float, whale_flow_min_tokens: float | None = None) -> float:
+    override = _safe_float(whale_flow_min_tokens)
+    configured = (
+        max(0.0, override)
+        if override is not None and override > 0
+        else _env_float(
+            "DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS",
+            RAVELAB_DEFAULT_WHALE_FLOW_MIN_TOKENS,
+            minimum=0.0,
+        )
+    )
+    return max(0.0, float(min_transfer_tokens or 0.0), configured)
 
 
 def _safe_pct(value: Any) -> float | None:
@@ -3370,6 +3385,7 @@ def _ravelab_apply_thesis_columns(
     *,
     min_squeeze_score: float,
     min_transfer_tokens: float = 0.0,
+    min_whale_flow_tokens: float | None = None,
 ) -> pd.DataFrame:
     output = frame.copy()
     if output.empty:
@@ -3386,12 +3402,13 @@ def _ravelab_apply_thesis_columns(
     breakout_any = _boolish_series(output.get("_ravelab_breakout_any"), index=index)
     squeeze_gate = _ravelab_squeeze_gate_series(output, min_squeeze_score=min_squeeze_score)
     transfer_floor = max(0.0, float(min_transfer_tokens or 0.0))
+    whale_flow_floor = _ravelab_whale_flow_floor(transfer_floor, min_whale_flow_tokens)
     qualified_whale_sender = output.apply(_whale_sender_qualifies, axis=1).astype(bool)
     whale_origin_flow = (
         qualified_whale_sender
         & _num_series(output, "cex_deposit_24h_whale_sender_count").gt(0.0)
         & _num_series(output, "cex_deposit_24h_count").gt(0.0)
-        & _num_series(output, "cex_deposit_24h_whale_sender_token_amount").ge(transfer_floor)
+        & _num_series(output, "cex_deposit_24h_whale_sender_token_amount").ge(whale_flow_floor)
         & target_flow
     )
     core_gates = {
@@ -3438,6 +3455,7 @@ def _ravelab_apply_thesis_columns(
 
     output["_ravelab_squeeze_gate"] = squeeze_gate
     output["_ravelab_whale_origin_flow"] = whale_origin_flow
+    output["_ravelab_whale_flow_floor_tokens"] = whale_flow_floor
     output["_ravelab_core_gate_count"] = core_count
     output["_ravelab_core_gate_total"] = len(core_gates)
     output["_ravelab_missing_core_gates"] = missing_text
@@ -3868,7 +3886,13 @@ def _ravelab_queue_summary_lines(frame: pd.DataFrame, *, limit: int = 8) -> list
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         stage = _ravelab_stage_label(row).split()[0]
         entry = f"/{symbol} {stage} ({_ravelab_trigger_text(row)})"
-        if stage in {"A2", "A3", "A4"}:
+        has_trigger = (
+            _boolish_scalar(row.get("_ravelab_whale_origin_flow"))
+            or _boolish_scalar(row.get("_ravelab_target_flow"))
+            or _boolish_scalar(row.get("_ravelab_breakout_any"))
+            or _boolish_scalar(row.get("fresh_flip_flag"))
+        )
+        if stage in {"A2", "A3", "A4"} or (stage == "A1" and has_trigger):
             trigger_entries.append(entry)
         elif stage == "A1":
             core_entries.append(entry)
@@ -4257,6 +4281,7 @@ def _load_ravelab_list(
     min_history_days: int = 60,
     max_recent_pump_pct: float = 35.0,
     min_tokens: float | None = None,
+    whale_flow_min_tokens: float | None = None,
     lookback_hours: int | None = None,
     breakout_windows: str = "1D,2D,3D,4D,5D,20D",
     style: str = "both",
@@ -4276,6 +4301,7 @@ def _load_ravelab_list(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
     )
+    effective_whale_flow_floor = _ravelab_whale_flow_floor(effective_min_transfer, whale_flow_min_tokens)
     style_key = str(style or "both").strip().lower()
     if style_key not in {"both", "rave", "lab"}:
         style_key = "both"
@@ -4291,6 +4317,7 @@ def _load_ravelab_list(
     header = (
         "Strict RAVE/LAB crime-pump early radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
+        f"Whale-CEX floor: {_fmt_compact_number(effective_whale_flow_floor)} tokens | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
         f"Whale gate: top10 >= {float(min_whale_pct):.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | Max recent pump: < {float(max_recent_pump_pct):.0f}% over 60d | "
@@ -4334,7 +4361,12 @@ def _load_ravelab_list(
         max_recent_pump_pct=float(max_recent_pump_pct),
         days=60,
     )
-    scored = _ravelab_apply_thesis_columns(scored, min_squeeze_score=min_squeeze_score, min_transfer_tokens=effective_min_transfer)
+    scored = _ravelab_apply_thesis_columns(
+        scored,
+        min_squeeze_score=min_squeeze_score,
+        min_transfer_tokens=effective_min_transfer,
+        min_whale_flow_tokens=effective_whale_flow_floor,
+    )
     base_mask, funnel_steps = _ravelab_base_funnel_mask_and_steps(
         scored,
         min_score=min_score,
@@ -4351,7 +4383,12 @@ def _load_ravelab_list(
     breakout_stats = {"checked": 0, "errors": 0, "insufficient": 0, "cached": 0}
     if not selected.empty:
         selected, breakout_stats = _apply_ravelab_high_breakout_windows(selected, breakout_days)
-        selected = _ravelab_apply_thesis_columns(selected, min_squeeze_score=min_squeeze_score, min_transfer_tokens=effective_min_transfer)
+        selected = _ravelab_apply_thesis_columns(
+            selected,
+            min_squeeze_score=min_squeeze_score,
+            min_transfer_tokens=effective_min_transfer,
+            min_whale_flow_tokens=effective_whale_flow_floor,
+        )
         if require_breakout_high:
             selected = selected[_boolish_series(selected.get("_ravelab_breakout_any"), index=selected.index)].copy()
     if require_breakout_high:
@@ -4383,6 +4420,7 @@ def _load_ravelab_list(
                 "Crime-pump early queue",
                 (
                     f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
+                    f"Whale-CEX >= {_fmt_compact_number(effective_whale_flow_floor)} | "
                     f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
                 ),
                 "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
@@ -4485,6 +4523,7 @@ def _load_ravelab_list(
             "Crime-pump early queue",
             (
                 f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
+                f"Whale-CEX >= {_fmt_compact_number(effective_whale_flow_floor)} | "
                 f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
             ),
             "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
@@ -4551,6 +4590,7 @@ def _load_crimepump_list(
     limit: int,
     *,
     min_tokens: float | None = None,
+    whale_flow_min_tokens: float | None = None,
     lookback_hours: int | None = None,
     trigger: str = "all",
     breakout_windows: str = "1D,2D,3D,4D,5D,20D",
@@ -4565,6 +4605,7 @@ def _load_crimepump_list(
         min_history_days=60,
         max_recent_pump_pct=35.0,
         min_tokens=min_tokens,
+        whale_flow_min_tokens=whale_flow_min_tokens,
         lookback_hours=lookback_hours,
         breakout_windows=breakout_windows,
         style="both",
@@ -4586,6 +4627,7 @@ def _load_prime_list(
     limit: int,
     *,
     min_tokens: float | None = None,
+    whale_flow_min_tokens: float | None = None,
     lookback_hours: int | None = None,
     trigger: str = "all",
     breakout_windows: str = "1D,2D,3D,4D,5D,20D",
@@ -4593,6 +4635,7 @@ def _load_prime_list(
     _title, chunks = _load_crimepump_list(
         limit,
         min_tokens=min_tokens,
+        whale_flow_min_tokens=whale_flow_min_tokens,
         lookback_hours=lookback_hours,
         trigger=trigger,
         breakout_windows=breakout_windows,
@@ -5616,6 +5659,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_history_days="Required history coverage for the dormancy/no-pump gate. Default 60.",
         max_recent_pump_pct="Reject rows with a daily high expansion above this in the last 60d. Default 35.",
         min_tokens="Minimum token amount per confirmed transfer.",
+        whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the A3 whale-CEX lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
@@ -5626,7 +5670,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_dormant_2m="Require 60D no-large-pump proof, enough history, and low recent heat.",
         require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the 90% whale-holder gate.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
-        require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears min_tokens.",
+        require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears whale_flow_min_tokens.",
         trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch only.",
         near_miss_limit="Blocked high-signal rows to show after strict matches. Use 0 to hide.",
         detail="Show full multi-line evidence instead of the compact staged read.",
@@ -5655,6 +5699,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_history_days: int = 60,
         max_recent_pump_pct: float = 35.0,
         min_tokens: float = 20_000.0,
+        whale_flow_min_tokens: float = 0.0,
         limit: int = 20,
         lookback_hours: int = 24,
         breakout_windows: str = "1D,2D,3D,4D,5D,20D",
@@ -5687,6 +5732,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_history_days=max(1, int(min_history_days)),
             max_recent_pump_pct=max(0.0, float(max_recent_pump_pct)),
             min_tokens=min_tokens if min_tokens > 0 else None,
+            whale_flow_min_tokens=whale_flow_min_tokens if whale_flow_min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             breakout_windows=breakout_windows,
             style=style,
@@ -5714,9 +5760,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @tree.command(**crimepump_kwargs)
     @app_commands.describe(
         min_tokens="Minimum token amount per confirmed transfer.",
+        whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all hard-gated rows, rows with catalysts, whale-CEX flow, or high breakouts.",
+        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
@@ -5724,6 +5771,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
+            app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="breakout highs", value="breakout"),
             app_commands.Choice(name="core watch only", value="core"),
         ]
@@ -5731,6 +5779,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     async def crimepump(
         interaction: discord.Interaction,
         min_tokens: float = 20_000.0,
+        whale_flow_min_tokens: float = 0.0,
         limit: int = 12,
         lookback_hours: int = 24,
         trigger: str = "all",
@@ -5747,6 +5796,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             _load_crimepump_list,
             min(max(int(limit), 1), 50),
             min_tokens=min_tokens if min_tokens > 0 else None,
+            whale_flow_min_tokens=whale_flow_min_tokens if whale_flow_min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             trigger=trigger,
             breakout_windows=breakout_windows,
@@ -5764,9 +5814,10 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @tree.command(**prime_kwargs)
     @app_commands.describe(
         min_tokens="Minimum token amount per confirmed transfer.",
+        whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all hard-gated rows, rows with catalysts, whale-CEX flow, or high breakouts.",
+        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
@@ -5774,6 +5825,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
+            app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="breakout highs", value="breakout"),
             app_commands.Choice(name="core watch only", value="core"),
         ]
@@ -5781,6 +5833,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     async def prime(
         interaction: discord.Interaction,
         min_tokens: float = 20_000.0,
+        whale_flow_min_tokens: float = 0.0,
         limit: int = 12,
         lookback_hours: int = 24,
         trigger: str = "all",
@@ -5797,6 +5850,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             _load_prime_list,
             min(max(int(limit), 1), 50),
             min_tokens=min_tokens if min_tokens > 0 else None,
+            whale_flow_min_tokens=whale_flow_min_tokens if whale_flow_min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             trigger=trigger,
             breakout_windows=breakout_windows,

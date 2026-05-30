@@ -220,9 +220,9 @@ Supported commands include:
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_quiet] [require_behavior_gate]
-/crimepump [min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [trigger_filter] [near_miss_limit] [detail]
-/prime [min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
+/crimepump [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
+/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [trigger_filter] [near_miss_limit] [detail]
+/prime [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_venue_gate]
 /setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict] [require_holder_evidence] [require_binance_bitget]
 /flowproof <symbol> [min_tokens] [lookback_hours]
@@ -263,8 +263,8 @@ The bot can retrieve:
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups after the hard holder-source snapshot and Binance+Bitget thesis gates: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
-- a compact `/crimepump` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for whale-CEX flow, breakout highs, triggered-only, or core-watch rows
-- a dedicated `/ravelab` strict early-structure radar requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects the requested transfer floor, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
+- a compact `/crimepump` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for massive top-holder-origin whale-CEX flow, generic target-CEX flow, breakout highs, triggered-only, or core-watch rows
+- a dedicated `/ravelab` strict early-structure radar requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects `whale_flow_min_tokens` while generic target-CEX flow still respects `min_tokens`, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
 - `/prime` as a short alias for the same compact crime-pump queue
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ holder-source snapshot and Binance+Bitget gates
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ holder dominance with optional ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence by default, low float/high FDV, short crowding, and not-late structure
@@ -301,6 +301,7 @@ DISCORD_CONVEX_COMMAND_TOP_N=10
 DISCORD_ALPHA_TOP_N=15
 DISCORD_ALPHA_BRIEF_MIN_SCORE=35
 DISCORD_EARLY_FLOW_MIN_TOKENS=20000
+DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS=100000
 DISCORD_LOGIN_RETRY_SECONDS=90
 DISCORD_DEFAULT_USER_TIER=pro
 DISCORD_FREE_SAMPLE_TOP_N=3
