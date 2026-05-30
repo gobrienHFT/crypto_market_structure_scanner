@@ -1632,6 +1632,34 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
+            {
+                "symbol": "TARGETONLYUSDT",
+                "history_days": 180,
+                "token_platform": "bsc",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "holder_source": "BscScan holder endpoint",
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 85.0,
+                "binance_volume_share_pct": 12.0,
+                "cex_deposit_flow_score": 90,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 1_000_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
@@ -1667,8 +1695,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/CAPUSDT" in output
     assert "highs 1D,2D,3D,4D,5D,20D" in output
     assert "holder ev chain ethereum, holders 6000, src Etherscan holder endpoint, contract 0x1111...1111" in output
+    assert "venue ev Bn perp,8.0%; Bg 2.0%; Gate no" in output
     assert "/LABXUSDT" in output
     assert "holder ev chain arbitrum, holders 8000, src Arbiscan holder endpoint, contract 0x2222...2222" in output
+    assert "venue ev Bn perp,9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "gates whale Y holderEv Y venue Y dormant2m Y squeeze Y" in output
     assert "anchor LABUSDT 2026-05-11" in output
@@ -1678,6 +1708,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/NOBITGETUSDT" not in output
     assert "/YOUNGUSDT" not in output
     assert "/PCTONLYUSDT" not in output
+    assert "/TARGETONLYUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
     rave_output = "\n".join(rave_chunks)

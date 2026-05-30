@@ -256,7 +256,7 @@ The bot can retrieve:
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
-- a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration, Binance+Bitget venue evidence, at least 60 days of history plus 2-month no-chase/dormancy, and squeeze priming before ranking RAVE/LAB analogues, with compact holder source/chain/contract evidence and optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates
+- a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration, Binance+Bitget trading evidence, at least 60 days of history plus 2-month no-chase/dormancy, and squeeze priming before ranking RAVE/LAB analogues, with compact holder source/chain/contract evidence, venue provenance, and optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, whale dominance, low float/high FDV, short crowding, and not-late structure
 - symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps

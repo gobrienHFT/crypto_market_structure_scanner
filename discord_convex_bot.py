@@ -2149,6 +2149,32 @@ def _target_cex_text(row: pd.Series) -> str:
     return targets if TARGET_CEX_PATTERN.search(targets) else ""
 
 
+def _venue_evidence_text(row: pd.Series) -> str:
+    targets = _clean_scalar_text(row.get("cex_deposit_24h_target_exchanges", ""))
+    top_venue = _clean_scalar_text(row.get("top_venue", ""))
+
+    def evidence(label: str, pattern: re.Pattern[str], share_column: str, *, implicit_perp: bool = False) -> str:
+        parts: list[str] = []
+        if implicit_perp:
+            parts.append("perp")
+        share = _safe_float(row.get(share_column))
+        if share is not None and share > 0:
+            parts.append(f"{share:.1f}%")
+        if top_venue and pattern.search(top_venue):
+            parts.append("top")
+        if targets and pattern.search(targets):
+            parts.append("target")
+        return f"{label} {','.join(parts[:3]) if parts else 'no'}"
+
+    return "; ".join(
+        [
+            evidence("Bn", BINANCE_PATTERN, "binance_volume_share_pct", implicit_perp=_boolish_scalar(row.get("_ravelab_binance_perp_universe"))),
+            evidence("Bg", BITGET_PATTERN, "bitget_volume_share_pct"),
+            evidence("Gate", GATE_PATTERN, "gate_volume_share_pct"),
+        ]
+    )
+
+
 def _short_contract_text(contract: Any) -> str:
     text = _clean_scalar_text(contract)
     if not text:
@@ -2947,11 +2973,13 @@ def _score_ravelab_early_frame(
     ).max(axis=1).fillna(0.0)
     targets = _text_series(scored, "cex_deposit_24h_target_exchanges")
     top_venue = _text_series(scored, "top_venue")
+    symbols = _text_series(scored, "symbol")
     binance_share = _num_series(scored, "binance_volume_share_pct")
     bitget_share = _num_series(scored, "bitget_volume_share_pct")
     gate_share = _num_series(scored, "gate_volume_share_pct")
-    has_binance = binance_share.gt(0.0) | top_venue.str.contains(BINANCE_PATTERN, na=False) | targets.str.contains(BINANCE_PATTERN, na=False)
-    has_bitget = bitget_share.gt(0.0) | top_venue.str.contains(BITGET_PATTERN, na=False) | targets.str.contains(BITGET_PATTERN, na=False)
+    binance_perp_universe = symbols.ne("")
+    has_binance = binance_perp_universe | binance_share.gt(0.0) | top_venue.str.contains(BINANCE_PATTERN, na=False)
+    has_bitget = bitget_share.gt(0.0) | top_venue.str.contains(BITGET_PATTERN, na=False)
     has_gate = gate_share.gt(0.0) | top_venue.str.contains(GATE_PATTERN, na=False) | targets.str.contains(GATE_PATTERN, na=False)
     venue_component = (
         has_binance.astype(float) * 44.0
@@ -3036,6 +3064,7 @@ def _score_ravelab_early_frame(
     scored["_ravelab_whale_pct"] = whale_pct
     scored["_ravelab_whale_score"] = whale_component
     scored["_ravelab_whale_gate"] = whale_gate & (~major_excluded)
+    scored["_ravelab_binance_perp_universe"] = binance_perp_universe & (~major_excluded)
     scored["_ravelab_has_binance"] = has_binance & (~major_excluded)
     scored["_ravelab_has_bitget"] = has_bitget & (~major_excluded)
     scored["_ravelab_has_gate"] = has_gate & (~major_excluded)
@@ -3112,13 +3141,15 @@ def _ravelab_line(row: pd.Series) -> str:
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
     history_text = f"{history_days:.0f}d" if history_days is not None and history_days > 0 else "n/a"
     holder_evidence = _holder_evidence_text(row)
+    venue_evidence = _venue_evidence_text(row)
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
     return (
         f"/{symbol} | {side} | early {score:.0f}/100 | RAVE {rave:.0f} LAB {lab:.0f} | "
         f"gates whale {whale_gate} holderEv {holder_evidence_gate} venue {venue_gate} dormant2m {dormant} squeeze {squeeze_gate} | "
-        f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
+        f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | venue ev {venue_evidence} | "
+        f"whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | "
         f"holder ev {holder_evidence} | "
         f"squeeze {squeeze:.0f} shorts {short_text} | history {history_text} | highs {breakout_windows} | breakout {breakout:.0f} | "
         f"CEX {targets} {cex_count}tx max {max_amount} | control {control:.0f} float {float_score:.0f} | "
