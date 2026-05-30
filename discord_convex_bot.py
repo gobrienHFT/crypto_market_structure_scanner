@@ -2448,6 +2448,20 @@ def _strict_cex_holder_gate_mask(
     return gate.fillna(False)
 
 
+def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    top_venue = _text_series(frame, "top_venue")
+    symbols = _text_series(frame, "symbol")
+    has_binance = (
+        symbols.ne("")
+        | _num_series(frame, "binance_volume_share_pct").gt(0.0)
+        | top_venue.str.contains(BINANCE_PATTERN, na=False)
+    )
+    has_bitget = _num_series(frame, "bitget_volume_share_pct").gt(0.0) | top_venue.str.contains(BITGET_PATTERN, na=False)
+    return (has_binance & has_bitget).fillna(False)
+
+
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
     setup_score = max(
         _safe_float(row.get("dormant_short_fuse_score")) or 0.0,
@@ -2930,6 +2944,9 @@ def _load_pump_watch_list(
     min_score: float = 55.0,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
+    min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
+    require_binance_bitget: bool = True,
     require_target_flow: bool = False,
     require_venue_gate: bool = True,
 ) -> tuple[str, list[str]]:
@@ -2941,7 +2958,9 @@ def _load_pump_watch_list(
         "Early pump watch\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
-        f"Min radar: {float(min_score):.0f} | Target flow required: {require_target_flow} | "
+        f"Min radar: {float(min_score):.0f} | Holder gate: >= {float(min_whale_pct):.1f}% | "
+        f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
+        f"Target flow required: {require_target_flow} | "
         f"{'Venue gate: Binance/Bitget/Gate support or confirmed target transfer' if require_venue_gate else 'Venue gate: disabled for this command'}"
     )
     if frame.empty:
@@ -2952,11 +2971,26 @@ def _load_pump_watch_list(
     scored = apply_archetype_model(scored)
     scored = apply_timing_model(scored)
     scored = apply_early_pump_radar(scored)
+    holder_gate = _strict_cex_holder_gate_mask(
+        scored,
+        min_whale_pct=max(0.0, float(min_whale_pct)),
+        require_holder_evidence=require_holder_evidence,
+    )
+    holder_count = int(holder_gate.sum())
+    scored = scored[holder_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [header + f"\n\nRows after strict holder gate: {holder_count}. No rows met the holder concentration/evidence gate."]
+    venue_pair_gate = _binance_bitget_trading_gate_mask(scored)
+    venue_pair_count = int(venue_pair_gate.sum())
+    if require_binance_bitget:
+        scored = scored[venue_pair_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [header + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count}. No rows met the required trading-venue evidence."]
     if require_venue_gate:
         venue_gate = _boolish_series(scored.get("early_pump_venue_gate", pd.Series(False, index=scored.index)), index=scored.index)
         scored = scored[venue_gate].copy()
     if scored.empty:
-        return "Early pump watch", [header + "\n\nNo rows survived the venue gate."]
+        return "Early pump watch", [header + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count}. No rows survived the venue gate."]
 
     score = _num_series(scored, "early_pump_radar_score")
     target_flow = _boolish_series(scored.get("early_pump_confirmed_target_flow", pd.Series(False, index=scored.index)), index=scored.index)
@@ -2991,6 +3025,7 @@ def _load_pump_watch_list(
     target_count = int(_boolish_series(selected.get("early_pump_confirmed_target_flow"), index=selected.index).sum())
     lines = [
         header,
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | Shown after radar filters {len(selected)}",
         f"Matches: {len(selected)} | Confirmed target-flow rows: {target_count} | Read: rank-order evidence, not an execution instruction.",
         "",
         "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist()),
@@ -3071,6 +3106,9 @@ def _load_precrime_list(
     min_score: float = 58.0,
     min_tokens: float | None = None,
     lookback_hours: int | None = None,
+    min_whale_pct: float = 90.0,
+    require_holder_evidence: bool = True,
+    require_binance_bitget: bool = True,
     require_target_flow: bool = False,
     require_quiet: bool = True,
     require_behavior_gate: bool = True,
@@ -3083,7 +3121,9 @@ def _load_precrime_list(
         "Pre-activity crime-pump radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
-        f"Min latent score: {float(min_score):.0f} | Target flow required: {require_target_flow} | "
+        f"Min latent score: {float(min_score):.0f} | Holder gate: >= {float(min_whale_pct):.1f}% | "
+        f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
+        f"Target flow required: {require_target_flow} | "
         f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate}"
     )
     if frame.empty:
@@ -3095,6 +3135,21 @@ def _load_precrime_list(
     scored = apply_timing_model(scored)
     scored = apply_early_pump_radar(scored)
     scored = apply_pre_activity_radar(scored)
+    holder_gate = _strict_cex_holder_gate_mask(
+        scored,
+        min_whale_pct=max(0.0, float(min_whale_pct)),
+        require_holder_evidence=require_holder_evidence,
+    )
+    holder_count = int(holder_gate.sum())
+    scored = scored[holder_gate].copy()
+    if scored.empty:
+        return "Pre-activity radar", [header + f"\n\nRows after strict holder gate: {holder_count}. No rows met the holder concentration/evidence gate."]
+    venue_pair_gate = _binance_bitget_trading_gate_mask(scored)
+    venue_pair_count = int(venue_pair_gate.sum())
+    if require_binance_bitget:
+        scored = scored[venue_pair_gate].copy()
+    if scored.empty:
+        return "Pre-activity radar", [header + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count}. No rows met the required trading-venue evidence."]
 
     score = _num_series(scored, "pre_activity_pump_score")
     selected = scored[score.ge(max(0.0, float(min_score)))].copy()
@@ -3144,6 +3199,7 @@ def _load_precrime_list(
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
     lines = [
         header,
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | Shown after latent filters {len(selected)}",
         f"Matches: {len(selected)} | Target-flow rows: {target_count} | Quiet-gated rows: {quiet_count} | Read: structural-risk evidence, not trade instruction.",
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",
@@ -4690,6 +4746,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
+        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
+        require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_venue_gate="Require Bitget/Gate support or target-flow venue gate.",
     )
@@ -4699,6 +4758,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens: float = 20_000.0,
         limit: int = 20,
         lookback_hours: int = 24,
+        min_whale_pct: float = 90.0,
+        require_holder_evidence: bool = True,
+        require_binance_bitget: bool = True,
         require_target_flow: bool = False,
         require_venue_gate: bool = True,
     ) -> None:
@@ -4715,6 +4777,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_score=max(0.0, min(float(min_score), 100.0)),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_holder_evidence=require_holder_evidence,
+            require_binance_bitget=require_binance_bitget,
             require_target_flow=require_target_flow,
             require_venue_gate=require_venue_gate,
         )
@@ -4734,6 +4799,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per confirmed transfer.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
+        min_whale_pct="Minimum observed top-holder concentration percentage. Default 90.",
+        require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
+        require_binance_bitget="Require both Binance and Bitget trading evidence.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_quiet="Require the no-chase quiet/low-activity gate.",
         require_behavior_gate="Require target CEX flow, venue-inventory tell, or short-fuse venue behaviour.",
@@ -4744,6 +4812,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens: float = 20_000.0,
         limit: int = 20,
         lookback_hours: int = 24,
+        min_whale_pct: float = 90.0,
+        require_holder_evidence: bool = True,
+        require_binance_bitget: bool = True,
         require_target_flow: bool = False,
         require_quiet: bool = True,
         require_behavior_gate: bool = True,
@@ -4761,6 +4832,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_score=max(0.0, min(float(min_score), 100.0)),
             min_tokens=min_tokens if min_tokens > 0 else None,
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_holder_evidence=require_holder_evidence,
+            require_binance_bitget=require_binance_bitget,
             require_target_flow=require_target_flow,
             require_quiet=require_quiet,
             require_behavior_gate=require_behavior_gate,

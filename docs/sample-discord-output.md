@@ -25,7 +25,8 @@ RAVEUSDT | brief 74.1 | terminal 81 | timing 58 | CEX 36 | shorts 68.5% | Coilin
 
 ```text
 Pre-activity crime-pump radar
-Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Target flow required: False | Quiet required: True | Behaviour gate required: True
+Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Holder gate: >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Quiet required: True | Behaviour gate required: True
+Gate rows: strict holder 9 | Binance+Bitget 5 | Shown after latent filters 2
 Matches: 2 | Target-flow rows: 1 | Quiet-gated rows: 2 | Read: structural-risk evidence, not trade instruction.
 
 Candidates: /SLEEPUSDT /COILUSDT
@@ -129,7 +130,8 @@ Candidates: /PRIMEUSDT /FLOWUSDT
 
 ```text
 Early pump watch
-Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Target flow required: False | Venue gate: Binance/Bitget/Gate support or confirmed target transfer
+Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Venue gate: Binance/Bitget/Gate support or confirmed target transfer
+Gate rows: strict holder 12 | Binance+Bitget 7 | Shown after radar filters 3
 Matches: 3 | Confirmed target-flow rows: 2 | Read: rank-order evidence, not an execution instruction.
 
 Candidates: /PRIMEUSDT /STOUSDT /SIRENUSDT

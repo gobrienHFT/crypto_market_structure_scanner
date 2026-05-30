@@ -1396,6 +1396,10 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
                 "cex_deposit_24h_max_amount": 12_000_000,
                 "cex_deposit_24h_target_exchanges": "Binance",
                 "cex_deposit_inventory_stress_score": 86,
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 6_000,
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
                 "centralized_ownership_score": 86.0,
@@ -1413,6 +1417,7 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
                 "hour_volume_multiple": 1.8,
                 "hour_trade_count_multiple": 1.5,
                 "hour_close_location_pct": 72.0,
+                "bitget_volume_share_pct": 2.4,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -1438,6 +1443,10 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
 
     assert title == "Early pump watch"
     assert "Target CEX: Binance, Gate.io, Bitget" in output
+    assert "Holder gate: >= 90.0%" in output
+    assert "Holder evidence required: True" in output
+    assert "Binance+Bitget required: True" in output
+    assert "Gate rows: strict holder 1 | Binance+Bitget 1" in output
     assert "Candidates: /PRIMEUSDT" in output
     assert "/PRIMEUSDT | Prime early squeeze" in output
     assert "flow 94 Binance 3tx max 12.00M" in output
@@ -1460,6 +1469,9 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
                 "terminal_distribution_pressure_score": 95,
                 "terminal_control_plane_score": 88,
                 "venue_support_score": 70,
+                "token_platform": "bsc",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "BscScan holder endpoint",
                 "top10_holder_pct": 90.0,
                 "top100_holder_pct": 99.0,
                 "holder_count": 7_500,
@@ -1476,6 +1488,7 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
                 "ask_depth_1pct_usdt": 45_000,
                 "ask_depth_to_24h_volume_pct": 0.03,
                 "binance_bitget_gate_share_pct": 35.0,
+                "bitget_volume_share_pct": 1.8,
                 "pre_pump_precision_score": 35.0,
                 "low_volatility_coil_score": 82.0,
                 "hour_return_pct": 0.2,
@@ -1519,6 +1532,10 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
 
     assert title == "Pre-activity radar"
     assert "Quiet required: True" in output
+    assert "Holder gate: >= 90.0%" in output
+    assert "Holder evidence required: True" in output
+    assert "Binance+Bitget required: True" in output
+    assert "Gate rows: strict holder 1 | Binance+Bitget 1" in output
     assert "Candidates: /SLEEPUSDT" in output
     assert "/SLEEPUSDT | Stealth inventory setup" in output
     assert "CEX-tell" in output

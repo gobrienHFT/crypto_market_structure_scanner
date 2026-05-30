@@ -331,7 +331,7 @@ def apply_early_pump_radar(frame: pd.DataFrame) -> pd.DataFrame:
     ).max(axis=1).fillna(0.0)
     not_late = _clip(100.0 - heat)
 
-    whale_gate = top10.ge(80.0) | top100.ge(90.0) | whale_score.ge(70.0)
+    whale_gate = pd.concat([top10, top100], axis=1).max(axis=1).fillna(0.0).ge(90.0)
     short_gate = short_pct.ge(50.0) | squeeze_score.ge(55.0)
     float_gate = float_score.ge(55.0)
     venue_gate = venue_score.ge(45.0) | target_flow
