@@ -42,7 +42,7 @@ Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K toke
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Target-flow rows: 1 | Read: historical-analogue screen, not trade instruction.
 All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, history >= 60d and dormant2m, squeeze >= 50.
-Holder evidence rows: 2 with source/contract/count | contract rows 2 | pct-only rows 0
+Holder evidence rows: 2 with ETH/BNB/ARB chain+contract source/count | contract rows 2 | pct-only rows 0
 Breakout high checks: 1D,2D,3D,4D,5D,20D | dynamic checks 8 | cached flags 4 | errors 0 | insufficient 0
 
 Candidates: /CAPUSDT /LABXUSDT

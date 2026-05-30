@@ -23,7 +23,9 @@ def test_chain_adapter_selection() -> None:
     registry = ChainRegistry()
     assert registry.get("eth").name == "Ethereum"
     assert registry.get("BNB Chain").explorer_name == "BscScan"
+    assert registry.get("arb").explorer_name == "Arbiscan"
     assert registry.platform_to_chain("binance-smart-chain") == "bsc"
+    assert registry.platform_to_chain("arbitrum-one") == "arbitrum"
 
 
 def test_coingecko_contract_resolution_from_platforms() -> None:
@@ -44,6 +46,26 @@ def test_coingecko_contract_resolution_from_platforms() -> None:
     assert market.coin_id == "api3"
     assert chain == "ethereum"
     assert contract == "0xapi3"
+
+
+def test_coingecko_contract_resolution_supports_arbitrum() -> None:
+    class FakeCoinGecko:
+        def fetch_coin(self, coin_id: str) -> dict:
+            return {"id": coin_id, "name": "Arb Token", "symbol": "arbx", "platforms": {"arbitrum-one": "0xarb"}}
+
+        def parse_market_data(self, raw: dict) -> TokenMarketData:
+            return TokenMarketData(
+                coin_id=raw["id"],
+                name=raw["name"],
+                symbol=raw["symbol"].upper(),
+                platforms=raw["platforms"],
+            )
+
+    scanner = TokenConcentrationScanner(coingecko=FakeCoinGecko())  # type: ignore[arg-type]
+    market, chain, contract = scanner.resolve_contract(scanner_input=__import__("concentration_scanner").ScannerInput(coin_id="arb-token", chain=""))
+    assert market.coin_id == "arb-token"
+    assert chain == "arbitrum"
+    assert contract == "0xarb"
 
 
 def test_holder_classification_exchange_bitget_burn_round_and_unexplained() -> None:

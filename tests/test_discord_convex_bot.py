@@ -1633,6 +1633,28 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
                 "scanned_at_utc": "now",
             },
             {
+                "symbol": "COUNTONLYUSDT",
+                "history_days": 180,
+                "top10_holder_pct": 96.0,
+                "top100_holder_pct": 99.9,
+                "holder_count": 5_000,
+                "terminal_hidden_float_reflexivity_score": 96,
+                "terminal_control_plane_score": 95,
+                "centralized_ownership_score": 94,
+                "low_float_score": 90,
+                "ath_multiple": 60,
+                "fdv_to_market_cap": 15,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 85.0,
+                "binance_volume_share_pct": 12.0,
+                "bitget_volume_share_pct": 2.0,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "range_24h_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
                 "symbol": "TARGETONLYUSDT",
                 "history_days": 180,
                 "token_platform": "bsc",
@@ -1708,6 +1730,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/NOBITGETUSDT" not in output
     assert "/YOUNGUSDT" not in output
     assert "/PCTONLYUSDT" not in output
+    assert "/COUNTONLYUSDT" not in output
     assert "/TARGETONLYUSDT" not in output
 
     _, rave_chunks = bot._load_ravelab_list(10, min_score=58, min_archetype=0, min_tokens=20_000, style="rave")
@@ -1736,7 +1759,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     diagnostic_output = "\n".join(diagnostic_chunks)
     assert "Holder evidence required: False" in diagnostic_output
     assert "/PCTONLYUSDT" in diagnostic_output
-    assert "holder ev pct-only; verify contract/source" in diagnostic_output
+    assert "holder ev pct-only; needs ETH/BNB/ARB chain+contract+source/count" in diagnostic_output
+    assert "/COUNTONLYUSDT" in diagnostic_output
+    assert "holder ev holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
 
 
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:

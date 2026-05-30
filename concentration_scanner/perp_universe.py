@@ -308,7 +308,7 @@ class BinancePerpUniverseBuilder:
             futures_to_spot_volume_ratio=_ratio(perp_volume, spot_volume),
             price_change_24h=_to_float(ticker.get("priceChangePercent")),
             match_confidence=match_confidence,
-            skip_reason="" if contract else "No matching Ethereum/BNB contract in local seed index",
+            skip_reason="" if contract else "No matching Ethereum/BNB/ARB contract in local seed index",
         )
 
     def _with_open_interest(self, candidates: list[PerpUniverseCandidate], *, limit: int) -> list[PerpUniverseCandidate]:

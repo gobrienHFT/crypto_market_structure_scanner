@@ -70,7 +70,7 @@ class TokenConcentrationScanner:
                         chain = adapter.key
                         break
             if not contract:
-                raise ValueError(f"No supported Ethereum/BNB Chain contract found for CoinGecko ID {scanner_input.coin_id}.")
+                raise ValueError(f"No supported Ethereum/BNB/Arbitrum contract found for CoinGecko ID {scanner_input.coin_id}.")
             return market, chain, contract
         if scanner_input.contract_address:
             adapter = self.registry.get(chain)

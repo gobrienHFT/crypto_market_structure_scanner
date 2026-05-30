@@ -25,7 +25,14 @@ from discord_flag_formatter import (
 )
 from early_pump_radar import apply_early_pump_radar
 from historical_examples import exemplar_for_archetype
-from holder_composition import fetch_holder_composition, format_holder_composition_for_discord, load_contract_hints, resolve_contract_hint
+from holder_composition import (
+    clean_contract_address,
+    fetch_holder_composition,
+    format_holder_composition_for_discord,
+    load_contract_hints,
+    normalize_chain,
+    resolve_contract_hint,
+)
 from pre_activity_radar import apply_pre_activity_radar
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 from scan_orchestrator import run_fresh_scan_frame
@@ -40,6 +47,8 @@ SYMBOL_QUERY_RE = re.compile(r"^[!/]?\$?([A-Za-z0-9]{2,30})$")
 ACCESS_LEVELS = {"free": 0, "paid": 1, "pro": 2}
 COMMON_BREAKOUT_WINDOWS = (5, 20, 90, 180)
 MAX_DYNAMIC_BREAKOUT_DAYS = 1499
+RAVELAB_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
+RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
 _TRADE_BOT_TASK: asyncio.Task[Any] | None = None
 _TRADE_BOT_RUNTIME: TradeBotRuntime | None = None
 _TRADE_BOT_STOP_REQUESTED = False
@@ -2182,10 +2191,20 @@ def _short_contract_text(contract: Any) -> str:
     return f"{text[:6]}...{text[-4:]}" if len(text) > 14 else text
 
 
-def _holder_evidence_text(row: pd.Series) -> str:
+def _holder_chain_key(row: pd.Series) -> str:
     chain = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""), row.get("token_chain", ""))
+    return normalize_chain(chain) if chain else ""
+
+
+def _holder_contract_address(row: pd.Series) -> str:
+    return clean_contract_address(_first_nonempty_text(row.get("token_contract", ""), row.get("contract_address", ""), row.get("contract", "")))
+
+
+def _holder_evidence_text(row: pd.Series) -> str:
+    raw_chain = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""), row.get("token_chain", ""))
+    chain = normalize_chain(raw_chain) if raw_chain else ""
     source = _first_nonempty_text(row.get("holder_source", ""), row.get("holder_data_source", ""))
-    contract = _first_nonempty_text(row.get("token_contract", ""), row.get("contract_address", ""), row.get("contract", ""))
+    contract = _holder_contract_address(row)
     holders = _safe_float(row.get("holder_count"))
 
     parts: list[str] = []
@@ -2197,7 +2216,18 @@ def _holder_evidence_text(row: pd.Series) -> str:
         parts.append(f"src {_clip_text(source, 28)}")
     if contract:
         parts.append(f"contract {_short_contract_text(contract)}")
-    return ", ".join(parts) if parts else "pct-only; verify contract/source"
+    strict_ok = chain in RAVELAB_HOLDER_EVIDENCE_CHAINS and bool(contract) and (bool(source) or (holders is not None and holders > 0))
+    if strict_ok:
+        return ", ".join(parts)
+    missing: list[str] = []
+    if chain not in RAVELAB_HOLDER_EVIDENCE_CHAINS:
+        missing.append(f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain")
+    if not contract:
+        missing.append("contract")
+    if not source and not (holders is not None and holders > 0):
+        missing.append("source/count")
+    detail = ", ".join(parts) if parts else "pct-only"
+    return f"{detail}; needs {'+'.join(missing)}"
 
 
 def _seth_structure_state(row: pd.Series, *, max_range_pct: float, max_day_move_pct: float) -> tuple[str, bool, float, str]:
@@ -3168,18 +3198,15 @@ def _ravelab_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.S
     if frame.empty:
         empty = pd.Series(False, index=frame.index)
         return empty, empty
-    contract_cols = [column for column in ("token_contract", "contract_address", "contract") if column in frame.columns]
     source_cols = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
-    if contract_cols:
-        contract_mask = pd.concat([_text_series(frame, column).ne("") for column in contract_cols], axis=1).any(axis=1)
-    else:
-        contract_mask = pd.Series(False, index=frame.index)
+    contract_mask = frame.apply(lambda row: bool(_holder_contract_address(row)), axis=1).astype(bool)
+    chain_mask = frame.apply(lambda row: _holder_chain_key(row) in RAVELAB_HOLDER_EVIDENCE_CHAINS, axis=1).astype(bool)
     if source_cols:
         source_mask = pd.concat([_text_series(frame, column).ne("") for column in source_cols], axis=1).any(axis=1)
     else:
         source_mask = pd.Series(False, index=frame.index)
     holder_count = _num_series(frame, "holder_count", default=0.0).gt(0.0)
-    evidence_mask = contract_mask | source_mask | holder_count
+    evidence_mask = chain_mask & contract_mask & (source_mask | holder_count)
     return evidence_mask.fillna(False), contract_mask.fillna(False)
 
 
@@ -3285,7 +3312,7 @@ def _load_ravelab_list(
             header,
             gate_counts,
             (
-                f"Holder evidence rows: {holder_evidence_rows} with source/contract/count | "
+                f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract source/count | "
                 f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
             ),
             (
@@ -3333,7 +3360,7 @@ def _load_ravelab_list(
         ),
         gate_summary,
         (
-            f"Holder evidence rows: {holder_evidence_rows} with source/contract/count | "
+            f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract source/count | "
             f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
         ),
         (

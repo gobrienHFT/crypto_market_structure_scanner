@@ -24,7 +24,7 @@ class ChainAdapter:
 class ChainRegistry:
     """Known EVM chain adapters.
 
-    The first two adapters are active. The remaining names are reserved so the
+    The ETH/BNB/ARB adapters are active. The remaining names are reserved so the
     scanner can grow without changing the public UI shape.
     """
 
@@ -50,10 +50,19 @@ class ChainRegistry:
                 api_key_env="BSCSCAN_API_KEY",
                 native_symbol="BNB",
             ),
+            "arbitrum": ChainAdapter(
+                key="arbitrum",
+                name="Arbitrum",
+                coingecko_platform="arbitrum-one",
+                explorer_name="Arbiscan",
+                explorer_api_url="https://api.arbiscan.io/api",
+                explorer_base_url="https://arbiscan.io",
+                api_key_env="ARBISCAN_API_KEY",
+                native_symbol="ETH",
+            ),
         }
         self.reserved_adapters = (
             "base",
-            "arbitrum",
             "polygon",
             "optimism",
             "moralis",
@@ -88,5 +97,8 @@ class ChainRegistry:
             "bnb": "bsc",
             "bnb chain": "bsc",
             "bscscan": "bsc",
+            "arb": "arbitrum",
+            "arbitrum-one": "arbitrum",
+            "arbiscan": "arbitrum",
         }
         return aliases.get(value, value)
