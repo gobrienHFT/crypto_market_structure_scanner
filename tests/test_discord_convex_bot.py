@@ -2098,21 +2098,23 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Holder evidence required: True" in output
     assert "Whale-origin CEX required: False" in output
     assert "No-pump proof: requires 60D closed daily-candle pump history" in output
-    assert "Core gates: 90%+ chain+contract holder-source snapshot evidence, Binance+Bitget, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
+    assert "Core gates: 90%+ chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase." in output
     assert "High breakout windows: 1D,2D,3D,4D,5D,20D" in output
     assert "Near misses: 5" in output
     assert "Trigger filter: all" in output
     assert "Gate funnel:" in output
+    assert "-> float " in output
+    assert output.index("-> float ") < output.index("-> squeeze")
     assert "holderSrc" in output
     assert "shown 2" in output
     assert "Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2" in output
-    assert "Core 5/5: 2" in output
+    assert "Core 6/6: 2" in output
     assert "Whale-origin CEX rows: 1" in output
     assert "Near misses shown: 2" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "Daily pump checks:" in output
-    assert "All shown rows passed whale >= 90.0%, holder-source snapshot evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
+    assert "All shown rows passed whale >= 90.0%, holder-source snapshot evidence, Binance+Bitget, float/FDV trap, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
     assert "Candidates:" in output
     assert "Trigger queue:" in output
     assert "/LABXUSDT A3 (whale-CEX 360.00K)" in output
@@ -2127,11 +2129,12 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "venue Bn 9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "A3 WHALE-CEX PRIME" in output
-    assert "core 5/5 | trigger whale-CEX 360.00K | thesis" in output
+    assert "core 6/6 | trigger whale-CEX 360.00K | thesis" in output
     assert "trigger breakout 1D,2D,3D,4D,5D,20D" in output
     assert "blockers none" in output
     assert "whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
-    assert "proof: whale 99.2% holderEv Y | venues Bn Y/Bg Y/Gate Y | noPump Y pump60 2.0%/60d binance60d" in output
+    assert "proof: whale 99.2% holderEv Y | venues Bn Y/Bg Y/Gate Y | float" in output
+    assert "FDV/MC 9.0x | noPump Y pump60 2.0%/60d binance60d" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/CAPUSDT | RAVE-like" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
@@ -2212,14 +2215,15 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     crime_output = "\n".join(crime_chunks)
     assert crime_title == "Crime-pump early queue"
     assert "Crime-pump early queue" in crime_output
-    assert "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
+    assert "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
     assert "Trigger: all" in crime_output
     assert "Gate funnel:" in crime_output
     assert "Trigger lanes: triggered 2" in crime_output
-    assert "Matches: 2 | Core 5/5: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in crime_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in crime_output
     assert "Trigger queue:" in crime_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in crime_output
-    assert "venues Bn/Bg/Gate Y/Y/N | hist 180d pump60" in crime_output
+    assert "venues Bn/Bg/Gate Y/Y/N | float" in crime_output
+    assert "FDV/MC 12.0x | hist 180d pump60" in crime_output
     assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in crime_output
     assert "CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K" in crime_output
     assert "Strict RAVE/LAB crime-pump early radar" not in crime_output
@@ -2261,6 +2265,47 @@ def test_ravelab_squeeze_gate_requires_fuel_not_short_pct_alone() -> None:
     assert not bool(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_gate"])
     assert float(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_score"]) >= 50.0
     assert float(scored.loc["SHORTONLYUSDT", "_ravelab_squeeze_fuel_score"]) < 40.0
+
+
+def test_ravelab_core_gate_requires_float_fdv_evidence() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "NOFLOATUSDT",
+                "history_days": 180,
+                **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+                "top10_holder_pct": 50.0,
+                "top100_holder_pct": 91.0,
+                "holder_count": 6_000,
+                "binance_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 2.0,
+                "short_account_pct": 54.0,
+                "short_dominance_score": 62.0,
+                "short_account_build_score": 52.0,
+                "recent_max_pump_60d_pct": 4.0,
+                "recent_pump_60d_days": 60,
+                "day_return_pct": 0.4,
+                "price_change_24h_pct": 0.4,
+                "fdv_to_market_cap": 1.1,
+                "locked_supply_pct": 0.0,
+            }
+        ]
+    )
+
+    scored = bot._score_ravelab_early_frame(frame, min_whale_pct=90)
+    holder_evidence_mask, _ = bot._ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0)
+    row = scored.iloc[0]
+
+    assert bool(row["_ravelab_whale_gate"])
+    assert bool(row["_ravelab_venue_gate"])
+    assert bool(row["_ravelab_squeeze_gate"])
+    assert not bool(row["_ravelab_float_gate"])
+    assert row["_ravelab_core_gate_count"] == 5
+    assert row["_ravelab_core_gate_total"] == 6
+    assert row["_ravelab_missing_core_gates"] == "float/FDV"
+    assert "blockers float/FDV" in bot._ravelab_line(row)
 
 
 def test_ravelab_squeeze_gate_uses_funding_flip_model() -> None:
@@ -2471,10 +2516,10 @@ def test_ravelab_exhaustion_blocks_core_prime() -> None:
     scored = bot._ravelab_apply_thesis_columns(scored, min_squeeze_score=50.0).set_index("symbol")
 
     assert bool(scored.loc["CLEANUSDT", "_ravelab_early_gate"])
-    assert int(scored.loc["CLEANUSDT", "_ravelab_core_gate_count"]) == 5
+    assert int(scored.loc["CLEANUSDT", "_ravelab_core_gate_count"]) == 6
     assert bot._ravelab_stage_label(scored.loc["CLEANUSDT"]) == "A1 CORE PRIME"
     assert not bool(scored.loc["EXHAUSTUSDT", "_ravelab_early_gate"])
-    assert int(scored.loc["EXHAUSTUSDT", "_ravelab_core_gate_count"]) == 4
+    assert int(scored.loc["EXHAUSTUSDT", "_ravelab_core_gate_count"]) == 5
     assert scored.loc["EXHAUSTUSDT", "_ravelab_missing_core_gates"] == "early/no-chase"
     assert bot._ravelab_stage_label(scored.loc["EXHAUSTUSDT"]) == "B1 BLOCKED"
     assert "avoid chase/late risk" in bot._ravelab_next_check(scored.loc["EXHAUSTUSDT"])
@@ -2538,6 +2583,8 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
             "_ravelab_early_gate": True,
             "_ravelab_whale_gate": True,
             "_ravelab_venue_gate": True,
+            "_ravelab_float_gate": True,
+            "_ravelab_float_score": 72.0,
             "_ravelab_dormant_2m_gate": pd.NA,
             "_ravelab_structure_gate": True,
             "_ravelab_target_flow": False,
@@ -2575,11 +2622,14 @@ def test_ravelab_line_prints_forced_flow_mechanics_and_exhaustion() -> None:
             "_ravelab_side": "LAB-like",
             "_ravelab_rave_score": 45.0,
             "_ravelab_lab_score": 80.0,
-            "_ravelab_core_gate_count": 5,
-            "_ravelab_core_gate_total": 5,
+            "_ravelab_core_gate_count": 6,
+            "_ravelab_core_gate_total": 6,
             "_ravelab_whale_gate": True,
             "_ravelab_holder_evidence_gate": True,
             "_ravelab_venue_gate": True,
+            "_ravelab_float_gate": True,
+            "_ravelab_float_score": 82.0,
+            "_ravelab_fdv_to_mcap": 8.0,
             "_ravelab_has_binance": True,
             "_ravelab_has_bitget": True,
             "_ravelab_has_gate": False,
@@ -2629,11 +2679,14 @@ def test_ravelab_line_marks_short_fade_as_exhaustion_context() -> None:
             "_ravelab_side": "RAVE-like",
             "_ravelab_rave_score": 78.0,
             "_ravelab_lab_score": 42.0,
-            "_ravelab_core_gate_count": 5,
-            "_ravelab_core_gate_total": 5,
+            "_ravelab_core_gate_count": 6,
+            "_ravelab_core_gate_total": 6,
             "_ravelab_whale_gate": True,
             "_ravelab_holder_evidence_gate": True,
             "_ravelab_venue_gate": True,
+            "_ravelab_float_gate": True,
+            "_ravelab_float_score": 82.0,
+            "_ravelab_fdv_to_mcap": 8.0,
             "_ravelab_has_binance": True,
             "_ravelab_has_bitget": True,
             "_ravelab_has_gate": False,
