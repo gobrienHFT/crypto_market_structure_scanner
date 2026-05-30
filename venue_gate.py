@@ -52,7 +52,8 @@ def _pct_column(frame: pd.DataFrame, column: str) -> pd.Series:
 
 
 def _text_column(frame: pd.DataFrame, column: str) -> pd.Series:
-    return frame.get(column, pd.Series("", index=frame.index)).fillna("").astype(str)
+    series = frame.get(column, pd.Series("", index=frame.index)).fillna("").astype(str).str.strip()
+    return series.where(~series.str.lower().isin({"nan", "none", "null", "<na>"}), "")
 
 
 def _boolish_column(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -117,8 +118,6 @@ def holder_evidence_mask(frame: pd.DataFrame) -> pd.Series:
         source_mask = pd.concat([_text_column(frame, column).str.strip().ne("") for column in source_columns], axis=1).any(axis=1)
     else:
         source_mask = pd.Series(False, index=frame.index)
-    holder_count = _numeric_column(frame, "holder_count").gt(0.0)
-
     def row_has_chain(row: pd.Series) -> bool:
         for column in ("token_platform", "chain", "token_chain"):
             value = row.get(column)
@@ -142,7 +141,7 @@ def holder_evidence_mask(frame: pd.DataFrame) -> pd.Series:
 
     chain_mask = frame.apply(row_has_chain, axis=1).astype(bool)
     contract_mask = frame.apply(lambda row: bool(row_contract(row)), axis=1).astype(bool)
-    return (chain_mask & contract_mask & (source_mask | holder_count)).fillna(False)
+    return (chain_mask & contract_mask & source_mask).fillna(False)
 
 
 def holder_concentration_mask(
@@ -187,7 +186,7 @@ def thesis_alert_header(
 ) -> str:
     holder = f"Holder gate: observed top-holder concentration >= {float(min_whale_pct):.1f}%"
     if require_holder_evidence:
-        holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract source/count evidence"
+        holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source evidence"
     else:
         holder = f"{holder}; holder evidence diagnostic relaxed"
     if not require_venue:

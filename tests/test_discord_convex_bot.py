@@ -2043,15 +2043,15 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     diagnostic_output = "\n".join(diagnostic_chunks)
     assert "Holder evidence required: False" in diagnostic_output
     assert "/PCTONLYUSDT" in diagnostic_output
-    assert "holder pct-only; needs ETH/BNB/ARB chain+contract+source/count" in diagnostic_output
+    assert "holder pct-only; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
     assert "/COUNTONLYUSDT" in diagnostic_output
-    assert "holder holders 5000; needs ETH/BNB/ARB chain+contract" in diagnostic_output
+    assert "holder holders 5000; needs ETH/BNB/ARB chain+contract+source" in diagnostic_output
 
     crime_title, crime_chunks = bot._load_crimepump_list(10, min_tokens=20_000)
     crime_output = "\n".join(crime_chunks)
     assert crime_title == "Crime-pump early queue"
     assert "Crime-pump early queue" in crime_output
-    assert "Hard gates: 90%+ ETH/BNB/ARB holder evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
+    assert "Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase." in crime_output
     assert "Trigger: all" in crime_output
     assert "Matches: 2 | Core 5/5: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in crime_output
     assert "Trigger queue:" in crime_output
@@ -2691,6 +2691,34 @@ def test_discord_venue_gate_can_require_explicit_binance_evidence(monkeypatch) -
     selected = frame[bot._binance_bitget_trading_gate_mask(frame)]
 
     assert selected["symbol"].tolist() == ["MARKEDUSDT", "SHAREUSDT"]
+
+
+def test_strict_holder_evidence_requires_holder_source() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "GOODUSDT",
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 6_000,
+                "top100_holder_pct": 99.0,
+            },
+            {
+                "symbol": "SOURCELESSUSDT",
+                "token_platform": "ethereum",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_count": 6_000,
+                "top100_holder_pct": 99.0,
+            },
+        ]
+    )
+
+    mask, _ = bot._strict_holder_evidence_masks(frame)
+
+    assert mask.tolist() == [True, False]
+    source_less_text = bot._holder_evidence_text(frame.iloc[1])
+    assert "needs source" in source_less_text
 
 
 def test_bitget_gate_venue_gate_can_be_disabled(monkeypatch) -> None:

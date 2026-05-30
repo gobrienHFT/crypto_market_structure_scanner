@@ -53,7 +53,7 @@ def test_thesis_alert_header_names_holder_and_venue_gates(monkeypatch) -> None:
     header = thesis_alert_header(allow_cex_flow_targets=True)
 
     assert "Holder gate: observed top-holder concentration >= 90.0%" in header
-    assert "ETH/BNB/ARB chain+contract source/count evidence" in header
+    assert "ETH/BNB/ARB chain+contract holder-source evidence" in header
     assert "Binance perp + Bitget trading evidence required" in header
     assert "Gate optional" in header
 
@@ -75,6 +75,15 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
                 "symbol": "PCTONLYUSDT",
                 "trade_bucket_score": 95,
                 "bitget_volume_share_pct": 1.0,
+                "top100_holder_pct": 99.0,
+            },
+            {
+                "symbol": "SOURCELESSUSDT",
+                "trade_bucket_score": 94.5,
+                "bitget_volume_share_pct": 1.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x5555555555555555555555555555555555555555",
+                "holder_count": 6_000,
                 "top100_holder_pct": 99.0,
             },
             {

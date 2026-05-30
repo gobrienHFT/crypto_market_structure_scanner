@@ -7,7 +7,7 @@ These examples are representative text outputs for reviewers. Live values depend
 ```text
 Alpha brief - strict thesis-gated convex watchlist
 Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Scan mode: Deep | Updated: 2026-05-16 15:40:00 UTC
-Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only
 Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel.
 
 Candidates: /FLOWUSDT /RAVEUSDT /PLAYUSDT
@@ -40,7 +40,7 @@ Candidates: /SLEEPUSDT /COILUSDT
 ```text
 Crime-pump early queue
 Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
-Hard gates: 90%+ ETH/BNB/ARB holder evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.
+Hard gates: 90%+ ETH/BNB/ARB chain+contract holder-source evidence; Binance+Bitget; 60D no-pump/dormant; squeeze stack; early/no-chase.
 Matches: 2 | Core 5/5: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1
 Trigger queue: /LABXUSDT A3 (whaleCEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 
@@ -65,7 +65,7 @@ Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 5/5: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
 Trigger queue: /LABXUSDT A3 (whaleCEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 All shown rows passed whale >= 90.0%, holder evidence, Binance+Bitget, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
-Holder evidence rows: 2 with ETH/BNB/ARB chain+contract source/count | contract rows 2 | pct-only rows 0
+Holder evidence rows: 2 with ETH/BNB/ARB chain+contract holder-source | contract rows 2 | pct-only rows 0
 Breakout high checks: 1D,2D,3D,4D,5D,20D | dynamic checks 8 | cached flags 4 | errors 0 | insufficient 0
 Daily pump checks: cached 0 | Binance checked 2 | errors 0 | insufficient 0 | skipped 0
 
@@ -108,7 +108,7 @@ Matches: 3
 20D high breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_high_20d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 1
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 1
 
 Matches: 2 | Strict thesis matches: 1
 
@@ -122,7 +122,7 @@ Matches: 2 | Strict thesis matches: 1
 90D low breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_low_90d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract source/count evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 0
+Thesis gate: observed holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source evidence | Venue gate: Binance perp + Bitget trading evidence required (scanner symbol universe/Binance marker or Binance venue share); Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 0
 
 Matches: 2 | Strict thesis matches: 0
 
