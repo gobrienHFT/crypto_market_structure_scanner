@@ -1370,6 +1370,35 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
                 "range_24h_pct": 8.0,
                 "day_return_pct": 3.0,
                 "oi_delta_pct": 4.2,
+                "bitget_volume_share_pct": 1.5,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "GATEONLYUSDT",
+                "cex_deposit_flow_score": 94,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 3,
+                "cex_deposit_24h_token_amount": 26_000_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "GateIO",
+                "token_platform": "ethereum",
+                "token_contract": "0x7777777777777777777777777777777777777777",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 9_000,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 64.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "locked_supply_pct": 70.0,
+                "dormant_short_fuse_score": 80.0,
+                "pre_pump_precision_score": 75.0,
+                "range_24h_pct": 8.0,
+                "day_return_pct": 3.0,
+                "oi_delta_pct": 4.2,
+                "gate_volume_share_pct": 2.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -1399,11 +1428,13 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
     assert title == "Insider-structure setup score"
     assert "Target CEX: Binance, Gate.io, Bitget" in output
     assert "Gates: observed holder >= 90.0%, holder evidence required True" in output
+    assert "Binance+Bitget required True" in output
     assert "Candidates: /PRIMEUSDT" in output
     assert "/PRIMEUSDT | PASS | score" in output
-    assert "whale 99.0% | holderEv Y" in output
+    assert "whale 99.0% | holderEv Y | venueBnBg Y" in output
     assert "flow 92 Bitget, GateIO 3tx max 12.00M" in output
     assert "shorts 64.0%" in output
+    assert "GATEONLYUSDT" not in output
     assert "KRAKENUSDT" not in output
 
 
@@ -2027,6 +2058,30 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
                 "dormant_short_fuse_score": 78.0,
+                "bitget_volume_share_pct": 1.2,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "GATECHECKUSDT",
+                "cex_deposit_flow_score": 90,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 20_500_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "GateIO",
+                "token_platform": "ethereum",
+                "token_contract": "0x7777777777777777777777777777777777777777",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 8_500,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 63.0,
+                "low_float_score": 80.0,
+                "float_trap_score": 76.0,
+                "fdv_to_market_cap": 7.0,
+                "dormant_short_fuse_score": 78.0,
+                "gate_volume_share_pct": 2.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             }
@@ -2047,8 +2102,16 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
     assert "PASS target CEX flow" in check
+    assert "PASS Binance+Bitget trading venue" in check
     assert "PASS whale dominance" in check
     assert "holder chain ethereum, holders 8500" in check
+
+    gate_title, gate_check = bot._load_coin_check("GATECHECK", min_tokens=10_000_000)
+
+    assert gate_title == "GATECHECKUSDT checklist"
+    assert "Verdict: WATCH" in gate_check
+    assert "FAIL Binance+Bitget trading venue" in gate_check
+    assert "Gate 2.0%,target" in gate_check
 
 
 def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None:

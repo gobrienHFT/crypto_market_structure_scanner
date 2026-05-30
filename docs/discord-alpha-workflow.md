@@ -68,11 +68,11 @@ Use `/ravelab` when you specifically want the strict early version of the thesis
 
 Use `/pumpwatch` as the fastest catch board after the same default hard gates: observed 90%+ holder concentration, ETH/BNB/ARB holder evidence, and Binance+Bitget trading evidence. It does not force every row to have confirmed transfer evidence by default; it rank-orders target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, archetype match, and not-late risk into one watch state. Set `require_target_flow:true` when you only want verified Binance/Gate/Bitget transfer rows, and only relax `require_holder_evidence` or `require_binance_bitget` when diagnosing coverage gaps.
 
-Use `/setupscore` as the strict full-thesis ranking. It requires confirmed recent transfer evidence into Binance, Gate.io, or Bitget, observed 90%+ holder concentration, ETH/BNB/ARB chain+contract holder evidence by default, short-account dominance, low-float/high-FDV evidence, and a not-late/dormant structure. Use `strict:false` when you want the nearest misses for diagnosis, and `require_holder_evidence:false` only when diagnosing missing holder-source coverage.
+Use `/setupscore` as the strict full-thesis ranking. It requires confirmed recent transfer evidence into Binance, Gate.io, or Bitget, observed 90%+ holder concentration, ETH/BNB/ARB chain+contract holder evidence by default, Binance+Bitget trading evidence by default, short-account dominance, low-float/high-FDV evidence, and a not-late/dormant structure. Use `strict:false` when you want the nearest misses for diagnosis, and only relax `require_holder_evidence` or `require_binance_bitget` when diagnosing coverage gaps.
 
 Use `/flowproof` when a transfer claim needs audit detail. It prints the verdict, transfer count, total and largest token amount, top-holder sender evidence when the sender matches a scanned holder wallet, top tx/hash, target CEX labels, source path, concentration gate, data error, and query URL. A row is only called verified when the active scan has count > 0, largest transfer above the floor, and a labelled destination.
 
-Use `/coincheck` for one-symbol pass/fail triage across the full checklist: target-CEX flow, 90%+ holder dominance plus holder evidence, short dominance, low-float/high-FDV, and dormant/not-late structure.
+Use `/coincheck` for one-symbol pass/fail triage across the full checklist: target-CEX flow, Binance+Bitget trading evidence, 90%+ holder dominance plus holder evidence, short dominance, low-float/high-FDV, and dormant/not-late structure.
 
 Use `/cextargets` to view only confirmed Binance, Gate.io, and Bitget transfer rows. Use `/floattrap` for the low-float/high-FDV board and `/squeezeready` for short-crowded perp-book squeeze fuel.
 

@@ -2734,6 +2734,7 @@ def _goal_score_frame(
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
     require_holder_evidence: bool = True,
+    require_binance_bitget: bool = True,
 ) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
@@ -2798,6 +2799,7 @@ def _goal_score_frame(
     holder_evidence_mask, _ = _strict_holder_evidence_masks(output)
     whale_concentration_pass = whale_pct.ge(float(min_whale_pct))
     whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
+    venue_pass = _binance_bitget_trading_gate_mask(output)
     short_pass = short_pct.ge(min_short_pct)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
     structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0)
@@ -2811,6 +2813,7 @@ def _goal_score_frame(
         + not_late_component * 0.09
         + target_flow.astype(float) * 4.0
         + whale_pass.astype(float) * 3.0
+        + venue_pass.astype(float) * 3.0
         + short_pass.astype(float) * 3.0
         + float_pass.astype(float) * 2.0
     ).clip(lower=0.0, upper=100.0)
@@ -2823,6 +2826,8 @@ def _goal_score_frame(
     output["_goal_whale_concentration_pass"] = whale_concentration_pass
     output["_goal_holder_evidence_pass"] = holder_evidence_mask
     output["_goal_holder_evidence_required"] = bool(require_holder_evidence)
+    output["_goal_venue_pass"] = venue_pass
+    output["_goal_venue_required"] = bool(require_binance_bitget)
     output["_goal_float_component"] = float_component
     output["_goal_short_component"] = short_component
     output["_goal_structure_component"] = structure_component
@@ -2831,7 +2836,7 @@ def _goal_score_frame(
     output["_goal_short_pass"] = short_pass
     output["_goal_float_pass"] = float_pass
     output["_goal_structure_pass"] = structure_pass
-    output["_goal_all_pass"] = target_flow & whale_pass & short_pass & float_pass & structure_pass
+    output["_goal_all_pass"] = target_flow & whale_pass & short_pass & float_pass & structure_pass & (venue_pass if require_binance_bitget else True)
     return output
 
 
@@ -2845,6 +2850,8 @@ def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
         missing.append("whale")
     elif _boolish_scalar(row.get("_goal_holder_evidence_required")) and not _boolish_scalar(row.get("_goal_holder_evidence_pass")):
         missing.append("holder evidence")
+    if _boolish_scalar(row.get("_goal_venue_required")) and not _boolish_scalar(row.get("_goal_venue_pass")):
+        missing.append("venue")
     if not _boolish_scalar(row.get("_goal_short_pass")):
         missing.append("short")
     if not _boolish_scalar(row.get("_goal_float_pass")):
@@ -2866,6 +2873,7 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
     top100 = _safe_pct(row.get("top100_holder_pct"))
     whale_pct = _safe_pct(row.get("_goal_whale_pct"))
     holder_ev = "Y" if _boolish_scalar(row.get("_goal_holder_evidence_pass")) else "N"
+    venue_ev = "Y" if _boolish_scalar(row.get("_goal_venue_pass")) else "N"
     short_pct = _safe_pct(row.get("short_account_pct"))
     float_score = _safe_float(row.get("_goal_float_component")) or 0.0
     fdv_ratio = _safe_float(row.get("fdv_to_market_cap"))
@@ -2878,6 +2886,7 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
         f"flow {flow_score:.0f} {targets} {cex_count}tx max {max_amount}",
         f"whale {whale_pct:.1f}%" if whale_pct is not None else "whale n/a",
         f"holderEv {holder_ev}",
+        f"venueBnBg {venue_ev}",
         f"whale t10 {top10:.1f}%" if top10 is not None else "whale t10 n/a",
         f"t100 {top100:.1f}%" if top100 is not None else "t100 n/a",
         f"shorts {short_pct:.1f}%" if short_pct is not None else "shorts n/a",
@@ -2901,6 +2910,7 @@ def _load_setup_score_list(
     min_whale_pct: float = 90.0,
     strict: bool = True,
     require_holder_evidence: bool = True,
+    require_binance_bitget: bool = True,
 ) -> tuple[str, list[str]]:
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
@@ -2911,7 +2921,7 @@ def _load_setup_score_list(
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         "Target CEX: Binance, Gate.io, Bitget | "
         f"Gates: observed holder >= {min_whale_pct:.1f}%, holder evidence required {require_holder_evidence}, "
-        f"shorts >= {min_short_pct:.1f}%, low-float/FDV, not-late structure | Strict: {strict}"
+        f"Binance+Bitget required {require_binance_bitget}, shorts >= {min_short_pct:.1f}%, low-float/FDV, not-late structure | Strict: {strict}"
     )
     if frame.empty:
         return "Insider-structure setup score", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -2921,6 +2931,7 @@ def _load_setup_score_list(
         min_short_pct=min_short_pct,
         min_whale_pct=min_whale_pct,
         require_holder_evidence=require_holder_evidence,
+        require_binance_bitget=require_binance_bitget,
     )
     selected = scored[scored["_goal_setup_score"].ge(max(0.0, float(min_score)))].copy()
     if strict:
@@ -4015,6 +4026,7 @@ def _load_coin_check(
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
     require_holder_evidence: bool = True,
+    require_binance_bitget: bool = True,
 ) -> tuple[str, str]:
     symbol = _normalize_symbol_query(symbol_query)
     if not symbol:
@@ -4032,6 +4044,7 @@ def _load_coin_check(
         min_short_pct=min_short_pct,
         min_whale_pct=min_whale_pct,
         require_holder_evidence=require_holder_evidence,
+        require_binance_bitget=require_binance_bitget,
     )
     scored_row = scored.iloc[0]
     status = _goal_row_status(scored_row, min_score=min_score)
@@ -4053,6 +4066,7 @@ def _load_coin_check(
         f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h",
         "",
         gate_line("target CEX flow", _boolish_scalar(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),
+        gate_line("Binance+Bitget trading venue", _boolish_scalar(scored_row.get("_goal_venue_pass")) or not require_binance_bitget, _venue_evidence_text(scored_row)),
         gate_line(
             "whale dominance",
             _boolish_scalar(scored_row.get("_goal_whale_pass")),
@@ -4796,6 +4810,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_whale_pct="Minimum observed top-holder concentration percentage.",
         strict="Require target CEX flow, whale, short, float, and not-late gates.",
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
+        require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
     async def setupscore(
         interaction: discord.Interaction,
@@ -4807,6 +4822,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_whale_pct: float = 90.0,
         strict: bool = True,
         require_holder_evidence: bool = True,
+        require_binance_bitget: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -4825,6 +4841,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             strict=strict,
             require_holder_evidence=require_holder_evidence,
+            require_binance_bitget=require_binance_bitget,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
@@ -5080,6 +5097,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_short_pct="Minimum short-account percentage.",
         min_whale_pct="Minimum observed top-holder concentration percentage.",
         require_holder_evidence="Require ETH/BNB/ARB chain+contract holder evidence for the whale gate.",
+        require_binance_bitget="Require both Binance and Bitget trading evidence.",
     )
     async def coincheck(
         interaction: discord.Interaction,
@@ -5090,6 +5108,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
         require_holder_evidence: bool = True,
+        require_binance_bitget: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -5107,6 +5126,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
             require_holder_evidence=require_holder_evidence,
+            require_binance_bitget=require_binance_bitget,
         )
         embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)

@@ -217,9 +217,9 @@ Supported commands include:
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_quiet] [require_behavior_gate]
 /ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_binance_bitget] [require_dormant_2m] [require_holder_evidence] [require_breakout_high] [require_whale_origin_flow] [near_miss_limit] [detail]
 /pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_binance_bitget] [require_target_flow] [require_venue_gate]
-/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict] [require_holder_evidence]
+/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [strict] [require_holder_evidence] [require_binance_bitget]
 /flowproof <symbol> [min_tokens] [lookback_hours]
-/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct] [require_holder_evidence]
+/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct] [require_holder_evidence] [require_binance_bitget]
 /floattrap [min_score] [limit]
 /squeezeready [min_short_pct] [min_score] [limit]
 /cextargets [min_tokens] [limit] [lookback_hours]
@@ -258,8 +258,8 @@ The bot can retrieve:
 - a `/precrime` radar for quiet latent setups after the hard holder and Binance+Bitget thesis gates: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books, and no-chase low activity
 - a dedicated `/ravelab` strict early-structure radar requiring observed 90%+ whale concentration with ETH/BNB/ARB chain+contract holder evidence, Binance+Bitget trading evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and squeeze priming before ranking RAVE/LAB analogues by hard-gate completion first, with compact stage labels, blocker text, holder source/count/chain/contract evidence, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ holder-evidence and Binance+Bitget gates
-- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ holder dominance with optional ETH/BNB/ARB chain+contract evidence, low float/high FDV, short crowding, and not-late structure
-- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, including top-holder sender provenance when the transfer origin matches a scanned holder wallet
+- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ holder dominance with optional ETH/BNB/ARB chain+contract evidence, Binance+Bitget trading evidence by default, low float/high FDV, short crowding, and not-late structure
+- symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate by default and showing top-holder sender provenance when the transfer origin matches a scanned holder wallet
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
 - top terminal market-structure evidence rows
 - top timing-quality rows

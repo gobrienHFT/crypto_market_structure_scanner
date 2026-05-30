@@ -127,12 +127,12 @@ Long-carry candidates (negative funding; longs receive)
 
 ```text
 Insider-structure setup score
-Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Gates: observed holder >= 90.0%, holder evidence required True, shorts >= 50.0%, low-float/FDV, not-late structure | Strict: True
+Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Gates: observed holder >= 90.0%, holder evidence required True, Binance+Bitget required True, shorts >= 50.0%, low-float/FDV, not-late structure | Strict: True
 Matches: 2 | Read: rank-order evidence, not an execution instruction.
 
 Candidates: /PRIMEUSDT /FLOWUSDT
 
-/PRIMEUSDT | PASS | score 86 | flow 92 Bitget, GateIO 3tx max 12.00M | whale 99.0% | holderEv Y | whale t10 91.0% | t100 99.0% | shorts 64.0% | float 82 | FDV/MC 8.0x | structure 80 | OI 4.2%
+/PRIMEUSDT | PASS | score 89 | flow 92 Bitget, GateIO 3tx max 12.00M | whale 99.0% | holderEv Y | venueBnBg Y | whale t10 91.0% | t100 99.0% | shorts 64.0% | float 82 | FDV/MC 8.0x | structure 80 | OI 4.2%
 ```
 
 ## `/pumpwatch min_tokens:20000`
