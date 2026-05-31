@@ -140,6 +140,78 @@ CMC_MOVER_COLUMNS = [
     "cmc_mover_label",
 ]
 CMC_MOVER_TEXT_COLUMNS = {"cmc_name", "cmc_mover_label"}
+CEX_FLOW_WHALE_SENDER_COLUMNS = [
+    "cex_deposit_24h_whale_sender_count",
+    "cex_deposit_24h_whale_sender_token_amount",
+    "cex_deposit_24h_whale_sender_max_amount",
+    "cex_deposit_24h_top_sender_rank",
+    "cex_deposit_24h_top_sender_pct",
+    "cex_deposit_24h_top_sender_address",
+]
+CEX_FLOW_DASHBOARD_COLUMNS = [
+    "symbol",
+    "base_asset",
+    "terminal_edge_score",
+    "trade_bucket_score",
+    "cex_deposit_flow_score",
+    "cex_deposit_inventory_stress_score",
+    "cex_deposit_flow_risk_level",
+    "cex_deposit_flow_flag",
+    "cex_deposit_24h_count",
+    "cex_deposit_24h_token_amount",
+    "cex_deposit_24h_max_amount",
+    *CEX_FLOW_WHALE_SENDER_COLUMNS,
+    "cex_deposit_24h_notional_usd",
+    "cex_deposit_24h_max_notional_usd",
+    "cex_deposit_24h_total_pct_supply",
+    "cex_deposit_24h_max_pct_supply",
+    "cex_deposit_24h_notional_to_ask_depth_pct",
+    "cex_deposit_24h_max_notional_to_ask_depth_pct",
+    "cex_deposit_24h_notional_to_volume_pct",
+    "cex_deposit_inventory_stress_note",
+    "cex_deposit_24h_target_exchanges",
+    "cex_deposit_concentration_gate",
+    "cex_deposit_flow_evidence_summary",
+    "cex_deposit_flow_interpretation",
+    "cex_deposit_flow_next_check",
+    "cex_deposit_flow_note",
+    "cex_deposit_flow_alert_line",
+    "cex_deposit_flow_error",
+    "cex_deposit_flow_source",
+    "cex_deposit_24h_source_url",
+    "top10_holder_pct",
+    "top100_holder_pct",
+    "centralized_ownership_score",
+    "low_float_score",
+    "short_account_pct",
+    "long_account_pct",
+    "oi_delta_pct",
+    "daily_quote_volume_multiple",
+    "day_return_pct",
+    "broke_high_20d",
+    "broke_high_90d",
+    "broke_high_180d",
+]
+CEX_FLOW_DIAGNOSTIC_COLUMNS = [
+    "symbol",
+    "base_asset",
+    "cex_deposit_concentration_gate",
+    "cex_deposit_flow_risk_level",
+    "cex_deposit_24h_count",
+    "cex_deposit_24h_token_amount",
+    "cex_deposit_24h_max_amount",
+    *CEX_FLOW_WHALE_SENDER_COLUMNS,
+    "cex_deposit_flow_evidence_summary",
+    "cex_deposit_flow_next_check",
+    "cex_deposit_flow_note",
+    "cex_deposit_flow_error",
+    "cex_deposit_flow_source",
+    "cex_deposit_24h_source_url",
+    "top10_holder_pct",
+    "top100_holder_pct",
+    "token_platform",
+    "token_contract",
+]
 DWF_LABS_CATEGORY_URL = "https://www.coingecko.com/en/categories/dwf-labs-portfolio"
 DWF_LABS_PORTFOLIO_COLUMNS = [
     "dwf_labs_portfolio",
@@ -6091,6 +6163,36 @@ def render_breakout_dashboard() -> None:
             "cex_deposit_flow_risk_level": st.column_config.TextColumn("Flow Risk"),
             "cex_deposit_24h_count": st.column_config.NumberColumn("CEX Deposits 24h", format="%d"),
             "cex_deposit_24h_token_amount": st.column_config.NumberColumn("CEX Deposit Tokens 24h", format="%.2f"),
+            "cex_deposit_24h_max_amount": st.column_config.NumberColumn("Largest CEX Deposit Tokens", format="%.2f"),
+            "cex_deposit_24h_whale_sender_count": st.column_config.NumberColumn(
+                "Top-Holder Sender Tx",
+                format="%d",
+                help="Number of labelled CEX deposits whose sender matched a scanned top-holder wallet.",
+            ),
+            "cex_deposit_24h_whale_sender_token_amount": st.column_config.NumberColumn(
+                "Whale-Origin Tokens 24h",
+                format="%.2f",
+                help="Total 24h token amount sent into labelled CEX wallets by matched top-holder wallets.",
+            ),
+            "cex_deposit_24h_whale_sender_max_amount": st.column_config.NumberColumn(
+                "Largest Whale-Origin Tokens",
+                format="%.2f",
+                help="Largest single labelled CEX deposit from a matched top-holder wallet.",
+            ),
+            "cex_deposit_24h_top_sender_rank": st.column_config.NumberColumn(
+                "Top Sender Rank",
+                format="%.0f",
+                help="Holder-table rank for the largest matched CEX-deposit sender.",
+            ),
+            "cex_deposit_24h_top_sender_pct": st.column_config.NumberColumn(
+                "Top Sender Holder %",
+                format="%.2f%%",
+                help="Holder-table ownership percentage for the largest matched CEX-deposit sender.",
+            ),
+            "cex_deposit_24h_top_sender_address": st.column_config.TextColumn(
+                "Top Sender Wallet",
+                help="Wallet address for the largest matched top-holder-origin CEX deposit.",
+            ),
             "cex_deposit_24h_notional_usd": st.column_config.NumberColumn("CEX Deposit Notional", format="$%.0f"),
             "cex_deposit_24h_max_notional_usd": st.column_config.NumberColumn("Largest Deposit Notional", format="$%.0f"),
             "cex_deposit_24h_total_pct_supply": st.column_config.NumberColumn("CEX Deposits % Supply", format="%.2f%%"),
@@ -6099,6 +6201,11 @@ def render_breakout_dashboard() -> None:
                 "Deposits / 1% Ask Depth",
                 format="%.1f%%",
                 help="Recent labelled CEX deposit notional divided by visible 1% ask depth.",
+            ),
+            "cex_deposit_24h_max_notional_to_ask_depth_pct": st.column_config.NumberColumn(
+                "Largest Deposit / 1% Ask Depth",
+                format="%.1f%%",
+                help="Largest labelled CEX deposit notional divided by visible 1% ask depth.",
             ),
             "cex_deposit_24h_notional_to_volume_pct": st.column_config.NumberColumn(
                 "Deposits / 24H Volume",
@@ -7661,6 +7768,7 @@ def render_breakout_dashboard() -> None:
                 "Advanced Filter transfer pages for large token transfers into labelled CEX wallets over the last "
                 f"{CEX_DEPOSIT_FLOW_LOOKBACK_HOURS}h. Rows are only scored when holder concentration already meets the "
                 f"gate: top 10 >= {CEX_DEPOSIT_FLOW_MIN_TOP10_PCT:.0f}%. Top 100 concentration is context only. "
+                "Matched top-holder sender fields separate whale-origin inventory movement from generic wallet deposits. "
                 "This is venue-flow evidence for structural-risk research, not trade instruction or an intent conclusion."
             )
             flow_score = pd.to_numeric(
@@ -7684,49 +7792,6 @@ def render_breakout_dashboard() -> None:
                     ["_cex_flow_score_sort", "_cex_total_pct_sort", "_cex_count_sort", "symbol"],
                     ascending=[False, False, False, True],
                 )
-            cex_flow_cols = [
-                "symbol",
-                "base_asset",
-                "terminal_edge_score",
-                "trade_bucket_score",
-                "cex_deposit_flow_score",
-                "cex_deposit_inventory_stress_score",
-                "cex_deposit_flow_risk_level",
-                "cex_deposit_flow_flag",
-                "cex_deposit_24h_count",
-                "cex_deposit_24h_token_amount",
-                "cex_deposit_24h_max_amount",
-                "cex_deposit_24h_notional_usd",
-                "cex_deposit_24h_max_notional_usd",
-                "cex_deposit_24h_total_pct_supply",
-                "cex_deposit_24h_max_pct_supply",
-                "cex_deposit_24h_notional_to_ask_depth_pct",
-                "cex_deposit_24h_max_notional_to_ask_depth_pct",
-                "cex_deposit_24h_notional_to_volume_pct",
-                "cex_deposit_inventory_stress_note",
-                "cex_deposit_24h_target_exchanges",
-                "cex_deposit_concentration_gate",
-                "cex_deposit_flow_evidence_summary",
-                "cex_deposit_flow_interpretation",
-                "cex_deposit_flow_next_check",
-                "cex_deposit_flow_note",
-                "cex_deposit_flow_alert_line",
-                "cex_deposit_flow_error",
-                "cex_deposit_flow_source",
-                "cex_deposit_24h_source_url",
-                "top10_holder_pct",
-                "top100_holder_pct",
-                "centralized_ownership_score",
-                "low_float_score",
-                "short_account_pct",
-                "long_account_pct",
-                "oi_delta_pct",
-                "daily_quote_volume_multiple",
-                "day_return_pct",
-                "broke_high_20d",
-                "broke_high_90d",
-                "broke_high_180d",
-            ]
             f1, f2, f3, f4 = st.columns(4)
             f1.metric("Flow flags", int(len(cex_flow_df)))
             f2.metric(
@@ -7755,29 +7820,13 @@ def render_breakout_dashboard() -> None:
                 st.markdown("**Top alert preview**")
                 st.code(build_cex_flow_discord_block(preview_row, max_chars=1400))
                 st.dataframe(
-                    _display_frame(cex_flow_df.head(80), cex_flow_cols),
+                    _display_frame(cex_flow_df.head(80), CEX_FLOW_DASHBOARD_COLUMNS),
                     use_container_width=True,
                     hide_index=True,
                     column_config=breakout_column_config,
                 )
 
             with st.expander("Show CEX-flow scan diagnostics"):
-                diagnostic_cols = [
-                    "symbol",
-                    "base_asset",
-                    "cex_deposit_concentration_gate",
-                    "cex_deposit_flow_risk_level",
-                    "cex_deposit_flow_evidence_summary",
-                    "cex_deposit_flow_next_check",
-                    "cex_deposit_flow_note",
-                    "cex_deposit_flow_error",
-                    "cex_deposit_flow_source",
-                    "cex_deposit_24h_source_url",
-                    "top10_holder_pct",
-                    "top100_holder_pct",
-                    "token_platform",
-                    "token_contract",
-                ]
                 diag_df = all_df[
                     gated
                     | all_df.get("cex_deposit_flow_error", pd.Series("", index=all_df.index)).astype(str).str.strip().ne("")
@@ -7786,7 +7835,7 @@ def render_breakout_dashboard() -> None:
                     st.info("No CEX-flow diagnostics are available yet.")
                 else:
                     st.dataframe(
-                        _display_frame(diag_df, diagnostic_cols),
+                        _display_frame(diag_df, CEX_FLOW_DIAGNOSTIC_COLUMNS),
                         use_container_width=True,
                         hide_index=True,
                         column_config=breakout_column_config,

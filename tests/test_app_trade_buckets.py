@@ -82,3 +82,13 @@ def test_score_trade_buckets_explains_missing_bitget_and_no_pump_proof(monkeypat
     assert not bool(scored["thesis_venue_gate"])
     assert not bool(scored["thesis_no_pump_gate"])
     assert "missing Binance+Bitget, 60D no-pump proof" in scored["thesis_gate_note"]
+
+
+def test_cex_flow_dashboard_promotes_whale_sender_provenance() -> None:
+    whale_sender_columns = set(app.CEX_FLOW_WHALE_SENDER_COLUMNS)
+    whale_sender_index = app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_whale_sender_count")
+
+    assert whale_sender_columns.issubset(app.CEX_FLOW_DASHBOARD_COLUMNS)
+    assert whale_sender_columns.issubset(app.CEX_FLOW_DIAGNOSTIC_COLUMNS)
+    assert whale_sender_index > app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_token_amount")
+    assert whale_sender_index < app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_notional_usd")
