@@ -227,6 +227,20 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
                 "cex_deposit_24h_target_exchanges": "GateIO",
                 "gate_volume_share_pct": 1.0,
             },
+            {
+                "symbol": "TARGETONLYUSDT",
+                "cex_deposit_flow_score": 91,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_total_pct_supply": 3.1,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                **THESIS_PUMP_PROOF,
+                "token_platform": "ethereum",
+                "token_contract": "0x7777777777777777777777777777777777777777",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
+            },
         ]
     )
 

@@ -206,7 +206,9 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         return all_df.copy()
     scored = _ensure_alert_scores(all_df)
     source = alert_source.strip().lower().replace("-", "_")
-    scored = apply_thesis_alert_gate(scored, allow_cex_flow_targets=source in {"cex_flow", "cexflow", "cex_deposit_flow"})
+    # Background alerts use the same non-negotiable thesis venue gate as /radar:
+    # labelled transfer targets are supporting evidence, not Bitget trading proof.
+    scored = apply_thesis_alert_gate(scored, allow_cex_flow_targets=False)
     if scored.empty:
         return scored
 
