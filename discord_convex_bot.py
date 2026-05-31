@@ -1828,7 +1828,7 @@ def _load_whale_dominance_list(
 
     rows["symbol"] = rows["symbol"].astype(str).str.upper().str.strip()
     rows = rows[rows["symbol"].ne("")]
-    rows["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(rows)
+    rows = _add_base_thesis_context(rows)
     rows = rows.sort_values(["_whale_metric", "_whale_top10", "symbol"], ascending=[False, False, True])
     rows = rows.drop_duplicates(subset=["symbol"], keep="first")
     visible = rows.head(min(max(int(limit), 1), 300))
@@ -1857,10 +1857,10 @@ def _load_whale_dominance_list(
         cex_text = f"{cex_score:.0f}" if cex_score is not None else "n/a"
         platform = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""))
         platform_text = f" | chain {platform}" if platform else ""
-        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
+        base_thesis = _base_thesis_status_text(row)
         lines.append(
             f"/{symbol} | top10 {top10_text} | top100 {top100_text} | holders {holder_text} | "
-            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text} | baseThesis {base_thesis}{platform_text}"
+            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text} | {base_thesis}{platform_text}"
         )
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")

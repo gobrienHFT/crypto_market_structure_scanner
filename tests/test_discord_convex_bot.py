@@ -380,7 +380,7 @@ def test_load_whale_dominance_list_defaults_to_top10_holder_concentration(monkey
     assert "Matches: 1 | Base thesis gate: 0 | Showing: 1" in output
     assert "Diagnostic rows: /MEGAUSDT" in output
     assert "/MEGAUSDT | top10 91.0% | top100 98.0%" in output
-    assert "baseThesis N" in output
+    assert "baseThesis N blockers holder,BnBg,noPump60" in output
     assert "/WHALEUSDT" not in output
     assert "/LOWUSDT" not in output
     assert "diagnostic holder-concentration rows" in output
@@ -402,6 +402,7 @@ def test_load_whale_dominance_list_still_supports_top100_diagnostic_bucket(monke
     assert "Diagnostic rows: /TOP10USDT /TOP100USDT" in output
     assert "/TOP10USDT | top10 91.0% | top100 98.0%" in output
     assert "/TOP100USDT | top10 70.0% | top100 94.0%" in output
+    assert "/TOP100USDT | top10 70.0% | top100 94.0% | holders n/a | shorts n/a | terminal n/a | CEX n/a | baseThesis N blockers holder,BnBg,noPump60" in output
 
 
 def test_load_whale_dominance_list_supports_top10_bucket(monkeypatch) -> None:
@@ -474,7 +475,7 @@ def test_load_whale_dominance_list_computes_top100_when_scan_columns_missing(mon
     assert "Matches: 1 | Base thesis gate: 0 | Showing: 1" in output
     assert "Diagnostic rows: /CALCUSDT" in output
     assert "/CALCUSDT | top10 9.5% | top100 95.0%" in output
-    assert "baseThesis N" in output
+    assert "baseThesis N blockers holder,BnBg,noPump60" in output
     assert "/LOWUSDT" not in output
     assert (tmp_path / "whales.csv").exists()
 
