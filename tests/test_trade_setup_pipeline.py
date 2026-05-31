@@ -5,6 +5,23 @@ import pandas as pd
 from trade_setup_pipeline import TradeBotConfig, estimate_quarter_kelly, select_trade_candidate
 
 
+def _thesis_fields(contract_suffix: str = "1") -> dict[str, object]:
+    suffix = contract_suffix[-1] if contract_suffix else "1"
+    return {
+        "binance_perp_universe": True,
+        "bitget_volume_share_pct": 1.0,
+        "token_platform": "ethereum",
+        "token_contract": f"0x{suffix * 40}",
+        "holder_source": "Etherscan holder endpoint",
+        "top10_holder_pct": 94.0,
+        "top100_holder_pct": 99.0,
+        "history_days": 180,
+        "recent_max_pump_60d_pct": 6.0,
+        "recent_pump_60d_days": 60,
+        "no_large_pump_60d_flag": True,
+    }
+
+
 def test_select_trade_candidate_requires_terminal_timing_and_convex_gates() -> None:
     frame = pd.DataFrame(
         [
@@ -15,6 +32,7 @@ def test_select_trade_candidate_requires_terminal_timing_and_convex_gates() -> N
                 "timing_score": 40,
                 "trade_bucket_score": 90,
                 "timing_state": "Dormant watch",
+                **_thesis_fields("1"),
             },
             {
                 "symbol": "PLAYUSDT",
@@ -23,6 +41,7 @@ def test_select_trade_candidate_requires_terminal_timing_and_convex_gates() -> N
                 "timing_score": 66,
                 "trade_bucket_score": 84,
                 "timing_state": "Triggering",
+                **_thesis_fields("2"),
             },
             {
                 "symbol": "LATEUSDT",
@@ -31,6 +50,7 @@ def test_select_trade_candidate_requires_terminal_timing_and_convex_gates() -> N
                 "timing_score": 90,
                 "trade_bucket_score": 95,
                 "timing_state": "Extended / fragile",
+                **_thesis_fields("3"),
             },
         ]
     )
@@ -52,6 +72,24 @@ def test_select_trade_candidate_returns_none_without_all_three_gates() -> None:
             }
         ]
     )
+    assert select_trade_candidate(frame, TradeBotConfig()) is None
+
+
+def test_select_trade_candidate_rejects_ungated_convex_long_rows() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "UNGATEDUSDT",
+                "trade_bucket": "Convex Long",
+                "terminal_edge_score": 90,
+                "timing_score": 90,
+                "trade_bucket_score": 90,
+                "timing_state": "Confirmed",
+                "thesis_gate": True,
+            }
+        ]
+    )
+
     assert select_trade_candidate(frame, TradeBotConfig()) is None
 
 

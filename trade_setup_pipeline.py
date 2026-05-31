@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from binance_futures import BinanceFuturesPublic, BinanceHTTPError
+from venue_gate import apply_thesis_alert_gate
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -317,6 +318,7 @@ def select_trade_candidate(frame: pd.DataFrame, config: TradeBotConfig) -> pd.Se
         & (data["trade_bucket_score"] >= config.min_convex_score)
         & state.str.lower().isin(allowed)
     ].copy()
+    candidates = apply_thesis_alert_gate(candidates, allow_cex_flow_targets=False)
     if candidates.empty:
         return None
     candidates["execution_setup_score"] = (
@@ -614,7 +616,7 @@ class TradeBotRuntime:
             return self.last_message
         candidate = select_trade_candidate(frame, self.config)
         if candidate is None:
-            self.last_message = "No setup currently passes terminal + timing + convex gates."
+            self.last_message = "No setup currently passes terminal + timing + hard thesis + convex gates."
             self.record_event("no_setup", message=self.last_message)
             return self.last_message
         setup = build_trade_setup(candidate, client=client, config=self.config)
