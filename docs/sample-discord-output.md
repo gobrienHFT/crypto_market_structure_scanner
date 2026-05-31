@@ -244,7 +244,7 @@ Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
 Status: verified labelled CEX-flow rows exist; venue gate decides whether they appear in `/cexflow`.
 
-Candidates: /FLOWUSDT
+Transfer rows: /FLOWUSDT
 
 /FLOWUSDT
 CEX Flow Score: 88/100 | Risk: High
@@ -291,7 +291,7 @@ Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 
 CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 3 | raw flow 1
 Status: verified labelled CEX-flow rows exist; venue gate decides whether they appear in `/cexflow`.
 
-Candidates: /MICROUSDT
+Transfer rows: /MICROUSDT
 
 /MICROUSDT
 CEX Flow Score: 52/100 | Risk: Elevated
@@ -358,7 +358,7 @@ Confirmed target-CEX flow rows: 2 | Whale-origin rows: 1 | Full checklist pass: 
 
 Checklist: 1 massive target-CEX flow -> 2 top-holder sender -> 3 whale dominated -> 4 low-float/FDV -> 5 short crowd plus squeeze fuel -> 6 dormant/early, not already wild -> 7 research state.
 
-Candidates: /FLOWUSDT
+Transfer rows: /FLOWUSDT
 
 /FLOWUSDT | RESEARCH: whale-origin dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | holderEv Y | whaleOrigin Y 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111 | float 82/100 | noPump60 Y | shorts 63.0% fuel 52/100 | structure dormant candidate
   chart gate: range 8.0%, 24h 2.0%, setup 78 | not a trade instruction; validate OI/volume and price absorption.

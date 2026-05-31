@@ -944,7 +944,7 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert "Holder evidence required: True" in output
     assert "Flow rows before holder gate: 3 | After holder gate: 2 | After venue gate: 1" in output
     assert "observed top10 >= 90.0% rows 2" in output
-    assert "Candidates: /PLAYUSDT" in output
+    assert "Transfer rows: /PLAYUSDT" in output
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
     assert "CEX Flow Score: 88/100" in output
@@ -998,7 +998,7 @@ def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
 
     assert title == "Early wallet-to-CEX flow sweep"
     assert "Min transfer: 20.00K tokens" in output
-    assert "Candidates: /EARLYUSDT" in output
+    assert "Transfer rows: /EARLYUSDT" in output
     assert captured["cex_min_transfer_tokens"] == 20_000
 
 
@@ -1073,7 +1073,7 @@ def test_load_cex_flow_list_can_disable_venue_gate(monkeypatch) -> None:
     assert "require_venue_gate:false" in gated_output
     assert ungated_title == "Wallet-to-CEX flow monitor"
     assert "Venue gate: disabled for this command" in ungated_output
-    assert "Candidates: /KRAKENUSDT" in ungated_output
+    assert "Transfer rows: /KRAKENUSDT" in ungated_output
 
 
 def test_load_cex_flow_list_explains_zero_raw_flow(monkeypatch) -> None:

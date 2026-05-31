@@ -2290,7 +2290,7 @@ def _load_cex_flow_list(
         ascending=[False, False, False, True],
     ).head(min(max(int(limit), 1), 100))
 
-    summary = "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in flow.get("symbol", pd.Series(dtype="object")).tolist())
+    summary = "Transfer rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in flow.get("symbol", pd.Series(dtype="object")).tolist())
     lines = [header, "", summary, ""]
     for _, row in flow.iterrows():
         lines.append(build_cex_flow_discord_block(row, max_chars=900))
