@@ -3996,7 +3996,6 @@ def _score_ravelab_early_frame(
         controlled_float_score.ge(55.0)
         | fdv_to_mcap.ge(4.0)
         | locked_supply_pct.ge(45.0)
-        | (top10.ge(82.0) & top100.ge(97.0))
     )
     behavior = _max_series(
         scored,

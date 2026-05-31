@@ -3117,7 +3117,7 @@ def test_ravelab_core_gate_requires_float_fdv_evidence() -> None:
                 "history_days": 180,
                 **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
                 "top10_holder_pct": 91.0,
-                "top100_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
                 "holder_count": 6_000,
                 "binance_volume_share_pct": 8.0,
                 "bitget_volume_share_pct": 2.0,
