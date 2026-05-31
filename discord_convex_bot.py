@@ -2790,6 +2790,7 @@ def _load_seth_flow_playbook(
         f"Source: {source} | Confirmed target-CEX flow only | Min transfer: >= {_fmt_compact_number(effective_min_transfer)} tokens | "
         f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Short gate: >= {min_short_pct:.1f}% | "
+        "Float gate: low-float/FDV evidence required | "
         f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'} | "
         f"Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
     )
@@ -2826,6 +2827,18 @@ def _load_seth_flow_playbook(
     top10 = pd.to_numeric(rows.get("top10_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     top100 = pd.to_numeric(rows.get("top100_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     shorts = pd.to_numeric(rows.get("short_account_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
+    float_score = _max_series(
+        rows,
+        "low_float_score",
+        "float_trap_score",
+        "terminal_float_score",
+        "terminal_hidden_float_reflexivity_score",
+        default=0.0,
+    )
+    fdv_score = _score_linear_series(_num_series(rows, "fdv_to_market_cap"), 1.8, 12.0)
+    locked_score = _score_linear_series(_num_series(rows, "locked_supply_pct"), 15.0, 85.0)
+    rows["_seth_float_score"] = pd.concat([float_score, fdv_score, locked_score], axis=1).max(axis=1).fillna(0.0)
+    rows["_seth_float_pass"] = rows["_seth_float_score"].ge(55.0)
     holder_evidence_mask, _ = _strict_holder_evidence_masks(rows)
     whale_pct = top10.fillna(0.0)
     rows["_seth_whale_pct"] = whale_pct
@@ -2859,12 +2872,17 @@ def _load_seth_flow_playbook(
     rows["_seth_short_pct"] = shorts.fillna(0.0)
     rows["_seth_score"] = (
         rows["_seth_flow_score"] * 0.38
-        + rows["_seth_structure_score"] * 0.24
-        + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.18
-        + rows["_seth_whale_pct"].fillna(0.0).clip(upper=100.0) * 0.20
+        + rows["_seth_structure_score"] * 0.20
+        + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.16
+        + rows["_seth_whale_pct"].fillna(0.0).clip(upper=100.0) * 0.18
+        + rows["_seth_float_score"] * 0.08
     )
     rows["_seth_all_pass"] = (
-        rows["_seth_whale_pass"] & rows["_seth_short_pass"] & rows["_seth_structure_pass"] & rows["_seth_no_recent_pump_pass"]
+        rows["_seth_whale_pass"]
+        & rows["_seth_float_pass"]
+        & rows["_seth_short_pass"]
+        & rows["_seth_structure_pass"]
+        & rows["_seth_no_recent_pump_pass"]
     )
     visible = rows[rows["_seth_all_pass"]].copy() if require_dormant else rows.copy()
     if visible.empty:
@@ -2881,9 +2899,9 @@ def _load_seth_flow_playbook(
     pass_count = int(rows["_seth_all_pass"].sum())
     lines = [
         header,
-        f"Confirmed target-CEX flow rows: {len(raw_target_flow)} | Whale+short+dormant pass: {pass_count}{empty_note}",
+        f"Confirmed target-CEX flow rows: {len(raw_target_flow)} | Whale+float+short+dormant pass: {pass_count}{empty_note}",
         "",
-        "Checklist: 1 flow -> 2 whale dominated -> 3 >50% short accounts -> 4 dormant/early, not already wild -> 5 research state.",
+        "Checklist: 1 flow -> 2 whale dominated -> 3 low-float/FDV -> 4 >50% short accounts -> 5 dormant/early, not already wild -> 6 research state.",
         "",
         "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in visible.get("symbol", pd.Series(dtype='object')).tolist()),
         "",
@@ -2897,6 +2915,7 @@ def _load_seth_flow_playbook(
         short_pct = _safe_float(row.get("short_account_pct")) or 0.0
         row_top10 = _safe_float(row.get("top10_holder_pct"))
         row_top100 = _safe_float(row.get("top100_holder_pct"))
+        row_float = _safe_float(row.get("_seth_float_score")) or 0.0
         range_pct = _safe_float(row.get("range_24h_pct"))
         day_move = _safe_float(row.get("day_return_pct"))
         if day_move is None:
@@ -2908,6 +2927,8 @@ def _load_seth_flow_playbook(
             action = "WAIT: whale concentration below floor"
         elif require_holder_evidence and not _boolish_scalar(row.get("_seth_holder_evidence_pass")):
             action = "WAIT: holder evidence missing"
+        elif not _boolish_scalar(row.get("_seth_float_pass")):
+            action = "WAIT: low-float/FDV gate failed"
         elif not bool(row.get("_seth_short_pass")):
             action = "WAIT: short-account gate failed"
         elif not _boolish_scalar(row.get("_seth_no_recent_pump_pass")):
@@ -2925,7 +2946,7 @@ def _load_seth_flow_playbook(
         lines.append(
             f"/{symbol} | {action} | flow {flow_score:.0f}/100 | {cex_count} tx into {targets_text} | "
             f"total {total_amount}, max {max_transfer} | top10 {top10_text}, top100 {top100_text} | "
-            f"holderEv {holder_ev} | noPump60 {no_pump} | shorts {short_pct:.1f}% | structure {state}"
+            f"holderEv {holder_ev} | float {row_float:.0f}/100 | noPump60 {no_pump} | shorts {short_pct:.1f}% | structure {state}"
         )
         lines.append(
             f"  chart gate: range {range_text}, 24h {day_text}, {_clip_text(row.get('_seth_structure_reason', ''), 80)} | "

@@ -350,14 +350,14 @@ API fallback readiness:
 
 ```text
 Seth flow checklist
-Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | Structure gate: dormant/early only
-Confirmed target-CEX flow rows: 2 | Whale+short+dormant pass: 1
+Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Float gate: low-float/FDV evidence required | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | Structure gate: dormant/early only
+Confirmed target-CEX flow rows: 2 | Whale+float+short+dormant pass: 1
 
-Checklist: 1 flow -> 2 whale dominated -> 3 >50% short accounts -> 4 dormant/early, not already wild -> 5 research state.
+Checklist: 1 flow -> 2 whale dominated -> 3 low-float/FDV -> 4 >50% short accounts -> 5 dormant/early, not already wild -> 6 research state.
 
 Candidates: /FLOWUSDT
 
-/FLOWUSDT | RESEARCH: dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | holderEv Y | shorts 63.0% | structure dormant candidate
+/FLOWUSDT | RESEARCH: dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | holderEv Y | float 82/100 | noPump60 Y | shorts 63.0% | structure dormant candidate
   chart gate: range 8.0%, 24h 2.0%, setup 78 | not a trade instruction; validate OI/volume and price absorption.
 ```
 

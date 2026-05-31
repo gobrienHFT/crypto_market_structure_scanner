@@ -287,7 +287,7 @@ The bot can retrieve:
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
 - blocked/error rows when explorer HTML or API fallback cannot verify labelled CEX destinations
 - CEX-flow health checks covering API keys and local address-label coverage
-- a full CEX-flow -> 90%+ top-10 holder concentration/evidence -> short crowd -> dormant-structure checklist via `/sethflow`
+- a full CEX-flow -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
 - high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows
 - symbol-level market structure metrics
