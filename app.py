@@ -3482,6 +3482,8 @@ def _discord_convex_candidates(all_df: pd.DataFrame) -> pd.DataFrame:
     if candidates.empty:
         return candidates
     candidates = apply_thesis_alert_gate(candidates, allow_cex_flow_targets=False)
+    if not candidates.empty and "thesis_gate" in candidates.columns:
+        candidates = candidates[candidates["thesis_gate"].fillna(False).astype(bool)].copy()
     if candidates.empty:
         return candidates
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])

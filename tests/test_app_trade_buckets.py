@@ -114,6 +114,43 @@ def test_score_trade_buckets_explains_missing_bitget_and_no_pump_proof(monkeypat
     assert "missing Binance+Bitget, 60D no-pump proof" in scored["thesis_gate_note"]
 
 
+def test_discord_convex_cache_candidates_require_full_thesis_gate(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", raising=False)
+    base = {
+        "trade_bucket": "Convex Long",
+        "trade_bucket_score": 90,
+        "top10_holder_pct": 94.0,
+        "token_platform": "ethereum",
+        "holder_source": "Etherscan holder endpoint",
+        "binance_perp_universe": True,
+        "bitget_volume_share_pct": 1.0,
+        "history_days": 180,
+        "recent_max_pump_60d_pct": 6.0,
+        "recent_pump_60d_days": 60,
+        "no_large_pump_60d_flag": True,
+    }
+    frame = pd.DataFrame(
+        [
+            {
+                **base,
+                "symbol": "STALEBASEUSDT",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "thesis_gate": False,
+            },
+            {
+                **base,
+                "symbol": "FULLCOREUSDT",
+                "token_contract": "0x5555555555555555555555555555555555555555",
+                "thesis_gate": True,
+            },
+        ]
+    )
+
+    selected = app._discord_convex_candidates(frame)
+
+    assert selected["symbol"].tolist() == ["FULLCOREUSDT"]
+
+
 def test_cex_flow_dashboard_promotes_whale_sender_provenance() -> None:
     whale_sender_columns = set(app.CEX_FLOW_WHALE_SENDER_COLUMNS)
     whale_sender_index = app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_whale_sender_count")
