@@ -155,6 +155,7 @@ def test_core_setup_gate_rejects_high_short_without_squeeze_fuel() -> None:
                 "symbol": "SHORTONLYUSDT",
                 "short_account_pct": 72.0,
                 "early_pump_short_squeeze_score": 95.0,
+                "short_squeeze_score": 95.0,
                 "low_float_score": 84.0,
                 "float_trap_score": 80.0,
                 "fdv_to_market_cap": 9.0,

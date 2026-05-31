@@ -3103,7 +3103,6 @@ def _squeeze_fuel_component_series(frame: pd.DataFrame) -> pd.Series:
             _num_series(frame, "short_account_build_score"),
             _num_series(frame, "silent_oi_accumulation_score"),
             _num_series(frame, "short_liquidation_fuel_score"),
-            _num_series(frame, "short_squeeze_score"),
             _num_series(frame, "funding_flip_score"),
             _boolish_series(frame.get("fresh_flip_flag"), index=index).astype(float) * 100.0,
             _num_series(frame, "forced_buying_setup_score"),

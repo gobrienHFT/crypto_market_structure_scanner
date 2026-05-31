@@ -1862,6 +1862,7 @@ def test_goal_score_does_not_treat_cached_squeeze_composite_as_fuel() -> None:
         "top100_holder_pct": 99.0,
         "short_account_pct": 72.0,
         "short_dominance_score": 80.0,
+        "short_squeeze_score": 95.0,
         "early_pump_short_squeeze_score": 95.0,
         "low_float_score": 82.0,
         "fdv_to_market_cap": 8.0,

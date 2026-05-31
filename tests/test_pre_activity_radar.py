@@ -400,6 +400,7 @@ def test_pre_activity_radar_requires_short_fuel_not_short_pct_alone() -> None:
         "cex_deposit_24h_target_exchanges": "Binance, Bitget",
         "short_account_pct": 72,
         "short_dominance_score": 80,
+        "short_squeeze_score": 95,
         "bitget_volume_share_pct": 2.0,
         "day_return_pct": 0.9,
         "price_change_24h_pct": 0.9,

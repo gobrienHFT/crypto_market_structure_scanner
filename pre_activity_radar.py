@@ -371,7 +371,6 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
                 _num(output, "short_account_build_score"),
                 _num(output, "silent_oi_accumulation_score"),
                 _num(output, "short_liquidation_fuel_score"),
-                _num(output, "short_squeeze_score"),
                 _num(output, "funding_flip_score"),
                 _boolish(output.get("fresh_flip_flag"), index=index).astype(float) * 100.0,
                 _num(output, "forced_buying_setup_score"),

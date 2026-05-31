@@ -313,6 +313,7 @@ def test_early_pump_short_gate_requires_squeeze_fuel_not_short_pct_alone() -> No
         "no_large_pump_60d_flag": True,
         "short_account_pct": 72.0,
         "short_dominance_score": 80.0,
+        "short_squeeze_score": 95.0,
         "hour_return_pct": 1.2,
         "day_return_pct": 3.0,
     }
