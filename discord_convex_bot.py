@@ -1000,7 +1000,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "Primary queue:",
         "/commands - this operator map.",
         "/help - same operator map, easier to remember.",
-        "/radar [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - default operator queue; trigger can show all, triggered, whale-CEX, target-CEX, breakout, or core-watch rows.",
+        "/radar [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - default operator queue; trigger can show all, triggered, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
         "/prime - short alias for /radar.",
         "/crimepump - legacy blunt-name alias for /radar.",
         "/alpha [limit] - compact thesis-gated brief across structure, timing, CEX flow, scanner score, and short fuel.",
@@ -3850,6 +3850,8 @@ def _ravelab_apply_thesis_columns(
     target_flow = _boolish_series(output.get("_ravelab_target_flow"), index=index)
     breakout_any = _boolish_series(output.get("_ravelab_breakout_any"), index=index)
     squeeze_gate = _ravelab_squeeze_gate_series(output, min_squeeze_score=min_squeeze_score)
+    output["_ravelab_squeeze_gate"] = squeeze_gate
+    forced_flow_trigger = _ravelab_forced_flow_trigger_series(output)
     transfer_floor = max(0.0, float(min_transfer_tokens or 0.0))
     whale_flow_floor = _ravelab_whale_flow_floor(transfer_floor, min_whale_flow_tokens)
     qualified_whale_sender = output.apply(_whale_sender_qualifies, axis=1).astype(bool)
@@ -3884,6 +3886,7 @@ def _ravelab_apply_thesis_columns(
         + target_flow.astype(float) * 4.0
         + whale_origin_flow.astype(float) * 8.0
         + breakout_any.astype(float) * 5.0
+        + forced_flow_trigger.astype(float) * 4.0
     ).clip(lower=0.0, upper=100.0)
 
     states: list[str] = []
@@ -3903,6 +3906,7 @@ def _ravelab_apply_thesis_columns(
             states.append(f"B{max(0, len(core_gates) - int(core_count.loc[idx]))} BLOCKED")
 
     output["_ravelab_squeeze_gate"] = squeeze_gate
+    output["_ravelab_forced_flow_trigger"] = forced_flow_trigger
     output["_ravelab_whale_origin_flow"] = whale_origin_flow
     output["_ravelab_whale_flow_floor_tokens"] = whale_flow_floor
     output["_ravelab_core_gate_count"] = core_count
@@ -3935,6 +3939,16 @@ def _ravelab_squeeze_gate_series(frame: pd.DataFrame, *, min_squeeze_score: floa
     paired_stack = short_majority & squeeze_score.ge(threshold) & fuel_score.ge(paired_fuel_floor)
     independent_stack = fuel_score.ge(independent_fuel_floor) & squeeze_score.ge(threshold)
     return (paired_stack | independent_stack).fillna(False)
+
+
+def _ravelab_forced_flow_trigger_series(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    forced = _num_series(frame, "_ravelab_forced_flow_score")
+    exhaustion = _num_series(frame, "_ravelab_exhaustion_score")
+    short_majority = _boolish_series(frame.get("_ravelab_short_majority_gate"), index=frame.index)
+    squeeze_gate = _boolish_series(frame.get("_ravelab_squeeze_gate"), index=frame.index)
+    return (forced.ge(65.0) & exhaustion.lt(70.0) & short_majority & squeeze_gate).fillna(False)
 
 
 def _score_ravelab_early_frame(
@@ -4197,6 +4211,7 @@ def _score_ravelab_early_frame(
     scored["_ravelab_volume_multiple"] = volume_multiple
     scored["_ravelab_short_majority_gate"] = short_pct.ge(50.0) & (~major_excluded)
     scored["_ravelab_squeeze_gate"] = _ravelab_squeeze_gate_series(scored, min_squeeze_score=50.0) & (~major_excluded)
+    scored["_ravelab_forced_flow_trigger"] = _ravelab_forced_flow_trigger_series(scored) & (~major_excluded)
     scored["_ravelab_history_days"] = history_days
     scored["_ravelab_min_history_days"] = int(min_history_days)
     scored["_ravelab_recent_max_pump_pct"] = recent_pump_or_current
@@ -4304,6 +4319,9 @@ def _ravelab_trigger_text(row: pd.Series, *, fallback: str = "core watch") -> st
     elif _boolish_scalar(row.get("_ravelab_target_flow")):
         targets = _target_cex_text(row) or "target CEX"
         triggers.append(f"target-CEX {targets} {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))}")
+    if _boolish_scalar(row.get("_ravelab_forced_flow_trigger")):
+        forced = _safe_float(row.get("_ravelab_forced_flow_score")) or 0.0
+        triggers.append(f"forced-flow {forced:.0f}")
     if _boolish_scalar(row.get("_ravelab_breakout_any")):
         triggers.append(f"breakout {_clip_text(row.get('_ravelab_breakout_windows', ''), 28) or 'yes'}")
     if _boolish_scalar(row.get("fresh_flip_flag")):
@@ -4323,6 +4341,7 @@ def _ravelab_queue_summary_lines(frame: pd.DataFrame, *, limit: int = 8) -> list
         has_trigger = (
             _boolish_scalar(row.get("_ravelab_whale_origin_flow"))
             or _boolish_scalar(row.get("_ravelab_target_flow"))
+            or _boolish_scalar(row.get("_ravelab_forced_flow_trigger"))
             or _boolish_scalar(row.get("_ravelab_breakout_any"))
             or _boolish_scalar(row.get("fresh_flip_flag"))
         )
@@ -4587,6 +4606,11 @@ def _normalize_ravelab_trigger_filter(trigger_filter: str) -> str:
         "cex_flow": "target_flow",
         "target": "target_flow",
         "targetflow": "target_flow",
+        "forced": "forced_flow",
+        "forcedflow": "forced_flow",
+        "flow_mech": "forced_flow",
+        "flowmech": "forced_flow",
+        "mechanics": "forced_flow",
         "breakouts": "breakout",
         "high": "breakout",
         "highs": "breakout",
@@ -4594,7 +4618,7 @@ def _normalize_ravelab_trigger_filter(trigger_filter: str) -> str:
         "watch": "core",
     }
     normalized = aliases.get(normalized, normalized)
-    return normalized if normalized in {"all", "triggered", "flow", "target_flow", "breakout", "core"} else "all"
+    return normalized if normalized in {"all", "triggered", "flow", "target_flow", "forced_flow", "breakout", "core"} else "all"
 
 
 def _ravelab_trigger_filter_mask(frame: pd.DataFrame, trigger_filter: str) -> pd.Series:
@@ -4603,6 +4627,7 @@ def _ravelab_trigger_filter_mask(frame: pd.DataFrame, trigger_filter: str) -> pd
     mode = _normalize_ravelab_trigger_filter(trigger_filter)
     whale_flow = _boolish_series(frame.get("_ravelab_whale_origin_flow"), index=frame.index)
     target_flow = _boolish_series(frame.get("_ravelab_target_flow"), index=frame.index)
+    forced_flow = _boolish_series(frame.get("_ravelab_forced_flow_trigger"), index=frame.index)
     breakout = _boolish_series(frame.get("_ravelab_breakout_any"), index=frame.index)
     funding_flip = _boolish_series(frame.get("fresh_flip_flag"), index=frame.index)
     core_full = _num_series(frame, "_ravelab_core_gate_count").ge(_num_series(frame, "_ravelab_core_gate_total", default=6.0))
@@ -4610,12 +4635,14 @@ def _ravelab_trigger_filter_mask(frame: pd.DataFrame, trigger_filter: str) -> pd
         return whale_flow.fillna(False)
     if mode == "target_flow":
         return target_flow.fillna(False)
+    if mode == "forced_flow":
+        return forced_flow.fillna(False)
     if mode == "breakout":
         return breakout.fillna(False)
     if mode == "triggered":
-        return (whale_flow | target_flow | breakout | funding_flip).fillna(False)
+        return (whale_flow | target_flow | forced_flow | breakout | funding_flip).fillna(False)
     if mode == "core":
-        return (core_full & ~(whale_flow | target_flow | breakout | funding_flip)).fillna(False)
+        return (core_full & ~(whale_flow | target_flow | forced_flow | breakout | funding_flip)).fillna(False)
     return pd.Series(True, index=frame.index)
 
 
@@ -4700,15 +4727,16 @@ def _ravelab_lane_counts_line(frame: pd.DataFrame, *, trigger_filter_key: str = 
     label = "Trigger lanes before filter" if _normalize_ravelab_trigger_filter(trigger_filter_key) != "all" else "Trigger lanes"
     shown = len(frame) if shown_count is None else int(shown_count)
     if frame.empty:
-        return f"{label}: triggered 0 | whale-CEX 0 | target-CEX 0 | breakout 0 | core-watch 0 | shown {shown}"
+        return f"{label}: triggered 0 | whale-CEX 0 | target-CEX 0 | forced-flow 0 | breakout 0 | core-watch 0 | shown {shown}"
     whale_flow = _boolish_series(frame.get("_ravelab_whale_origin_flow"), index=frame.index)
     target_flow = _boolish_series(frame.get("_ravelab_target_flow"), index=frame.index)
+    forced_flow = _boolish_series(frame.get("_ravelab_forced_flow_trigger"), index=frame.index)
     breakout = _boolish_series(frame.get("_ravelab_breakout_any"), index=frame.index)
     core_watch = _ravelab_trigger_filter_mask(frame, "core")
     triggered = _ravelab_trigger_filter_mask(frame, "triggered")
     return (
         f"{label}: triggered {int(triggered.sum())} | whale-CEX {int(whale_flow.sum())} | "
-        f"target-CEX {int(target_flow.sum())} | breakout {int(breakout.sum())} | "
+        f"target-CEX {int(target_flow.sum())} | forced-flow {int(forced_flow.sum())} | breakout {int(breakout.sum())} | "
         f"core-watch {int(core_watch.sum())} | shown {shown}"
     )
 
@@ -4949,6 +4977,7 @@ def _load_ravelab_list(
     )
     target_count = int(_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index).sum())
     whale_origin_count = int(_boolish_series(selected.get("_ravelab_whale_origin_flow"), index=selected.index).sum())
+    forced_flow_count = int(_boolish_series(selected.get("_ravelab_forced_flow_trigger"), index=selected.index).sum())
     core_count = _ravelab_core_full_count(selected)
     core_label = _ravelab_core_label(selected)
     rave_count = int(selected["_ravelab_side"].astype(str).eq("RAVE-like").sum())
@@ -4977,7 +5006,8 @@ def _load_ravelab_list(
             "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
             (
                 f"Matches: {len(selected)} | {core_label}: {core_count} | Triggered: {triggered_count} | "
-                f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | Breakout highs: {breakout_count}"
+                f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | "
+                f"Forced-flow: {forced_flow_count} | Breakout highs: {breakout_count}"
             ),
             funnel_line,
             lane_counts_line,
@@ -4994,7 +5024,8 @@ def _load_ravelab_list(
         (
             f"Matches: {len(selected)} | RAVE-like: {rave_count} | LAB-like: {lab_count} | Mixed: {mixed_count} | "
             f"{core_label}: {core_count} | Target-flow rows: {target_count} | Whale-origin CEX rows: {whale_origin_count} | "
-            f"Near misses shown: {len(near_misses)} | Read: historical-analogue screen, not trade instruction."
+            f"Forced-flow rows: {forced_flow_count} | Near misses shown: {len(near_misses)} | "
+            "Read: historical-analogue screen, not trade instruction."
         ),
         funnel_line,
         lane_counts_line,
@@ -6228,7 +6259,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears whale_flow_min_tokens.",
-        trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch only.",
+        trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch only.",
         near_miss_limit="Blocked high-signal rows to show after strict matches. Use 0 to hide.",
         detail="Show full multi-line evidence instead of the compact staged read.",
     )
@@ -6243,6 +6274,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="triggered only", value="triggered"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
+            app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
             app_commands.Choice(name="breakout highs", value="breakout"),
             app_commands.Choice(name="core watch only", value="core"),
         ]
@@ -6314,7 +6346,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
@@ -6323,6 +6355,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="triggered only", value="triggered"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
+            app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
             app_commands.Choice(name="breakout highs", value="breakout"),
             app_commands.Choice(name="core watch only", value="core"),
         ]
@@ -6368,7 +6401,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
@@ -6377,6 +6410,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="triggered only", value="triggered"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
+            app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
             app_commands.Choice(name="breakout highs", value="breakout"),
             app_commands.Choice(name="core watch only", value="core"),
         ]
@@ -6422,7 +6456,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
@@ -6431,6 +6465,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             app_commands.Choice(name="triggered only", value="triggered"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
+            app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
             app_commands.Choice(name="breakout highs", value="breakout"),
             app_commands.Choice(name="core watch only", value="core"),
         ]

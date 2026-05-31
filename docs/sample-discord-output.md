@@ -40,9 +40,9 @@ Candidates: /SLEEPUSDT
 Early structure radar
 Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Whale-CEX >= 100.00K | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
 Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.
-Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1
+Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1
 Gate funnel: scan 11 -> score 10 -> whale90 9 -> holderSrc 5 -> Bn+Bg 4 -> float 4 -> squeeze 4 -> dormant 2 -> early 2 -> shown 2
-Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2
+Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2
 Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 
 Candidates: /CAPUSDT /LABXUSDT
@@ -65,7 +65,7 @@ Core gates: top10 whale-control threshold with chain+contract explorer holder-so
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 6/6: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
 Gate funnel: scan 11 -> score 10 -> whale90 9 -> holderSrc 5 -> Bn+Bg 4 -> float 4 -> squeeze 4 -> dormant 2 -> early 2 -> shown 2
-Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2
+Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2
 Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 All shown rows passed top10 whale-control >= 90.0%, explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
 Holder evidence rows: 2 with ETH/BNB/ARB chain+contract explorer holder-source snapshot | contract rows 2 | pct-only rows 0

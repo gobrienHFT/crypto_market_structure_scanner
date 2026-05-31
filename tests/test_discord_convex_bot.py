@@ -2939,10 +2939,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert output.index("-> float ") < output.index("-> squeeze")
     assert "holderSrc" in output
     assert "shown 2" in output
-    assert "Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2" in output
+    assert "Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2" in output
     assert "Core 6/6: 2" in output
     assert "Whale-origin CEX rows: 1" in output
-    assert "Near misses shown: 2" in output
+    assert "Forced-flow rows: 0 | Near misses shown: 2" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
     assert "Daily pump checks:" in output
@@ -3025,7 +3025,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     trigger_flow_output = "\n".join(trigger_flow_chunks)
     assert "Trigger filter: flow" in trigger_flow_output
     assert "trigger:flow 1" in trigger_flow_output
-    assert "Trigger lanes before filter: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 1" in trigger_flow_output
+    assert "Trigger lanes before filter: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 1" in trigger_flow_output
     assert "/LABXUSDT | LAB-like" in trigger_flow_output
     assert "/CAPUSDT" not in trigger_flow_output
 
@@ -3052,7 +3052,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Trigger: all" in crime_output
     assert "Gate funnel:" in crime_output
     assert "Trigger lanes: triggered 2" in crime_output
-    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in crime_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in crime_output
     assert "Trigger queue:" in crime_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in crime_output
     assert "venues Bn/Bg/Gate Y/Y/N | float" in crime_output
@@ -3067,7 +3067,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert radar_title == "Early structure radar"
     assert "Early structure radar" in radar_output
     assert "Crime-pump early queue" not in radar_output
-    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1" in radar_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in radar_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in radar_output
     assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in radar_output
 
@@ -3350,6 +3350,69 @@ def test_ravelab_trigger_text_prioritizes_whale_flow_then_breakout() -> None:
     )
 
     assert bot._ravelab_trigger_text(row) == "whale-CEX 1.50M, breakout 1D,2D"
+
+
+def test_ravelab_forced_flow_trigger_is_first_class_lane() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "MECHUSDT",
+                "_ravelab_early_score": 82.0,
+                "_ravelab_archetype_score": 40.0,
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": False,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 70.0,
+                "_ravelab_short_majority_gate": True,
+                "_ravelab_forced_flow_score": 76.0,
+                "_ravelab_exhaustion_score": 18.0,
+                "short_account_pct": 61.0,
+            },
+            {
+                "symbol": "SPENTUSDT",
+                "_ravelab_early_score": 82.0,
+                "_ravelab_archetype_score": 40.0,
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": False,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 70.0,
+                "_ravelab_short_majority_gate": True,
+                "_ravelab_forced_flow_score": 84.0,
+                "_ravelab_exhaustion_score": 74.0,
+                "short_account_pct": 61.0,
+            },
+        ]
+    )
+
+    scored = bot._ravelab_apply_thesis_columns(frame, min_squeeze_score=50.0).set_index("symbol", drop=False)
+
+    assert bool(scored.loc["MECHUSDT", "_ravelab_forced_flow_trigger"])
+    assert not bool(scored.loc["SPENTUSDT", "_ravelab_forced_flow_trigger"])
+    assert bot._ravelab_trigger_text(scored.loc["MECHUSDT"]) == "forced-flow 76"
+    assert bool(bot._ravelab_trigger_filter_mask(scored, "forced").loc["MECHUSDT"])
+    assert not bool(bot._ravelab_trigger_filter_mask(scored, "core").loc["MECHUSDT"])
+    assert bot._ravelab_lane_counts_line(scored.loc[["MECHUSDT"]]) == (
+        "Trigger lanes: triggered 1 | whale-CEX 0 | target-CEX 0 | forced-flow 1 | breakout 0 | core-watch 0 | shown 1"
+    )
+    assert bot._ravelab_queue_summary_lines(scored.loc[["MECHUSDT"]]) == [
+        "Trigger queue: /MECHUSDT A1 (forced-flow 76)"
+    ]
 
 
 def test_ravelab_near_misses_can_show_missing_squeeze_blocker() -> None:
