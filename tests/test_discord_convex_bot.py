@@ -3347,6 +3347,33 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "gate_volume_share_pct": 2.0,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "TARGETONLYUSDT",
+                "cex_deposit_flow_score": 86,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 15_000_000,
+                "cex_deposit_24h_max_amount": 15_000_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "token_platform": "ethereum",
+                "token_contract": "0x8888888888888888888888888888888888888888",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 8_500,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 63.0,
+                "low_float_score": 80.0,
+                "float_trap_score": 76.0,
+                "fdv_to_market_cap": 7.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "dormant_short_fuse_score": 78.0,
+                "binance_perp_universe": True,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
             }
         ]
     )
@@ -3361,6 +3388,8 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Total token amount: 20.50M" in proof
     assert "Largest transfer: 12.00M" in proof
     assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
+    assert "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate." in proof
+    assert "Thesis gates: baseThesis Y | holder Y | venueBnBg Y | float Y | shorts Y | noPump60 Y | whaleOrigin Y" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
@@ -3375,6 +3404,12 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Verdict: WATCH" in gate_check
     assert "FAIL Binance+Bitget trading venue" in gate_check
     assert "Gate 2.0%,target" in gate_check
+
+    target_title, target_proof = bot._load_flow_proof("TARGETONLY", min_tokens=10_000_000)
+
+    assert target_title == "TARGETONLYUSDT flow proof"
+    assert "Verdict: VERIFIED target-CEX transfer evidence" in target_proof
+    assert "Thesis gates: baseThesis N | holder Y | venueBnBg N | float Y | shorts Y | noPump60 Y | whaleOrigin N" in target_proof
 
 
 def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None:

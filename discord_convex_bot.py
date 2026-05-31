@@ -4917,6 +4917,18 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
     any_confirmed = bool(
         _confirmed_cex_flow_mask(row_frame, min_transfer_tokens=effective_min_transfer, target_only=False).iloc[0]
     )
+    scored = _goal_score_frame(row_frame, min_transfer_tokens=effective_min_transfer)
+    scored_row = scored.iloc[0] if not scored.empty else row
+    yes_no = lambda value: "Y" if _boolish_scalar(value) else "N"
+    thesis_line = (
+        f"Thesis gates: baseThesis {yes_no(scored_row.get('_goal_all_pass'))} | "
+        f"holder {yes_no(scored_row.get('_goal_whale_pass'))} | "
+        f"venueBnBg {yes_no(scored_row.get('_goal_venue_pass'))} | "
+        f"float {yes_no(scored_row.get('_goal_float_pass'))} | "
+        f"shorts {yes_no(scored_row.get('_goal_short_pass'))} | "
+        f"noPump60 {yes_no(scored_row.get('_goal_no_recent_pump_pass'))} | "
+        f"whaleOrigin {'Y' if _whale_sender_text(row, include_amount=False) else 'N'}"
+    )
     if target_confirmed:
         verdict = "VERIFIED target-CEX transfer evidence"
     elif any_confirmed:
@@ -4933,6 +4945,8 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
         f"Verdict: {verdict}",
         f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h",
         "Read: only rows with count > 0, largest transfer above floor, and a labelled destination are treated as confirmed.",
+        "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate.",
+        thesis_line,
         "",
         f"Targets: {_clip_text(row.get('cex_deposit_24h_target_exchanges', ''), 80) or 'n/a'}",
         f"Transfers: {int(_safe_float(row.get('cex_deposit_24h_count')) or 0)}",

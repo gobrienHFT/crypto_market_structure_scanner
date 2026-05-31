@@ -181,6 +181,8 @@ PRIMEUSDT flow proof
 Verdict: VERIFIED target-CEX transfer evidence
 Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Floor: 20.00K tokens | Lookback: 24h
 Read: only rows with count > 0, largest transfer above floor, and a labelled destination are treated as confirmed.
+Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate.
+Thesis gates: baseThesis Y | holder Y | venueBnBg Y | float Y | shorts Y | noPump60 Y | whaleOrigin Y
 
 Targets: Bitget, GateIO
 Transfers: 3
