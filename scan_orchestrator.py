@@ -61,7 +61,6 @@ def apply_core_setup_gate(
             _num_series(output, "silent_oi_accumulation_score"),
             _num_series(output, "short_liquidation_fuel_score"),
             _num_series(output, "short_squeeze_score"),
-            _num_series(output, "early_pump_short_squeeze_score"),
             _num_series(output, "funding_flip_score"),
             _num_series(output, "forced_buying_setup_score"),
             _num_series(output, "perp_squeeze_confluence_score"),

@@ -109,7 +109,12 @@ def test_select_trade_candidate_requires_core_squeeze_fuel_gate() -> None:
                 "timing_score": 90,
                 "trade_bucket_score": 90,
                 "timing_state": "Confirmed",
-                **{**_thesis_fields("4"), "short_account_pct": 72.0, "short_account_build_score": 0.0},
+                **{
+                    **_thesis_fields("4"),
+                    "short_account_pct": 72.0,
+                    "short_account_build_score": 0.0,
+                    "early_pump_short_squeeze_score": 95.0,
+                },
             },
             {
                 "symbol": "FUELUSDT",
