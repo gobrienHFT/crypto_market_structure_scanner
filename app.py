@@ -3482,10 +3482,31 @@ def _discord_convex_candidates(all_df: pd.DataFrame) -> pd.DataFrame:
     if candidates.empty:
         return candidates
     candidates = apply_thesis_alert_gate(candidates, allow_cex_flow_targets=False)
-    if not candidates.empty and "thesis_gate" in candidates.columns:
-        candidates = candidates[candidates["thesis_gate"].fillna(False).astype(bool)].copy()
     if candidates.empty:
         return candidates
+    rescored = _score_trade_buckets(candidates)
+    current_core = (
+        rescored.get("trade_bucket", pd.Series("", index=rescored.index)).astype(str).eq("Convex Long")
+        & rescored.get("thesis_core_gate", pd.Series(False, index=rescored.index)).fillna(False).astype(bool)
+    )
+    candidates = candidates.loc[current_core.reindex(candidates.index, fill_value=False)].copy()
+    if candidates.empty:
+        return candidates
+    for column in (
+        "trade_bucket",
+        "trade_bucket_score",
+        "raw_convex_long_signal",
+        "thesis_gate",
+        "thesis_base_gate",
+        "thesis_float_gate",
+        "thesis_short_squeeze_gate",
+        "thesis_not_late_gate",
+        "thesis_core_gate",
+        "thesis_gate_note",
+        "trade_bucket_note",
+    ):
+        if column in rescored.columns:
+            candidates[column] = rescored.loc[candidates.index, column]
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])
 
 

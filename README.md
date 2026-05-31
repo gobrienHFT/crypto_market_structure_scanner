@@ -405,6 +405,7 @@ DISCORD_HOLDER_COMPOSITION_ENABLED=1
 - `convex` keeps the older Convex Long source, but rows still pass the core thesis gates before posting.
 
 Every watcher card now starts with a compact `Watcher gate` line showing `coreThesis`, holder/top10, Binance+Bitget, 60D no-pump, and short-account context, so automatic alerts carry the same hard-gate proof posture as the slash-command screens.
+Dashboard-triggered Discord Convex alerts and the latest Convex cache also re-score rows with the current core-thesis bucket logic before sending or caching, so stale `Convex Long` labels cannot bypass the low-float/FDV, short+squeeze-fuel, no-pump, holder, and Binance+Bitget gates.
 
 The watcher stores state locally so unchanged candidates are not reposted every scan:
 

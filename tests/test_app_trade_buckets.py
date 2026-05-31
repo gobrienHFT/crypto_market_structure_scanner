@@ -142,6 +142,12 @@ def test_discord_convex_cache_candidates_require_full_thesis_gate(monkeypatch) -
                 "symbol": "FULLCOREUSDT",
                 "token_contract": "0x5555555555555555555555555555555555555555",
                 "thesis_gate": True,
+                "low_float_score": 82.0,
+                "fdv_to_market_cap": 8.0,
+                "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
+                "pre_pump_precision_score": 76.0,
+                "pre_pump_candidate_flag": True,
             },
         ]
     )
@@ -149,6 +155,37 @@ def test_discord_convex_cache_candidates_require_full_thesis_gate(monkeypatch) -
     selected = app._discord_convex_candidates(frame)
 
     assert selected["symbol"].tolist() == ["FULLCOREUSDT"]
+    assert bool(selected.iloc[0]["thesis_core_gate"])
+
+
+def test_discord_convex_candidates_reject_stale_convex_long_without_current_core_gate(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", raising=False)
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "STALECOREUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 99,
+                "thesis_gate": True,
+                "thesis_core_gate": True,
+                "top10_holder_pct": 94.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x6666666666666666666666666666666666666666",
+                "holder_source": "Etherscan holder endpoint",
+                "binance_perp_universe": True,
+                "bitget_volume_share_pct": 1.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "short_account_pct": 72.0,
+            }
+        ]
+    )
+
+    selected = app._discord_convex_candidates(frame)
+
+    assert selected.empty
 
 
 def test_cex_flow_dashboard_promotes_whale_sender_provenance() -> None:
