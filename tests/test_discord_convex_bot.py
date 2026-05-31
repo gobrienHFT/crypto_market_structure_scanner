@@ -527,6 +527,7 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     assert title == "HIGH breakout screen"
     assert "20D high breakout screen" in output
     assert "Filter: `broke_high_20d` is true" in output
+    assert "60D no-pump/dormancy proof required" in output
     assert "Thesis breakout matches: 1" in output
     assert "Matches: 2" in output
     assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | thesis Y" in output

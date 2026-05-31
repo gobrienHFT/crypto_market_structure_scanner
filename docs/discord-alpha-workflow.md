@@ -104,7 +104,7 @@ Use `/flowhealth` to see API-key readiness and local CEX-address-label coverage.
 
 Use `/sethflow` to run the whole checklist in one shot: verified Binance/Gate/Bitget wallet-to-CEX flow above the requested transfer floor, observed top-10 holder concentration at or above 90% with holder evidence by default, low-float/FDV evidence, more than 50% short accounts by default, and then a dormant/early chart-structure gate. The output says `RESEARCH`, `WAIT`, or `SKIP`; it is a triage state, not an execution instruction.
 
-Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/below the selected range. The bot accepts any `1D`-`1499D` lookback; common dashboard columns such as `5D`, `20D`, `90D`, and `180D` are read directly, while custom windows are computed from live Binance daily candles. Rows that also pass the strict 90%+ holder-evidence plus Binance+Bitget thesis gate sort first and print `thesis Y`; set `thesis_only:true` when you only want hard-gated breakout rows.
+Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/below the selected range. The bot accepts any `1D`-`1499D` lookback; common dashboard columns such as `5D`, `20D`, `90D`, and `180D` are read directly, while custom windows are computed from live Binance daily candles. Rows that also pass the strict top10 holder-evidence, Binance+Bitget, and 60D no-pump thesis gate sort first and print `thesis Y`; set `thesis_only:true` when you only want hard-gated breakout rows.
 
 Use `/terminal` for slower structural evidence and `/timing` for current trigger quality. A symbol that appears on both lists is usually more interesting than a symbol that appears on only one.
 

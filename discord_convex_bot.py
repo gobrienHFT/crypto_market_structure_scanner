@@ -5739,7 +5739,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
-        thesis_only="Only show rows passing 90% holder evidence plus Binance+Bitget thesis gates.",
+        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget trading evidence, and 60D no-pump proof.",
     )
     async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
         if not _channel_allowed(interaction):
@@ -5770,7 +5770,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
-        thesis_only="Only show rows passing 90% holder evidence plus Binance+Bitget thesis gates.",
+        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget trading evidence, and 60D no-pump proof.",
     )
     async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
         if not _channel_allowed(interaction):

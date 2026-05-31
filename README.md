@@ -291,7 +291,7 @@ The bot can retrieve:
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full CEX-flow -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
-- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows
+- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, and 60D no-pump proof
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries
