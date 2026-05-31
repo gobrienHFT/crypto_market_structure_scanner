@@ -1642,6 +1642,39 @@ def test_goal_score_requires_explicit_binance_bitget_evidence(monkeypatch) -> No
     assert bool(scored.loc["SHAREUSDT", "_goal_all_pass"])
 
 
+def test_goal_score_separates_core_setup_from_flow_trigger() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "COREONLYUSDT",
+                **_holder_evidence(),
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 64.0,
+                "low_float_score": 82.0,
+                "fdv_to_market_cap": 8.0,
+                "dormant_short_fuse_score": 80.0,
+                "pre_pump_precision_score": 75.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "binance_volume_share_pct": 2.0,
+                "bitget_volume_share_pct": 1.5,
+            }
+        ]
+    )
+
+    scored = bot._goal_score_frame(frame, min_transfer_tokens=20_000).iloc[0]
+
+    assert bool(scored["_goal_base_thesis_pass"])
+    assert bool(scored["_goal_core_setup_pass"])
+    assert not bool(scored["_goal_target_flow"])
+    assert not bool(scored["_goal_flow_setup_pass"])
+    assert not bool(scored["_goal_all_pass"])
+    assert "baseThesis Y | coreSetup Y | flowSetup N | targetFlow N" in bot._goal_thesis_gates_line(scored)
+
+
 def test_goal_score_hard_floors_top10_whale_gate() -> None:
     base = {
         "cex_deposit_flow_score": 92,
@@ -3357,7 +3390,30 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "binance_perp_universe": True,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
-            }
+            },
+            {
+                "symbol": "COREONLYUSDT",
+                "token_platform": "ethereum",
+                "token_contract": "0x9999999999999999999999999999999999999999",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 8_500,
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.1,
+                "short_account_pct": 63.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "dormant_short_fuse_score": 78.0,
+                "pre_pump_precision_score": 70.0,
+                "binance_volume_share_pct": 6.0,
+                "bitget_volume_share_pct": 1.2,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
         ]
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
@@ -3372,19 +3428,29 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Largest transfer: 12.00M" in proof
     assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
     assert "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate." in proof
-    assert "Thesis gates: baseThesis Y | holder Y | venueBnBg Y | float Y | shorts Y | noPump60 Y | whaleOrigin Y" in proof
+    assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts Y | noPump60 Y | whaleOrigin Y" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
+    assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y" in check
+    assert "baseThesis/coreSetup can pass before CEX flow" in check
     assert "PASS target CEX flow" in check
     assert "PASS Binance+Bitget trading venue" in check
     assert "PASS top10 whale dominance" in check
     assert "holder chain ethereum, holders 8500" in check
 
+    core_title, core_check = bot._load_coin_check("COREONLY", min_tokens=10_000_000)
+
+    assert core_title == "COREONLYUSDT checklist"
+    assert "Verdict: PASS" in core_check
+    assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup N | targetFlow N" in core_check
+    assert "FAIL target CEX flow" in core_check
+
     gate_title, gate_check = bot._load_coin_check("GATECHECK", min_tokens=10_000_000)
 
     assert gate_title == "GATECHECKUSDT checklist"
     assert "Verdict: WATCH" in gate_check
+    assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow Y" in gate_check
     assert "FAIL Binance+Bitget trading venue" in gate_check
     assert "Gate 2.0%,target" in gate_check
 
@@ -3392,7 +3458,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
 
     assert target_title == "TARGETONLYUSDT flow proof"
     assert "Verdict: VERIFIED target-CEX transfer evidence" in target_proof
-    assert "Thesis gates: baseThesis N | holder Y | venueBnBg N | float Y | shorts Y | noPump60 Y | whaleOrigin N" in target_proof
+    assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow Y | holder Y | venueBnBg N | float Y | shorts Y | noPump60 Y | whaleOrigin N" in target_proof
 
 
 def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None:
@@ -3729,6 +3795,8 @@ def test_coin_stats_description_uses_scan_metrics_without_holder_fetch(monkeypat
 
     assert "/PLAYUSDT" in description
     assert "Scan source: test cache" in description
+    assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow N" in description
+    assert "baseThesis/coreSetup are structure gates; targetFlow/whaleOrigin are flow triggers" in description
     assert "Convex Score: 88/100" in description
     assert "Structure:" in description
     assert "Perp positioning: short accounts 61.2% | long accounts 38.8%" in description

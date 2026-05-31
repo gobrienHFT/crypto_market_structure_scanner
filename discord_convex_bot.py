@@ -871,9 +871,16 @@ def _live_binance_row(symbol: str) -> tuple[pd.Series | None, str]:
 
 
 def _coin_stats_description(row: pd.Series, *, source: str) -> str:
-    enriched = apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
+    scored = _goal_score_frame(pd.DataFrame([row.to_dict()]))
+    enriched = scored.iloc[0] if not scored.empty else apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
     holder_text = _holder_composition_text(row)
-    prefix = f"{DISCORD_PRODUCT_IDENTITY}\n\nScan source: {source}\n\n"
+    gate_line = _goal_thesis_gates_line(enriched)
+    prefix = (
+        f"{DISCORD_PRODUCT_IDENTITY}\n\n"
+        f"Scan source: {source}\n"
+        f"{gate_line}\n"
+        "Read: baseThesis/coreSetup are structure gates; targetFlow/whaleOrigin are flow triggers, not venue proof.\n\n"
+    )
     card = build_discord_flag_card(enriched, holder_text=holder_text, max_chars=DISCORD_EMBED_DESCRIPTION_LIMIT - len(prefix))
     return f"{prefix}{card}"
 
@@ -1043,8 +1050,17 @@ def _load_dossier(symbol_query: str) -> tuple[str, str]:
         row, source = _live_binance_row(symbol)
     if row is None:
         return f"{symbol} dossier", "No latest scan row or live Binance futures symbol found yet."
-    enriched = apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
-    text = build_setup_dossier(enriched) + "\n\n## Timing\n\n```text\n" + build_timing_card(enriched) + "\n```"
+    scored = _goal_score_frame(pd.DataFrame([row.to_dict()]))
+    enriched = scored.iloc[0] if not scored.empty else apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
+    gate_line = _goal_thesis_gates_line(enriched)
+    text = (
+        f"{gate_line}\n"
+        "Read: baseThesis/coreSetup are structure gates; targetFlow/whaleOrigin are flow triggers, not venue proof.\n\n"
+        + build_setup_dossier(enriched)
+        + "\n\n## Timing\n\n```text\n"
+        + build_timing_card(enriched)
+        + "\n```"
+    )
     return f"{symbol} dossier ({source})", text[:DISCORD_EMBED_DESCRIPTION_LIMIT]
 
 
@@ -3118,6 +3134,9 @@ def _goal_score_frame(
     short_pass = short_pct.ge(min_short_pct)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
     structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0) & no_recent_pump_pass
+    base_thesis_pass = whale_pass & venue_pass & no_recent_pump_pass
+    core_setup_pass = base_thesis_pass & short_pass & float_pass & structure_pass
+    flow_setup_pass = core_setup_pass & target_flow
 
     setup_score = (
         target_flow_component * 0.23
@@ -3146,6 +3165,7 @@ def _goal_score_frame(
     output["_goal_venue_pass"] = venue_pass
     output["_goal_venue_required"] = bool(require_binance_bitget)
     output["_goal_no_recent_pump_pass"] = no_recent_pump_pass
+    output["_goal_base_thesis_pass"] = base_thesis_pass
     output["_goal_float_component"] = float_component
     output["_goal_short_component"] = short_component
     output["_goal_structure_component"] = structure_component
@@ -3154,16 +3174,41 @@ def _goal_score_frame(
     output["_goal_short_pass"] = short_pass
     output["_goal_float_pass"] = float_pass
     output["_goal_structure_pass"] = structure_pass
-    output["_goal_all_pass"] = (
-        target_flow
-        & whale_pass
-        & short_pass
-        & float_pass
-        & structure_pass
-        & no_recent_pump_pass
-        & (venue_pass if require_binance_bitget else True)
-    )
+    output["_goal_core_setup_pass"] = core_setup_pass
+    output["_goal_flow_setup_pass"] = flow_setup_pass
+    output["_goal_all_pass"] = flow_setup_pass
     return output
+
+
+def _goal_thesis_gates_line(row: pd.Series) -> str:
+    yes_no = lambda value: "Y" if _boolish_scalar(value) else "N"
+    return (
+        f"Thesis gates: baseThesis {yes_no(row.get('_goal_base_thesis_pass'))} | "
+        f"coreSetup {yes_no(row.get('_goal_core_setup_pass'))} | "
+        f"flowSetup {yes_no(row.get('_goal_flow_setup_pass', row.get('_goal_all_pass')))} | "
+        f"targetFlow {yes_no(row.get('_goal_target_flow'))} | "
+        f"holder {yes_no(row.get('_goal_whale_pass'))} | "
+        f"venueBnBg {yes_no(row.get('_goal_venue_pass'))} | "
+        f"float {yes_no(row.get('_goal_float_pass'))} | "
+        f"shorts {yes_no(row.get('_goal_short_pass'))} | "
+        f"noPump60 {yes_no(row.get('_goal_no_recent_pump_pass'))} | "
+        f"whaleOrigin {'Y' if _whale_sender_text(row, include_amount=False) else 'N'}"
+    )
+
+
+def _goal_core_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
+    score = _safe_float(row.get("_goal_setup_score")) or 0.0
+    if _boolish_scalar(row.get("_goal_core_setup_pass")) and score >= min_score:
+        return "PASS"
+    if not _boolish_scalar(row.get("_goal_base_thesis_pass")):
+        return _goal_row_status(row, min_score=min_score)
+    if not _boolish_scalar(row.get("_goal_short_pass")):
+        return "WATCH"
+    if not _boolish_scalar(row.get("_goal_float_pass")):
+        return "WATCH"
+    if not _boolish_scalar(row.get("_goal_structure_pass")):
+        return "WATCH"
+    return "WATCH"
 
 
 def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
@@ -4939,16 +4984,7 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
     )
     scored = _goal_score_frame(row_frame, min_transfer_tokens=effective_min_transfer)
     scored_row = scored.iloc[0] if not scored.empty else row
-    yes_no = lambda value: "Y" if _boolish_scalar(value) else "N"
-    thesis_line = (
-        f"Thesis gates: baseThesis {yes_no(scored_row.get('_goal_all_pass'))} | "
-        f"holder {yes_no(scored_row.get('_goal_whale_pass'))} | "
-        f"venueBnBg {yes_no(scored_row.get('_goal_venue_pass'))} | "
-        f"float {yes_no(scored_row.get('_goal_float_pass'))} | "
-        f"shorts {yes_no(scored_row.get('_goal_short_pass'))} | "
-        f"noPump60 {yes_no(scored_row.get('_goal_no_recent_pump_pass'))} | "
-        f"whaleOrigin {'Y' if _whale_sender_text(row, include_amount=False) else 'N'}"
-    )
+    thesis_line = _goal_thesis_gates_line(scored_row)
     if target_confirmed:
         verdict = "VERIFIED target-CEX transfer evidence"
     elif any_confirmed:
@@ -5024,7 +5060,7 @@ def _load_coin_check(
         require_binance_bitget=require_binance_bitget,
     )
     scored_row = scored.iloc[0]
-    status = _goal_row_status(scored_row, min_score=min_score)
+    status = _goal_core_row_status(scored_row, min_score=min_score)
     score = _safe_float(scored_row.get("_goal_setup_score")) or 0.0
 
     def gate_line(label: str, passed: bool, detail: str) -> str:
@@ -5046,6 +5082,8 @@ def _load_coin_check(
         f"{symbol} manipulation-structure checklist",
         f"Verdict: {status} | setup score {score:.0f}/100 | Source: {source}",
         f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | Top10 whale floor: >= {effective_min_whale_pct:.1f}%",
+        _goal_thesis_gates_line(scored_row),
+        "Read: baseThesis/coreSetup can pass before CEX flow; targetFlow/whaleOrigin are trigger/risk evidence, not venue proof.",
         "",
         gate_line("target CEX flow", _boolish_scalar(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),
         gate_line("Binance+Bitget trading venue", _boolish_scalar(scored_row.get("_goal_venue_pass")) or not require_binance_bitget, _venue_evidence_text(scored_row)),
