@@ -121,10 +121,10 @@ Use `/sync_commands` after deploying slash-command schema changes. If Discord re
 `DISCORD_WATCHER_ALERT_SOURCE` controls automated posts:
 
 ```text
-terminal_timing  both structural evidence and timing quality
-terminal         structural ranking only
-timing           timing ranking only
-cex_flow         concentration-gated wallet-to-CEX transfer flow
+terminal_timing  core thesis gate plus structural evidence and timing quality
+terminal         core thesis gate plus structural ranking
+timing           core thesis gate plus timing ranking
+cex_flow         core thesis gate plus concentration-gated wallet-to-CEX transfer flow
 convex           legacy Convex Long selection after the same core thesis gates
 ```
 

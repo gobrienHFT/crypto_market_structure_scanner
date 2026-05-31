@@ -395,10 +395,10 @@ DISCORD_HOLDER_COMPOSITION_ENABLED=1
 
 `DISCORD_WATCHER_ALERT_SOURCE` controls what the automatic watcher posts:
 
-- `terminal_timing` requires both structural evidence and current timing quality.
-- `terminal` alerts from the structural evidence ranking only.
-- `timing` alerts from the timing ranking only.
-- `cex_flow` alerts from concentration-gated wallet-to-CEX token-transfer flow.
+- `terminal_timing` requires the core thesis gate plus both structural evidence and current timing quality.
+- `terminal` alerts from the core-gated structural evidence ranking only.
+- `timing` alerts from the core-gated timing ranking only.
+- `cex_flow` alerts from core-gated, concentration-gated wallet-to-CEX token-transfer flow.
 - `convex` keeps the older Convex Long source, but rows still pass the core thesis gates before posting.
 
 The watcher stores state locally so unchanged candidates are not reposted every scan:

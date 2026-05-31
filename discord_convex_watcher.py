@@ -209,6 +209,7 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
     # Background alerts use the same non-negotiable thesis venue gate as /radar:
     # labelled transfer targets are supporting evidence, not Bitget trading proof.
     scored = apply_thesis_alert_gate(scored, allow_cex_flow_targets=False)
+    scored = apply_core_setup_gate(scored)
     if scored.empty:
         return scored
 
@@ -216,7 +217,6 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         candidates = scored[scored.get("trade_bucket", pd.Series("", index=scored.index)).astype(str).eq("Convex Long")].copy()
         if candidates.empty and "trade_bucket_score" in scored.columns:
             candidates = scored.sort_values(["trade_bucket_score", "symbol"], ascending=[False, True]).head(top_n).copy()
-        candidates = apply_core_setup_gate(candidates)
         return candidates.head(top_n)
 
     if source == "terminal":
