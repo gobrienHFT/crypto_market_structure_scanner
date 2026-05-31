@@ -44,7 +44,14 @@ from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squee
 from screener import ScreenerData, build_screener_data
 from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
 from timing_engine import TIMING_SCORE_COLUMNS, apply_timing_model, build_timing_card
-from venue_gate import apply_thesis_alert_gate, thesis_alert_header
+from venue_gate import (
+    binance_bitget_venue_mask,
+    holder_concentration_mask,
+    holder_evidence_mask,
+    no_recent_pump_proof_mask,
+    apply_thesis_alert_gate,
+    thesis_alert_header,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
@@ -1996,6 +2003,14 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     if all_df.empty:
         all_df["trade_bucket"] = pd.Series(dtype="object")
         all_df["trade_bucket_score"] = pd.Series(dtype="float64")
+        all_df["raw_convex_long_signal"] = pd.Series(dtype="bool")
+        all_df["thesis_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_holder_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_holder_evidence_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_whale_concentration_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_venue_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_no_pump_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_gate_note"] = pd.Series(dtype="object")
         all_df["trade_bucket_note"] = pd.Series(dtype="object")
         return all_df
 
@@ -2021,7 +2036,9 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "day_return_pct",
         "basis_rate_pct",
         "crime_mechanics_score",
+        "crime_pump_score",
         "crime_spot_impulse_score",
+        "crime_owner_circle_score",
         "crime_supply_control_score",
         "mm_presence_score",
         "mm_bid_support_score",
@@ -2050,6 +2067,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "perp_volume_to_mcap_pct",
         "oi_to_market_cap_pct",
         "hour_return_pct",
+        "hour_return_z",
         "cmc_mover_score",
         "cmc_pct_1h",
         "cmc_pct_24h",
@@ -2149,8 +2167,89 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "range_high_break_count",
         "range_low_break_count",
     ]
+    missing_numeric_cols = [col for col in numeric_cols if col not in all_df.columns]
+    if missing_numeric_cols:
+        all_df = pd.concat(
+            [all_df, pd.DataFrame({col: float("nan") for col in missing_numeric_cols}, index=all_df.index)],
+            axis=1,
+        )
     for col in numeric_cols:
         all_df[col] = pd.to_numeric(all_df[col], errors="coerce")
+
+    bool_cols = [
+        "active_short_squeeze_flag",
+        "active_squeeze_flag",
+        "ath_runway_20x_flag",
+        "ath_runway_confluence_flag",
+        "blowoff_risk_flag",
+        "blowoff_watch_flag",
+        "broke_high_5d",
+        "broke_high_20d",
+        "broke_high_90d",
+        "broke_high_180d",
+        "broke_low_5d",
+        "broke_low_20d",
+        "broke_low_90d",
+        "broke_low_180d",
+        "clean_convex_setup_flag",
+        "coinbase_lane_flag",
+        "convexity_chase_risk_flag",
+        "convexity_prime_flag",
+        "convexity_too_late_flag",
+        "crime_excluded_major",
+        "crime_pump_flag",
+        "dwf_labs_portfolio",
+        "early_convexity_flag",
+        "exhaustion_flag",
+        "float_control_confluence_flag",
+        "forced_buying_setup_flag",
+        "fresh_flip_flag",
+        "funding_flip_up_flag",
+        "inventory_transfer_risk_flag",
+        "mm_sponsor_confluence_flag",
+        "owner_controlled_flag",
+        "perp_heavy_flag",
+        "perp_squeeze_confluence_flag",
+        "pre_pump_candidate_flag",
+        "setup_ready_flag",
+        "spot_flow_confluence_flag",
+        "squeeze_chase_flag",
+        "squeeze_machine_flag",
+        "squeeze_risk_flag",
+        "trend_confluence_flag",
+        "unwind_risk_flag",
+    ]
+    missing_bool_cols = [col for col in bool_cols if col not in all_df.columns]
+    if missing_bool_cols:
+        all_df = pd.concat(
+            [all_df, pd.DataFrame({col: False for col in missing_bool_cols}, index=all_df.index)],
+            axis=1,
+        )
+    for col in bool_cols:
+        all_df[col] = all_df[col].fillna(False).astype(bool)
+
+    thesis_whale_gate = holder_concentration_mask(all_df, min_whale_pct=90.0, require_holder_evidence=False)
+    thesis_holder_evidence_gate = holder_evidence_mask(all_df)
+    thesis_holder_gate = holder_concentration_mask(all_df, min_whale_pct=90.0, require_holder_evidence=True)
+    thesis_venue_gate = binance_bitget_venue_mask(all_df, allow_cex_flow_targets=False)
+    thesis_no_pump_gate = no_recent_pump_proof_mask(all_df)
+    thesis_gate = thesis_holder_gate & thesis_venue_gate & thesis_no_pump_gate
+
+    def _thesis_gate_note(row: pd.Series) -> str:
+        if bool(row.get("thesis_gate")):
+            return "thesis pass: top10 >= 90%, holder evidence, Binance+Bitget, 60D no-pump"
+        missing: list[str] = []
+        if not bool(row.get("thesis_whale_concentration_gate")):
+            missing.append("top10 >= 90%")
+        elif not bool(row.get("thesis_holder_evidence_gate")):
+            missing.append("ETH/BNB/ARB holder evidence")
+        if not bool(row.get("thesis_venue_gate")):
+            missing.append("Binance+Bitget")
+        if not bool(row.get("thesis_no_pump_gate")):
+            missing.append("60D no-pump proof")
+        if not missing:
+            missing.append("hard thesis proof")
+        return "thesis blocked: missing " + ", ".join(missing)
 
     long_breakout = all_df["broke_high_20d"] | all_df["broke_high_5d"] | all_df["broke_high_90d"] | all_df["broke_high_180d"]
     short_breakout = all_df["broke_low_20d"] | all_df["broke_low_5d"] | all_df["broke_low_90d"] | all_df["broke_low_180d"]
@@ -2239,7 +2338,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         & (~convexity_chase_risk | (all_df["convexity_late_penalty"].fillna(0.0) < 45.0))
     )
 
-    convex_long_mask = (
+    raw_convex_long_signal = (
         (~major_excluded)
         & not_late_stage
         & (~too_late_convexity)
@@ -2296,6 +2395,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
             | (all_df["mm_withdrawal_risk_score"] <= 72.0)
         )
     )
+    convex_long_mask = raw_convex_long_signal & thesis_gate
 
     avoid_mask = (
         all_df["blowoff_risk_flag"]
@@ -2336,7 +2436,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     scalp_only_mask = (
-        ~convex_long_mask
+        ~raw_convex_long_signal
         & ~avoid_mask
         & (
             all_df["crime_pump_flag"]
@@ -2432,13 +2532,38 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         {
             "trade_bucket": trade_bucket,
             "trade_bucket_score": trade_bucket_score,
+            "raw_convex_long_signal": raw_convex_long_signal.fillna(False).astype(bool),
+            "thesis_gate": thesis_gate.fillna(False).astype(bool),
+            "thesis_holder_gate": thesis_holder_gate.fillna(False).astype(bool),
+            "thesis_holder_evidence_gate": thesis_holder_evidence_gate.fillna(False).astype(bool),
+            "thesis_whale_concentration_gate": thesis_whale_gate.fillna(False).astype(bool),
+            "thesis_venue_gate": thesis_venue_gate.fillna(False).astype(bool),
+            "thesis_no_pump_gate": thesis_no_pump_gate.fillna(False).astype(bool),
         },
         index=all_df.index,
     )
     all_df = pd.concat(
-        [all_df.drop(columns=["trade_bucket", "trade_bucket_score"], errors="ignore"), bucket_frame],
+        [
+            all_df.drop(
+                columns=[
+                    "trade_bucket",
+                    "trade_bucket_score",
+                    "raw_convex_long_signal",
+                    "thesis_gate",
+                    "thesis_holder_gate",
+                    "thesis_holder_evidence_gate",
+                    "thesis_whale_concentration_gate",
+                    "thesis_venue_gate",
+                    "thesis_no_pump_gate",
+                    "thesis_gate_note",
+                ],
+                errors="ignore",
+            ),
+            bucket_frame,
+        ],
         axis=1,
     ).copy()
+    all_df["thesis_gate_note"] = all_df.apply(_thesis_gate_note, axis=1)
 
     def _bucket_note(row: pd.Series) -> str:
         bucket = str(row.get("trade_bucket", "Watch"))
@@ -2580,10 +2705,16 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         if bool(row.get("squeeze_risk_flag")):
             triggers.append("crowded squeeze")
 
+        thesis_note = str(row.get("thesis_gate_note", "") or "").strip()
+        raw_signal = bool(row.get("raw_convex_long_signal", False))
+        if bucket == "Convex Long":
+            parts = [thesis_note or "thesis pass: hard gates cleared", *triggers[:3]]
+            return " | ".join(part for part in parts if part)
+        if raw_signal:
+            parts = [thesis_note or "thesis blocked: hard gates unproven", *triggers[:3]]
+            return " | ".join(part for part in parts if part)
         if not triggers:
             return "No strong classification signal yet."
-        if bucket == "Convex Long":
-            return " | ".join(triggers[:4])
         if bucket == "Scalp Only":
             return " | ".join(triggers[:5])
         if bucket == "Avoid":
@@ -3192,6 +3323,14 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "holder_source",
         "trade_bucket",
         "trade_bucket_score",
+        "raw_convex_long_signal",
+        "thesis_gate",
+        "thesis_holder_gate",
+        "thesis_holder_evidence_gate",
+        "thesis_whale_concentration_gate",
+        "thesis_venue_gate",
+        "thesis_no_pump_gate",
+        "thesis_gate_note",
         "trade_bucket_note",
         *RANGE_BREAKOUT_COLUMNS,
         "broke_high_20d",
@@ -4688,6 +4827,14 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 *PRE_ACTIVITY_RADAR_COLUMNS,
                 "trade_bucket",
                 "trade_bucket_score",
+                "raw_convex_long_signal",
+                "thesis_gate",
+                "thesis_holder_gate",
+                "thesis_holder_evidence_gate",
+                "thesis_whale_concentration_gate",
+                "thesis_venue_gate",
+                "thesis_no_pump_gate",
+                "thesis_gate_note",
                 "trade_bucket_note",
             ]
         )
@@ -4813,6 +4960,30 @@ def render_breakout_dashboard() -> None:
                 "Bucket Score",
                 format="%.1f",
                 help="Ranking score inside each bucket. Higher is better for Convex Long / Scalp Only; higher means more toxic for Avoid.",
+            ),
+            "raw_convex_long_signal": st.column_config.CheckboxColumn(
+                "Raw Convex Signal",
+                help="Soft pre-ignition structure signal before the hard thesis gates are applied.",
+            ),
+            "thesis_gate": st.column_config.CheckboxColumn(
+                "Thesis Gate",
+                help="Hard RAVE/LAB gate: 90%+ top10 holder evidence, Binance+Bitget trading evidence, and 60D no-pump proof.",
+            ),
+            "thesis_holder_gate": st.column_config.CheckboxColumn(
+                "Holder Gate",
+                help="Observed top10 holder concentration is at least 90% with eligible explorer evidence.",
+            ),
+            "thesis_venue_gate": st.column_config.CheckboxColumn(
+                "Binance+Bitget",
+                help="Requires Binance perp/share evidence and Bitget trading evidence. Gate.IO is supporting only.",
+            ),
+            "thesis_no_pump_gate": st.column_config.CheckboxColumn(
+                "No Pump 60D",
+                help="Requires enough recent history to prove no large pump over the 60D lookback.",
+            ),
+            "thesis_gate_note": st.column_config.TextColumn(
+                "Thesis Gate Note",
+                help="Shows which non-negotiable thesis prerequisite is still missing.",
             ),
             "trade_bucket_note": st.column_config.TextColumn(
                 "Bucket Note",
@@ -6065,15 +6236,21 @@ def render_breakout_dashboard() -> None:
 
         st.subheader("Trade Buckets")
         st.caption(
-            "Quick triage bucket for each coin. Convex Long now prioritizes early asymmetric setups: controlled float, sponsored spot, "
-            "real expansion, some squeeze fuel, and enough runway left that the move can still become absurd. "
-            "Scalp Only catches hot but less durable momentum, and Avoid marks late / crowded / deteriorating structures."
+            "Quick triage bucket for each coin. Convex Long now requires the hard thesis gate first: 90%+ top10 holder evidence, "
+            "Binance+Bitget trading evidence, and 60D no-pump proof. Raw convex signals that miss a hard gate stay in watchlist "
+            "territory with the missing prerequisite shown inline."
         )
         bucket_cols = [
             "symbol",
             "base_asset",
             "trade_bucket",
             "trade_bucket_score",
+            "raw_convex_long_signal",
+            "thesis_gate",
+            "thesis_gate_note",
+            "thesis_holder_gate",
+            "thesis_venue_gate",
+            "thesis_no_pump_gate",
             "trade_bucket_note",
             "range_breakout_event",
             "range_breakout_side",
@@ -6630,6 +6807,12 @@ def render_breakout_dashboard() -> None:
                 "base_asset",
                 "trade_bucket",
                 "trade_bucket_score",
+                "raw_convex_long_signal",
+                "thesis_gate",
+                "thesis_gate_note",
+                "thesis_holder_gate",
+                "thesis_venue_gate",
+                "thesis_no_pump_gate",
                 "trade_bucket_note",
                 "last_price",
                 "ath_price",
@@ -7096,8 +7279,8 @@ def render_breakout_dashboard() -> None:
             ]
             st.markdown("#### Market-Structure Convexity")
             st.caption(
-                "These are the same triage buckets, but now with explicit early-convexity ranking. Convex Long should be the names "
-                "that still have real asymmetry left if the sponsor flow persists, not just whatever is already obviously ripping."
+                "These are the same triage buckets, but now with explicit early-convexity ranking and hard thesis gates. Convex Long "
+                "should be the names that clear concentration, Binance+Bitget, and no-pump proof before the breakout/flow signals matter."
             )
             crime_convex_col, crime_scalp_col, crime_avoid_col = st.columns(3)
             candidate_view_df = all_df[

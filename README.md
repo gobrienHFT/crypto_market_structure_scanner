@@ -83,6 +83,7 @@ It screens for conditions such as:
 - abnormal participation relative to recent baseline
 - structural squeeze conditions
 - case-study analogue matching for RAVE/LAB/SIREN/RIVER/STO-style structures, with RAVEUSDT on 2026-04-18 and LABUSDT on 2026-05-11 treated as historical anchors
+- dashboard `Convex Long` buckets that only promote rows after the hard holder, Binance+Bitget, and 60D no-pump thesis gates pass; raw convex setup signals stay visible as watchlist context with the missing gate printed inline
 
 The output is intended to help prioritize markets for further research rather than produce standalone trade instructions.
 
