@@ -3638,9 +3638,9 @@ def test_convex_candidates_require_binance_bitget_by_default(monkeypatch) -> Non
     assert selected["symbol"].tolist() == ["BITGETUSDT"]
 
 
-def test_discord_venue_gate_can_require_explicit_binance_evidence(monkeypatch) -> None:
+def test_discord_venue_gate_requires_explicit_binance_evidence_by_default(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
-    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "0")
+    monkeypatch.delenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", raising=False)
     frame = pd.DataFrame(
         [
             {"symbol": "SYMBOLONLYUSDT", "bitget_volume_share_pct": 1.0},
@@ -3653,6 +3653,35 @@ def test_discord_venue_gate_can_require_explicit_binance_evidence(monkeypatch) -
     selected = frame[bot._binance_bitget_trading_gate_mask(frame)]
 
     assert selected["symbol"].tolist() == ["MARKEDUSDT", "SHAREUSDT"]
+
+
+def test_discord_legacy_venue_gate_can_assume_binance_perp_universe(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
+    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "1")
+    frame = pd.DataFrame(
+        [
+            {"symbol": "SYMBOLONLYUSDT", "bitget_volume_share_pct": 1.0},
+            {"symbol": "NOBITGETUSDT", "binance_perp_universe": True},
+        ]
+    )
+
+    selected = frame[bot._binance_bitget_trading_gate_mask(frame)]
+
+    assert selected["symbol"].tolist() == ["SYMBOLONLYUSDT"]
+
+
+def test_discord_thesis_venue_gate_ignores_disabled_generic_env(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
+    frame = pd.DataFrame(
+        [
+            {"symbol": "GATEONLYUSDT", "gate_volume_share_pct": 4.0},
+            {"symbol": "BITGETUSDT", "binance_perp_universe": True, "bitget_volume_share_pct": 1.0},
+        ]
+    )
+
+    selected = bot._apply_thesis_venue_gate(frame)
+
+    assert selected["symbol"].tolist() == ["BITGETUSDT"]
 
 
 def test_strict_holder_evidence_requires_holder_source() -> None:

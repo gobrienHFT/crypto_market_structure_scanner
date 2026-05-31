@@ -2619,7 +2619,7 @@ def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
         | _boolish_series(frame.get("is_binance_perp"), index=frame.index)
         | _boolish_series(frame.get("_ravelab_binance_perp_universe"), index=frame.index)
     )
-    implicit_binance_perp = symbols.ne("") if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True) else pd.Series(False, index=frame.index)
+    implicit_binance_perp = symbols.ne("") if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", False) else pd.Series(False, index=frame.index)
     has_binance = (
         explicit_binance_perp
         | implicit_binance_perp
@@ -2657,7 +2657,7 @@ def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
 
 
 def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty or not _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True):
+    if frame.empty:
         return frame.copy()
     return frame[_explicit_binance_bitget_trading_gate_mask(frame)].copy()
 
