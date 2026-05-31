@@ -17,6 +17,7 @@ PRE_ACTIVITY_RADAR_COLUMNS = [
     "pre_activity_float_score",
     "pre_activity_behavior_score",
     "pre_activity_short_fuse_score",
+    "pre_activity_squeeze_fuel_score",
     "pre_activity_quiet_score",
     "pre_activity_venue_score",
     "pre_activity_thin_book_score",
@@ -28,6 +29,7 @@ PRE_ACTIVITY_RADAR_COLUMNS = [
     "pre_activity_binance_bitget_gate",
     "pre_activity_float_gate",
     "pre_activity_structure_gate",
+    "pre_activity_short_gate",
     "pre_activity_behavior_gate",
     "pre_activity_quiet_gate",
     "pre_activity_no_recent_pump_gate",
@@ -202,6 +204,8 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
         return "Float/FDV gate unproven"
     if not structure:
         return "Structure gate unproven"
+    if not _row_bool(row, "pre_activity_short_gate"):
+        return "Squeeze fuel unproven"
     if not venue:
         return "Venue gate unproven"
     if not behavior:
@@ -227,6 +231,8 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
         missing.append("Binance+Bitget trading evidence")
     if not _row_bool(row, "pre_activity_float_gate"):
         missing.append("low-float/FDV structure")
+    if not _row_bool(row, "pre_activity_short_gate"):
+        missing.append("short crowd plus squeeze fuel")
     if not _row_bool(row, "pre_activity_behavior_gate"):
         missing.append("target CEX flow or venue-inventory tell")
     if not _row_bool(row, "pre_activity_confirmed_target_flow"):
@@ -347,17 +353,43 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     )
     behavior_score = _clip(raw_behavior_score.where(target_flow, raw_behavior_score * 0.68))
 
-    short_fuse_score = _clip(
+    short_crowd_score = _clip(
         pd.concat(
             [
                 _score_linear(short_pct, 49.0, 72.0),
                 _num(output, "short_dominance_score"),
-                _num(output, "short_account_build_score"),
+                _num(output, "short_crowding_score"),
                 _num(output, "terminal_short_pressure_score"),
-                _num(output, "early_pump_short_squeeze_score"),
+            ],
+            axis=1,
+        ).max(axis=1)
+    )
+    squeeze_fuel_score = _clip(
+        pd.concat(
+            [
+                _num(output, "early_pump_squeeze_fuel_score"),
+                _num(output, "short_account_build_score"),
+                _num(output, "silent_oi_accumulation_score"),
+                _num(output, "short_liquidation_fuel_score"),
+                _num(output, "short_squeeze_score"),
+                _num(output, "funding_flip_score"),
+                _boolish(output.get("fresh_flip_flag"), index=index).astype(float) * 100.0,
+                _num(output, "forced_buying_setup_score"),
+                _num(output, "perp_squeeze_confluence_score"),
                 _score_linear(_num(output, "short_account_change_max_pp"), 0.25, 5.0),
-                _score_linear(_num(output, "oi_to_24h_volume_pct"), 2.0, 22.0),
+                _score_linear(_num(output, "oi_delta_pct"), 0.5, 7.5),
+                _score_linear(_num(output, "oi_to_24h_volume_pct"), 2.0, 18.0),
                 _score_linear(_num(output, "oi_to_market_cap_pct"), 2.0, 35.0),
+            ],
+            axis=1,
+        ).max(axis=1)
+    )
+    short_fuse_score = _clip(
+        pd.concat(
+            [
+                short_crowd_score * 0.60 + squeeze_fuel_score * 0.40,
+                squeeze_fuel_score,
+                short_crowd_score * 0.45 + _num(output, "terminal_short_pressure_score") * 0.55,
             ],
             axis=1,
         ).max(axis=1)
@@ -441,6 +473,10 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     venue_pair_gate = binance_bitget_venue_mask(output, allow_cex_flow_targets=False)
     float_gate = float_score.ge(45.0)
     structure_gate = whale_gate & float_gate
+    short_crowd_gate = short_pct.ge(50.0) | short_crowd_score.ge(55.0)
+    short_gate = (short_crowd_gate & squeeze_fuel_score.ge(40.0)) | (
+        squeeze_fuel_score.ge(75.0) & short_fuse_score.ge(55.0)
+    )
     behavior_gate = target_flow | behavior_score.ge(58.0) | ((venue_score >= 55.0) & (short_fuse_score >= 52.0))
     quiet_gate = quiet_score.ge(50.0) & activity_heat.lt(62.0)
     no_recent_pump_gate = _no_recent_pump_gate(output)
@@ -467,6 +503,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     output["pre_activity_float_score"] = float_score
     output["pre_activity_behavior_score"] = behavior_score
     output["pre_activity_short_fuse_score"] = short_fuse_score
+    output["pre_activity_squeeze_fuel_score"] = squeeze_fuel_score
     output["pre_activity_quiet_score"] = quiet_score
     output["pre_activity_venue_score"] = venue_score
     output["pre_activity_thin_book_score"] = thin_book_score
@@ -478,6 +515,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     output["pre_activity_binance_bitget_gate"] = venue_pair_gate
     output["pre_activity_float_gate"] = float_gate & (~major_excluded)
     output["pre_activity_structure_gate"] = structure_gate & (~major_excluded)
+    output["pre_activity_short_gate"] = short_gate & (~major_excluded)
     output["pre_activity_behavior_gate"] = behavior_gate & (~major_excluded)
     output["pre_activity_quiet_gate"] = quiet_gate & (~major_excluded)
     output["pre_activity_no_recent_pump_gate"] = no_recent_pump_gate & (~major_excluded)
@@ -485,6 +523,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
         score.ge(62.0)
         & structure_gate
         & behavior_gate
+        & short_gate
         & quiet_gate
         & no_recent_pump_gate
         & venue_pair_gate

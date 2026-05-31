@@ -3652,6 +3652,7 @@ def _precrime_line(row: pd.Series) -> str:
     top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
     top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    fuel = _safe_float(row.get("pre_activity_squeeze_fuel_score")) or 0.0
     next_check = _clip_text(row.get("pre_activity_next_check", ""), 100)
     no_pump = "Y" if _boolish_scalar(row.get("pre_activity_no_recent_pump_gate")) else "N"
     ref_suffix = f" | anchor {ref_symbol} {ref_date}".rstrip() if ref_symbol or ref_date else ""
@@ -3659,7 +3660,7 @@ def _precrime_line(row: pd.Series) -> str:
         f"/{symbol} | {state} | latent {score:.0f}/100 | {signal} | "
         f"CEX-tell {behavior:.0f} {targets} {cex_count}tx max {max_amount} | "
         f"control {control:.0f} | float {float_score:.0f} | thin-book {thin:.0f} | "
-        f"quiet {quiet:.0f} heat {heat:.0f} | noPump60 {no_pump} | top10 {top10_text}, top100 {top100_text} | shorts {short_text}"
+        f"quiet {quiet:.0f} heat {heat:.0f} | noPump60 {no_pump} | top10 {top10_text}, top100 {top100_text} | shorts {short_text} fuel {fuel:.0f}"
         f"{ref_suffix}{f' | next: {next_check}' if next_check else ''}"
     )
 
@@ -3692,7 +3693,7 @@ def _load_precrime_list(
         f"Min latent score: {float(min_score):.0f} | Holder gate: top10 >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
-        "Float/FDV structure required: True | "
+        "Float/FDV structure required: True | Squeeze fuel required: True | "
         f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate} | "
         f"60D no-pump required: {require_dormant_60d}"
     )
@@ -3739,6 +3740,16 @@ def _load_precrime_list(
             + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
             + f"60D no-pump proof rows: {dormant_count} | Float/FDV structure rows: {structure_count}. "
             + "No rows had enough low-float/high-FDV structure evidence."
+        ]
+    short_gate = _boolish_series(scored.get("pre_activity_short_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    short_count = int(short_gate.sum())
+    scored = scored[short_gate].copy()
+    if scored.empty:
+        return "Pre-activity radar", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count} | Float/FDV structure rows: {structure_count} | "
+            + f"Squeeze-fuel rows: {short_count}. No rows had enough short crowd plus squeeze fuel."
         ]
 
     score = _num_series(scored, "pre_activity_pump_score")
@@ -3789,7 +3800,7 @@ def _load_precrime_list(
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
     lines = [
         header,
-        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Float/FDV structure {structure_count} | Shown after latent filters {len(selected)}",
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Float/FDV structure {structure_count} | Squeeze fuel {short_count} | Shown after latent filters {len(selected)}",
         f"Matches: {len(selected)} | Target-flow rows: {target_count} | Quiet-gated rows: {quiet_count} | Read: structural-risk evidence, not trade instruction.",
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",

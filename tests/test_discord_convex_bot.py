@@ -2365,11 +2365,11 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
                 "recent_max_pump_60d_pct": 6.0,
                 "recent_pump_60d_days": 60,
                 "no_large_pump_60d_flag": True,
-                "short_account_pct": 48.0,
+                "short_account_pct": 52.0,
                 "short_dominance_score": 30.0,
-                "short_account_build_score": 25.0,
-                "short_account_change_max_pp": 0.1,
-                "oi_to_24h_volume_pct": 3.0,
+                "short_account_build_score": 52.0,
+                "short_account_change_max_pp": 1.8,
+                "oi_to_24h_volume_pct": 9.0,
                 "ask_depth_1pct_usdt": 45_000,
                 "ask_depth_to_24h_volume_pct": 0.03,
                 "binance_bitget_gate_share_pct": 35.0,
@@ -2476,14 +2476,67 @@ def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) ->
     assert "Holder gate: top10 >= 90.0%" in output
     assert "Holder evidence required: True" in output
     assert "Binance+Bitget required: True" in output
-    assert "Gate rows: strict holder 2 | Binance+Bitget 2 | 60D no-pump 2 | Float/FDV structure 1" in output
+    assert "Squeeze fuel required: True" in output
+    assert "Gate rows: strict holder 2 | Binance+Bitget 2 | 60D no-pump 2 | Float/FDV structure 1 | Squeeze fuel 1" in output
     assert "Candidates: /SLEEPUSDT" in output
     assert "/SLEEPUSDT | Stealth inventory setup" in output
     assert "CEX-tell" in output
     assert "Binance, Gate.io 2tx max 240.00K" in output
+    assert "shorts 52.0% fuel 52" in output
     assert "anchor LABUSDT 2026-05-11" in output
     assert "/HOTUSDT" not in output
     assert "/THINONLYUSDT" not in output
+
+
+def test_load_precrime_list_requires_short_fuel_not_short_pct_alone(monkeypatch) -> None:
+    base = {
+        **_holder_evidence(chain="bsc", contract="0x2222222222222222222222222222222222222222"),
+        "cex_deposit_flow_score": 92,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 2,
+        "cex_deposit_24h_token_amount": 420_000,
+        "cex_deposit_24h_max_amount": 240_000,
+        "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+        "cex_deposit_inventory_stress_score": 95,
+        "inventory_transfer_risk_score": 92,
+        "top10_holder_pct": 92.0,
+        "top100_holder_pct": 99.0,
+        "centralized_ownership_score": 88.0,
+        "low_float_score": 86.0,
+        "float_trap_score": 82.0,
+        "fdv_to_market_cap": 11.0,
+        "locked_supply_pct": 70.0,
+        "short_account_pct": 72.0,
+        "short_dominance_score": 80.0,
+        "ask_depth_1pct_usdt": 42_000,
+        "ask_depth_to_24h_volume_pct": 0.03,
+        "binance_volume_share_pct": 12.0,
+        "bitget_volume_share_pct": 1.8,
+        "low_volatility_coil_score": 82.0,
+        "pre_pump_precision_score": 78.0,
+        "day_return_pct": 0.9,
+        "price_change_24h_pct": 0.9,
+        "hour_return_pct": 0.2,
+        "range_24h_pct": 3.2,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "now",
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "SHORTONLYUSDT"},
+            {**base, "symbol": "FUELUSDT", "short_account_build_score": 52.0},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_precrime_list(10, min_score=0, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "Pre-activity radar"
+    assert "Gate rows: strict holder 2 | Binance+Bitget 2 | 60D no-pump 2 | Float/FDV structure 2 | Squeeze fuel 1" in output
+    assert "/FUELUSDT" in output
+    assert "shorts 72.0% fuel 52" in output
+    assert "/SHORTONLYUSDT" not in output
 
 
 def test_precrime_target_flow_respects_min_transfer_floor(monkeypatch) -> None:
