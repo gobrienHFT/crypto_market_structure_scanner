@@ -130,6 +130,8 @@ cex_flow         core thesis gate plus concentration-gated wallet-to-CEX transfe
 convex           legacy Convex Long selection after the same core thesis gates
 ```
 
+Every watcher card starts with a compact `Watcher gate` line showing `coreThesis`, holder/top10, Binance+Bitget, 60D no-pump, and short-account context, so automated posts expose the hard-gate proof instead of relying on the alert-source label alone.
+
 `/startbot` uses the same stricter candidate gate before selecting a paper/live setup: observed top10 holder control with ETH/BNB/ARB explorer evidence, explicit Binance+Bitget trading evidence, 60D no-pump proof, short crowd plus squeeze fuel, low-float/high-FDV evidence, and not-late structure. It should therefore lag `/radar` rather than front-run weaker diagnostic rows.
 
 Suggested starting point:

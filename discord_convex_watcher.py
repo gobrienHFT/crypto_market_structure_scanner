@@ -23,7 +23,14 @@ from proof_engine import archive_alerts, refresh_outcomes
 from scan_orchestrator import apply_core_setup_gate, run_scanner_scan, select_convex_long_candidates
 from terminal_engine import apply_terminal_model
 from timing_engine import apply_timing_model
-from venue_gate import apply_thesis_alert_gate, thesis_alert_header
+from venue_gate import (
+    apply_thesis_alert_gate,
+    binance_bitget_venue_mask,
+    effective_top10_holder_pct,
+    holder_concentration_mask,
+    no_recent_pump_proof_mask,
+    thesis_alert_header,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -168,7 +175,45 @@ def _holder_composition_text(row: pd.Series) -> str:
 
 def _candidate_line(row: pd.Series) -> str:
     holder_text = _holder_composition_text(row)
-    return build_discord_flag_card(row, holder_text=holder_text)
+    return f"{_watcher_gate_line(row)}\n{build_discord_flag_card(row, holder_text=holder_text)}"
+
+
+def _mask_first(mask: pd.Series) -> bool:
+    if not isinstance(mask, pd.Series) or mask.empty:
+        return False
+    return bool(_boolish_series(mask, index=mask.index).iloc[0])
+
+
+def _yes_no(value: bool) -> str:
+    return "Y" if bool(value) else "N"
+
+
+def _watcher_gate_line(row: pd.Series) -> str:
+    frame = pd.DataFrame([row.to_dict()]).loc[:, lambda data: ~data.columns.duplicated()].copy()
+    holder_pass = _mask_first(holder_concentration_mask(frame, min_whale_pct=90.0, require_holder_evidence=True))
+    venue_pass = _mask_first(binance_bitget_venue_mask(frame, allow_cex_flow_targets=False))
+    no_pump_pass = _mask_first(no_recent_pump_proof_mask(frame))
+    try:
+        core_frame = apply_core_setup_gate(
+            apply_thesis_alert_gate(_ensure_alert_scores(frame), allow_cex_flow_targets=False)
+        )
+        core_pass = not core_frame.empty
+    except Exception:
+        core_pass = holder_pass and venue_pass and no_pump_pass
+    top10 = None
+    try:
+        top10_values = effective_top10_holder_pct(frame)
+        if not top10_values.empty:
+            top10 = _safe_float(top10_values.iloc[0])
+    except Exception:
+        top10 = None
+    short_pct = _safe_float(row.get("short_account_pct"))
+    top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
+    short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    return (
+        f"Watcher gate: coreThesis {_yes_no(core_pass)} | holder {_yes_no(holder_pass)} top10 {top10_text} | "
+        f"BnBg {_yes_no(venue_pass)} | noPump60 {_yes_no(no_pump_pass)} | shorts {short_text}"
+    )
 
 
 def _ensure_alert_scores(frame: pd.DataFrame) -> pd.DataFrame:
@@ -186,6 +231,7 @@ def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[st
     archive_rows: list[dict[str, Any]] = []
     for _, row in candidates.iterrows():
         holder_text = _holder_composition_text(row)
+        gate_line = _watcher_gate_line(row)
         alert_source = str(row.get("watcher_alert_source", "")).strip().lower().replace("-", "_")
         if alert_source in {"cex_flow", "cexflow", "cex_deposit_flow"}:
             card = build_cex_flow_discord_block(row, max_chars=900)
@@ -193,6 +239,7 @@ def _candidate_cards_and_archive_rows(candidates: pd.DataFrame) -> tuple[list[st
                 card = f"{card}\n{holder_text[:360]}"
         else:
             card = build_discord_flag_card(row, holder_text=holder_text)
+        card = f"{gate_line}\n{card}"
         cards.append(card)
         record = row.to_dict()
         record["_holder_text"] = holder_text

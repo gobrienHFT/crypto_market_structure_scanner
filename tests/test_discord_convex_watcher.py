@@ -287,9 +287,41 @@ def test_cex_flow_watcher_cards_use_flow_format(monkeypatch) -> None:
     cards, archive = watcher._candidate_cards_and_archive_rows(frame)
 
     assert len(cards) == 1
+    assert cards[0].startswith("Watcher gate:")
     assert "CEX Flow Score: 88/100 | Risk: High" in cards[0]
     assert "Venue-flow read:" in cards[0]
     assert "Next check:" in cards[0]
+    assert archive.iloc[0]["_raw_bot_output"] == cards[0]
+
+
+def test_watcher_cards_print_core_thesis_gate_line(monkeypatch) -> None:
+    monkeypatch.setattr(watcher, "_holder_composition_text", lambda row: "")
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "COREUSDT",
+                "watcher_alert_source": "terminal_timing",
+                "terminal_edge_score": 81,
+                "timing_score": 72,
+                "timing_state": "Triggering",
+                "bitget_volume_share_pct": 2.0,
+                "short_account_pct": 63.0,
+                **CORE_SETUP,
+                **THESIS_PUMP_PROOF,
+                "token_platform": "ethereum",
+                "token_contract": "0x9999999999999999999999999999999999999999",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+            }
+        ]
+    )
+
+    cards, archive = watcher._candidate_cards_and_archive_rows(frame)
+
+    assert cards[0].startswith(
+        "Watcher gate: coreThesis Y | holder Y top10 91.0% | BnBg Y | noPump60 Y | shorts 63.0%"
+    )
     assert archive.iloc[0]["_raw_bot_output"] == cards[0]
 
 

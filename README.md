@@ -403,6 +403,8 @@ DISCORD_HOLDER_COMPOSITION_ENABLED=1
 - `cex_flow` alerts from core-gated, concentration-gated wallet-to-CEX token-transfer flow.
 - `convex` keeps the older Convex Long source, but rows still pass the core thesis gates before posting.
 
+Every watcher card now starts with a compact `Watcher gate` line showing `coreThesis`, holder/top10, Binance+Bitget, 60D no-pump, and short-account context, so automatic alerts carry the same hard-gate proof posture as the slash-command screens.
+
 The watcher stores state locally so unchanged candidates are not reposted every scan:
 
 ```text
