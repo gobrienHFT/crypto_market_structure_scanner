@@ -183,7 +183,7 @@ Verdict: VERIFIED target-CEX transfer evidence
 Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Floor: 20.00K tokens | Lookback: 24h
 Read: only rows with count > 0, largest transfer above floor, and a labelled destination are treated as confirmed.
 Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate.
-Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts Y | noPump60 Y | whaleOrigin Y
+Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin Y
 
 Targets: Bitget, GateIO
 Transfers: 3
@@ -339,7 +339,7 @@ CEX-flow attempts 12 | no-transfer rows 8 | gate-not-met rows 0 | errors 2 | raw
 CEX-flow source paths: token_transfer_api x1; advanced_filter_blocked_api_fallback x2
 
 API fallback readiness:
-- arbitrum: no key (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or ARBISCAN_API_KEY or ARBSCAN_API_KEY)
+- arbitrum: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or ARBISCAN_API_KEY or ARBSCAN_API_KEY)
 - base: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or BASESCAN_API_KEY)
 - bsc: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY or BSCSCAN_API_KEY)
 - ethereum: key present (ETHERSCAN_V2_API_KEY or ETHERSCAN_API_KEY)

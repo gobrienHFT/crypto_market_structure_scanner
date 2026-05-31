@@ -19,6 +19,12 @@ def _thesis_fields(contract_suffix: str = "1") -> dict[str, object]:
         "recent_max_pump_60d_pct": 6.0,
         "recent_pump_60d_days": 60,
         "no_large_pump_60d_flag": True,
+        "low_float_score": 82.0,
+        "float_trap_score": 78.0,
+        "fdv_to_market_cap": 8.0,
+        "short_account_pct": 63.0,
+        "short_account_build_score": 52.0,
+        "pre_pump_precision_score": 76.0,
     }
 
 
@@ -91,6 +97,36 @@ def test_select_trade_candidate_rejects_ungated_convex_long_rows() -> None:
     )
 
     assert select_trade_candidate(frame, TradeBotConfig()) is None
+
+
+def test_select_trade_candidate_requires_core_squeeze_fuel_gate() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "SHORTONLYUSDT",
+                "trade_bucket": "Convex Long",
+                "terminal_edge_score": 90,
+                "timing_score": 90,
+                "trade_bucket_score": 90,
+                "timing_state": "Confirmed",
+                **{**_thesis_fields("4"), "short_account_pct": 72.0, "short_account_build_score": 0.0},
+            },
+            {
+                "symbol": "FUELUSDT",
+                "trade_bucket": "Convex Long",
+                "terminal_edge_score": 82,
+                "timing_score": 82,
+                "trade_bucket_score": 82,
+                "timing_state": "Confirmed",
+                **_thesis_fields("5"),
+            },
+        ]
+    )
+
+    row = select_trade_candidate(frame, TradeBotConfig())
+
+    assert row is not None
+    assert row["symbol"] == "FUELUSDT"
 
 
 def test_quarter_kelly_uses_default_when_sample_is_thin() -> None:

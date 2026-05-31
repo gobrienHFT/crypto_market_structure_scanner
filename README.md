@@ -290,7 +290,7 @@ The bot can retrieve:
 - Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with blocked/error rows when labelled CEX destinations still cannot be verified
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`
-- whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
+- top-10-first whale-dominance rankings, with top100 retained as diagnostic context
 - high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short crowd plus squeeze fuel, and not-late structure
 - symbol-level market structure metrics
 - live scan context
@@ -298,6 +298,7 @@ The bot can retrieve:
 - contract metadata when available
 - trailing proof-engine outcome summaries
 - local proof-archive exports
+- trade-bot candidate selection that reuses the strict thesis plus core setup gates before any paper/live setup is chosen
 
 Example `.env` configuration:
 

@@ -128,6 +128,8 @@ cex_flow         core thesis gate plus concentration-gated wallet-to-CEX transfe
 convex           legacy Convex Long selection after the same core thesis gates
 ```
 
+`/startbot` uses the same stricter candidate gate before selecting a paper/live setup: observed top10 holder control with ETH/BNB/ARB explorer evidence, explicit Binance+Bitget trading evidence, 60D no-pump proof, short crowd plus squeeze fuel, low-float/high-FDV evidence, and not-late structure. It should therefore lag `/radar` rather than front-run weaker diagnostic rows.
+
 Suggested starting point:
 
 ```text
