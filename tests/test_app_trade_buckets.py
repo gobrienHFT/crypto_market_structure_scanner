@@ -27,6 +27,27 @@ def test_score_trade_buckets_requires_hard_thesis_before_convex_long(monkeypatch
                 "recent_max_pump_60d_pct": 6.0,
                 "recent_pump_60d_days": 60,
                 "no_large_pump_60d_flag": True,
+                "low_float_score": 82.0,
+                "fdv_to_market_cap": 8.0,
+                "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
+                "pre_pump_precision_score": 76.0,
+            },
+            {
+                "symbol": "BASEONLYUSDT",
+                "pre_pump_candidate_flag": True,
+                "top10_holder_pct": 94.0,
+                "token_platform": "ethereum",
+                "token_contract": "0x3333333333333333333333333333333333333333",
+                "holder_source": "Etherscan holder endpoint",
+                "binance_perp_universe": True,
+                "bitget_volume_share_pct": 1.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "short_account_pct": 63.0,
+                "pre_pump_precision_score": 76.0,
             },
             {
                 "symbol": "SOFTUSDT",
@@ -46,8 +67,17 @@ def test_score_trade_buckets_requires_hard_thesis_before_convex_long(monkeypatch
 
     assert scored.loc["GOODUSDT", "trade_bucket"] == "Convex Long"
     assert bool(scored.loc["GOODUSDT", "raw_convex_long_signal"])
+    assert bool(scored.loc["GOODUSDT", "thesis_base_gate"])
     assert bool(scored.loc["GOODUSDT", "thesis_gate"])
+    assert bool(scored.loc["GOODUSDT", "thesis_core_gate"])
+    assert bool(scored.loc["GOODUSDT", "thesis_float_gate"])
+    assert bool(scored.loc["GOODUSDT", "thesis_short_squeeze_gate"])
     assert "thesis pass" in scored.loc["GOODUSDT", "trade_bucket_note"]
+    assert scored.loc["BASEONLYUSDT", "trade_bucket"] == "Watch"
+    assert bool(scored.loc["BASEONLYUSDT", "raw_convex_long_signal"])
+    assert bool(scored.loc["BASEONLYUSDT", "thesis_base_gate"])
+    assert not bool(scored.loc["BASEONLYUSDT", "thesis_gate"])
+    assert "missing low-float/FDV evidence, short crowd+fuel" in scored.loc["BASEONLYUSDT", "thesis_gate_note"]
     assert scored.loc["SOFTUSDT", "trade_bucket"] == "Watch"
     assert bool(scored.loc["SOFTUSDT", "raw_convex_long_signal"])
     assert not bool(scored.loc["SOFTUSDT", "thesis_gate"])

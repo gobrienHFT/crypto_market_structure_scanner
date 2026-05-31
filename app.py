@@ -2082,6 +2082,13 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         all_df["thesis_whale_concentration_gate"] = pd.Series(dtype="bool")
         all_df["thesis_venue_gate"] = pd.Series(dtype="bool")
         all_df["thesis_no_pump_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_base_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_float_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_short_squeeze_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_not_late_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_core_gate"] = pd.Series(dtype="bool")
+        all_df["thesis_core_squeeze_fuel_score"] = pd.Series(dtype="float64")
+        all_df["thesis_core_float_score"] = pd.Series(dtype="float64")
         all_df["thesis_gate_note"] = pd.Series(dtype="object")
         all_df["trade_bucket_note"] = pd.Series(dtype="object")
         return all_df
@@ -2226,7 +2233,9 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "target_cex_flow_score",
         "target_cex_share_change_pp",
         "cex_lane_wakeup_score",
+        "short_account_pct",
         "oi_value_change_since_scan_pct",
+        "oi_to_24h_volume_pct",
         "ask_depth_1pct_change_pct",
         "ask_depth_withdrawal_score",
         "thin_ask_trap_score",
@@ -2238,6 +2247,16 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         "range_breakout_score",
         "range_high_break_count",
         "range_low_break_count",
+        "short_crowding_score",
+        "accumulation_absorption_score",
+        "fdv_to_market_cap",
+        "locked_supply_pct",
+        "terminal_float_score",
+        "terminal_hidden_float_reflexivity_score",
+        "terminal_short_pressure_score",
+        "terminal_pre_ignition_quality_score",
+        "timing_score",
+        "timing_too_late_score",
     ]
     missing_numeric_cols = [col for col in numeric_cols if col not in all_df.columns]
     if missing_numeric_cols:
@@ -2305,11 +2324,78 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     thesis_holder_gate = holder_concentration_mask(all_df, min_whale_pct=90.0, require_holder_evidence=True)
     thesis_venue_gate = binance_bitget_venue_mask(all_df, allow_cex_flow_targets=False)
     thesis_no_pump_gate = no_recent_pump_proof_mask(all_df)
-    thesis_gate = thesis_holder_gate & thesis_venue_gate & thesis_no_pump_gate
+    thesis_base_gate = thesis_holder_gate & thesis_venue_gate & thesis_no_pump_gate
+    thesis_short_pct = all_df["short_account_pct"].fillna(0.0)
+    thesis_short_crowd_gate = (
+        thesis_short_pct.ge(50.0)
+        | all_df["short_dominance_score"].fillna(0.0).ge(60.0)
+        | all_df["short_crowding_score"].fillna(0.0).ge(55.0)
+        | all_df["terminal_short_pressure_score"].fillna(0.0).ge(55.0)
+    )
+    thesis_squeeze_fuel_score = pd.concat(
+        [
+            all_df["short_account_build_score"].fillna(0.0),
+            all_df["silent_oi_accumulation_score"].fillna(0.0),
+            all_df["short_liquidation_fuel_score"].fillna(0.0),
+            all_df["funding_flip_score"].fillna(0.0),
+            all_df["fresh_flip_flag"].fillna(False).astype(bool).astype(float) * 100.0,
+            all_df["forced_buying_setup_score"].fillna(0.0),
+            all_df["perp_squeeze_confluence_score"].fillna(0.0),
+            _linear_score(all_df["short_account_change_max_pp"].fillna(0.0), low=0.25, high=5.0),
+            _linear_score(all_df["oi_delta_pct"].fillna(0.0), low=0.5, high=7.5),
+            _linear_score(all_df["oi_to_24h_volume_pct"].fillna(0.0), low=2.0, high=18.0),
+            _linear_score(all_df["oi_to_market_cap_pct"].fillna(0.0), low=2.0, high=35.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0).clip(lower=0.0, upper=100.0)
+    thesis_short_squeeze_gate = (
+        (thesis_short_crowd_gate & thesis_squeeze_fuel_score.ge(40.0))
+        | thesis_squeeze_fuel_score.ge(75.0)
+    )
+    thesis_float_score = pd.concat(
+        [
+            all_df["low_float_score"].fillna(0.0),
+            all_df["float_trap_score"].fillna(0.0),
+            all_df["terminal_float_score"].fillna(0.0),
+            all_df["terminal_hidden_float_reflexivity_score"].fillna(0.0),
+            _linear_score(all_df["fdv_to_market_cap"].fillna(0.0), low=1.8, high=12.0),
+            _linear_score(all_df["locked_supply_pct"].fillna(0.0), low=15.0, high=85.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0).clip(lower=0.0, upper=100.0)
+    thesis_float_gate = (
+        thesis_float_score.ge(55.0)
+        | all_df["fdv_to_market_cap"].fillna(0.0).ge(4.0)
+        | all_df["locked_supply_pct"].fillna(0.0).ge(45.0)
+    )
+    thesis_structure_score = pd.concat(
+        [
+            all_df["terminal_pre_ignition_quality_score"].fillna(0.0),
+            all_df["timing_score"].fillna(0.0),
+            all_df["dormant_short_fuse_score"].fillna(0.0),
+            all_df["pre_pump_precision_score"].fillna(0.0),
+            all_df["rave_lab_setup_score"].fillna(0.0),
+            all_df["accumulation_absorption_score"].fillna(0.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    thesis_late_risk = pd.concat(
+        [
+            all_df["timing_too_late_score"].fillna(0.0),
+            all_df["convexity_late_penalty"].fillna(0.0),
+            all_df["no_chase_penalty_score"].fillna(0.0),
+            all_df["exit_fragility_score"].fillna(0.0) * 0.7,
+            all_df["crime_exhaustion_score"].fillna(0.0) * 0.7,
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    thesis_not_late_gate = thesis_structure_score.ge(35.0) & (100.0 - thesis_late_risk).clip(lower=0.0, upper=100.0).ge(45.0)
+    thesis_core_gate = thesis_base_gate & thesis_float_gate & thesis_short_squeeze_gate & thesis_not_late_gate
+    thesis_gate = thesis_core_gate
 
     def _thesis_gate_note(row: pd.Series) -> str:
         if bool(row.get("thesis_gate")):
-            return "thesis pass: top10 >= 90%, holder evidence, Binance+Bitget, 60D no-pump"
+            return "thesis pass: top10 >= 90%, holder evidence, Binance+Bitget, 60D no-pump, float/FDV, short crowd+fuel, early/not-late"
         missing: list[str] = []
         if not bool(row.get("thesis_whale_concentration_gate")):
             missing.append("top10 >= 90%")
@@ -2319,6 +2405,13 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
             missing.append("Binance+Bitget")
         if not bool(row.get("thesis_no_pump_gate")):
             missing.append("60D no-pump proof")
+        if bool(row.get("thesis_base_gate")):
+            if not bool(row.get("thesis_float_gate")):
+                missing.append("low-float/FDV evidence")
+            if not bool(row.get("thesis_short_squeeze_gate")):
+                missing.append("short crowd+fuel")
+            if not bool(row.get("thesis_not_late_gate")):
+                missing.append("early/not-late structure")
         if not missing:
             missing.append("hard thesis proof")
         return "thesis blocked: missing " + ", ".join(missing)
@@ -2611,6 +2704,13 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
             "thesis_whale_concentration_gate": thesis_whale_gate.fillna(False).astype(bool),
             "thesis_venue_gate": thesis_venue_gate.fillna(False).astype(bool),
             "thesis_no_pump_gate": thesis_no_pump_gate.fillna(False).astype(bool),
+            "thesis_base_gate": thesis_base_gate.fillna(False).astype(bool),
+            "thesis_float_gate": thesis_float_gate.fillna(False).astype(bool),
+            "thesis_short_squeeze_gate": thesis_short_squeeze_gate.fillna(False).astype(bool),
+            "thesis_not_late_gate": thesis_not_late_gate.fillna(False).astype(bool),
+            "thesis_core_gate": thesis_core_gate.fillna(False).astype(bool),
+            "thesis_core_squeeze_fuel_score": thesis_squeeze_fuel_score,
+            "thesis_core_float_score": thesis_float_score,
         },
         index=all_df.index,
     )
@@ -2627,6 +2727,13 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
                     "thesis_whale_concentration_gate",
                     "thesis_venue_gate",
                     "thesis_no_pump_gate",
+                    "thesis_base_gate",
+                    "thesis_float_gate",
+                    "thesis_short_squeeze_gate",
+                    "thesis_not_late_gate",
+                    "thesis_core_gate",
+                    "thesis_core_squeeze_fuel_score",
+                    "thesis_core_float_score",
                     "thesis_gate_note",
                 ],
                 errors="ignore",
@@ -3402,6 +3509,13 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "thesis_whale_concentration_gate",
         "thesis_venue_gate",
         "thesis_no_pump_gate",
+        "thesis_base_gate",
+        "thesis_float_gate",
+        "thesis_short_squeeze_gate",
+        "thesis_not_late_gate",
+        "thesis_core_gate",
+        "thesis_core_squeeze_fuel_score",
+        "thesis_core_float_score",
         "thesis_gate_note",
         "trade_bucket_note",
         *RANGE_BREAKOUT_COLUMNS,
@@ -4906,6 +5020,13 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 "thesis_whale_concentration_gate",
                 "thesis_venue_gate",
                 "thesis_no_pump_gate",
+                "thesis_base_gate",
+                "thesis_float_gate",
+                "thesis_short_squeeze_gate",
+                "thesis_not_late_gate",
+                "thesis_core_gate",
+                "thesis_core_squeeze_fuel_score",
+                "thesis_core_float_score",
                 "thesis_gate_note",
                 "trade_bucket_note",
             ]
@@ -5039,7 +5160,11 @@ def render_breakout_dashboard() -> None:
             ),
             "thesis_gate": st.column_config.CheckboxColumn(
                 "Thesis Gate",
-                help="Hard RAVE/LAB gate: 90%+ top10 holder evidence, Binance+Bitget trading evidence, and 60D no-pump proof.",
+                help="Full hard gate: 90%+ top10 holder evidence, Binance+Bitget trading evidence, 60D no-pump proof, float/FDV evidence, short crowd plus squeeze fuel, and early/not-late structure.",
+            ),
+            "thesis_base_gate": st.column_config.CheckboxColumn(
+                "Base Thesis",
+                help="Base structural gate before float/FDV and squeeze-fuel checks: holder evidence, Binance+Bitget, and 60D no-pump proof.",
             ),
             "thesis_holder_gate": st.column_config.CheckboxColumn(
                 "Holder Gate",
@@ -5053,6 +5178,24 @@ def render_breakout_dashboard() -> None:
                 "No Pump 60D",
                 help="Requires enough recent history to prove no large pump over the 60D lookback.",
             ),
+            "thesis_float_gate": st.column_config.CheckboxColumn(
+                "Float/FDV Gate",
+                help="Requires independent low-float, FDV/MC, locked-supply, or hidden-float evidence.",
+            ),
+            "thesis_short_squeeze_gate": st.column_config.CheckboxColumn(
+                "Short+Fuel Gate",
+                help="Requires short crowding paired with build/OI/liquidation/funding/forced-buying squeeze fuel.",
+            ),
+            "thesis_not_late_gate": st.column_config.CheckboxColumn(
+                "Early Gate",
+                help="Requires pre-ignition/timing structure without late/exhaustion risk.",
+            ),
+            "thesis_core_gate": st.column_config.CheckboxColumn(
+                "Core Thesis",
+                help="Same value as Thesis Gate; printed separately so exports can distinguish base and full core gates.",
+            ),
+            "thesis_core_squeeze_fuel_score": st.column_config.NumberColumn("Core Fuel", format="%.1f"),
+            "thesis_core_float_score": st.column_config.NumberColumn("Core Float", format="%.1f"),
             "thesis_gate_note": st.column_config.TextColumn(
                 "Thesis Gate Note",
                 help="Shows which non-negotiable thesis prerequisite is still missing.",
@@ -6344,7 +6487,7 @@ def render_breakout_dashboard() -> None:
         st.subheader("Trade Buckets")
         st.caption(
             "Quick triage bucket for each coin. Convex Long now requires the hard thesis gate first: 90%+ top10 holder evidence, "
-            "Binance+Bitget trading evidence, and 60D no-pump proof. Raw convex signals that miss a hard gate stay in watchlist "
+            "Binance+Bitget trading evidence, 60D no-pump proof, float/FDV evidence, short crowd plus squeeze fuel, and early/not-late structure. Raw convex signals that miss a hard gate stay in watchlist "
             "territory with the missing prerequisite shown inline."
         )
         bucket_cols = [
@@ -6354,10 +6497,16 @@ def render_breakout_dashboard() -> None:
             "trade_bucket_score",
             "raw_convex_long_signal",
             "thesis_gate",
+            "thesis_base_gate",
             "thesis_gate_note",
             "thesis_holder_gate",
             "thesis_venue_gate",
             "thesis_no_pump_gate",
+            "thesis_float_gate",
+            "thesis_short_squeeze_gate",
+            "thesis_not_late_gate",
+            "thesis_core_squeeze_fuel_score",
+            "thesis_core_float_score",
             "trade_bucket_note",
             "range_breakout_event",
             "range_breakout_side",
@@ -7387,7 +7536,7 @@ def render_breakout_dashboard() -> None:
             st.markdown("#### Market-Structure Convexity")
             st.caption(
                 "These are the same triage buckets, but now with explicit early-convexity ranking and hard thesis gates. Convex Long "
-                "should be the names that clear concentration, Binance+Bitget, and no-pump proof before the breakout/flow signals matter."
+                "should be the names that clear concentration, Binance+Bitget, no-pump proof, float/FDV, short crowd plus squeeze fuel, and early/not-late structure before breakout/flow signals matter."
             )
             crime_convex_col, crime_scalp_col, crime_avoid_col = st.columns(3)
             candidate_view_df = all_df[
