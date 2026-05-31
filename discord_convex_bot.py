@@ -1666,7 +1666,7 @@ def _direct_holder_dominance_frame(
 
 
 def _normalize_whale_bucket(bucket: str) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", "", str(bucket or "top100").lower())
+    normalized = re.sub(r"[^a-z0-9]+", "", str(bucket or "top10").lower())
     aliases = {
         "100": "top100",
         "top100": "top100",
@@ -1680,14 +1680,14 @@ def _normalize_whale_bucket(bucket: str) -> str:
         "both": "both",
         "and": "both",
     }
-    return aliases.get(normalized, "top100")
+    return aliases.get(normalized, "top10")
 
 
 def _load_whale_dominance_list(
     limit: int,
     *,
     min_pct: float = 90.0,
-    bucket: str = "top100",
+    bucket: str = "top10",
     require_contract_hint: bool = False,
     max_symbols: int = 0,
     refresh: bool = False,
@@ -1790,7 +1790,7 @@ def _load_whale_dominance_list(
         platform_text = f" | chain {platform}" if platform else ""
         base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
         lines.append(
-            f"/{symbol} | top100 {top100_text} | top10 {top10_text} | holders {holder_text} | "
+            f"/{symbol} | top10 {top10_text} | top100 {top100_text} | holders {holder_text} | "
             f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text} | baseThesis {base_thesis}{platform_text}"
         )
     if hidden_count:
@@ -6589,7 +6589,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @tree.command(**whales_kwargs)
     @app_commands.describe(
         min_pct="Minimum holder concentration percentage. Default 90.",
-        bucket="Which holder bucket to rank: top100, top10, either, or both.",
+        bucket="Which holder bucket to rank: top10, top100, either, or both. Default top10.",
         limit="Maximum rows to return.",
         require_contract_hint="Only include rows with a known token contract hint.",
         max_symbols="Maximum symbols to live-fetch when holder columns are missing. Use 0 for all.",
@@ -6598,7 +6598,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     async def whales(
         interaction: discord.Interaction,
         min_pct: float = 90.0,
-        bucket: str = "top100",
+        bucket: str = "top10",
         limit: int = 50,
         require_contract_hint: bool = False,
         max_symbols: int = 0,
