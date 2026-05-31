@@ -979,7 +979,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/coincheck <symbol> - one-symbol pass/fail checklist across holder, venue, squeeze, dormant/not-late, float, and CEX flow.",
         "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /radar, not before it.",
         "/precrime - quiet pre-activity board after hard holder, Binance+Bitget, and 60D no-pump gates.",
-        "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, and 60D no-pump gates.",
+        "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, 60D no-pump, float, squeeze, and not-late gates.",
         "/setupscore - strict full-thesis ranking with transfer, holder, venue, 60D no-pump, short, float, and not-late checks.",
         "",
         "Flow and holder diagnostics:",
@@ -3372,6 +3372,7 @@ def _load_pump_watch_list(
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
         f"60D no-pump required: {require_dormant_60d} | "
+        "Float/FDV required: True | Squeeze fuel required: True | Not-late required: True | "
         f"{'Additional venue gate: target-CEX/venue-support check enabled' if require_venue_gate else 'Additional venue gate: disabled for this command'}"
     )
     if frame.empty:
@@ -3412,6 +3413,36 @@ def _load_pump_watch_list(
             + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
             + f"60D no-pump proof rows: {dormant_count}. No rows had enough 60D no-pump/dormancy proof."
         ]
+    float_gate = _boolish_series(scored.get("early_pump_float_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    float_count = int(float_gate.sum())
+    scored = scored[float_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count} | Float/FDV rows: {float_count}. "
+            + "No rows had enough low-float/high-FDV structure evidence."
+        ]
+    squeeze_gate = _boolish_series(scored.get("early_pump_short_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    squeeze_count = int(squeeze_gate.sum())
+    scored = scored[squeeze_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count} | Float/FDV rows: {float_count} | Squeeze-fuel rows: {squeeze_count}. "
+            + "No rows had enough short-squeeze fuel."
+        ]
+    not_late_gate = _boolish_series(scored.get("early_pump_not_late_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    not_late_count = int(not_late_gate.sum())
+    scored = scored[not_late_gate].copy()
+    if scored.empty:
+        return "Early pump watch", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count} | Float/FDV rows: {float_count} | "
+            + f"Squeeze-fuel rows: {squeeze_count} | Not-late rows: {not_late_count}. No rows were early enough."
+        ]
 
     score = _num_series(scored, "early_pump_radar_score")
     target_flow = _boolish_series(scored.get("early_pump_confirmed_target_flow", pd.Series(False, index=scored.index)), index=scored.index)
@@ -3446,7 +3477,7 @@ def _load_pump_watch_list(
     target_count = int(_boolish_series(selected.get("early_pump_confirmed_target_flow"), index=selected.index).sum())
     lines = [
         header,
-        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Shown after radar filters {len(selected)}",
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Float/FDV {float_count} | Squeeze fuel {squeeze_count} | Not-late {not_late_count} | Shown after radar filters {len(selected)}",
         f"Matches: {len(selected)} | Confirmed target-flow rows: {target_count} | Read: rank-order evidence, not an execution instruction.",
         "",
         "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist()),

@@ -165,8 +165,8 @@ Candidates: /PRIMEUSDT /FLOWUSDT
 
 ```text
 Early pump watch
-Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | 60D no-pump required: True | Additional venue gate: target-CEX/venue-support check enabled
-Gate rows: strict holder 12 | Binance+Bitget 7 | 60D no-pump 4 | Shown after radar filters 3
+Source: fresh Deep scan at 2026-05-21 13:30:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min radar: 55 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | 60D no-pump required: True | Float/FDV required: True | Squeeze fuel required: True | Not-late required: True | Additional venue gate: target-CEX/venue-support check enabled
+Gate rows: strict holder 12 | Binance+Bitget 7 | 60D no-pump 4 | Float/FDV 4 | Squeeze fuel 3 | Not-late 3 | Shown after radar filters 3
 Matches: 3 | Confirmed target-flow rows: 2 | Read: rank-order evidence, not an execution instruction.
 
 Candidates: /PRIMEUSDT /STOUSDT /SIRENUSDT
