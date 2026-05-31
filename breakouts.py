@@ -28,6 +28,7 @@ class BreakoutRow:
     symbol: str
     base_asset: str
     market_type: str
+    binance_perp_universe: bool
     last_price: float
     quote_volume_24h: float
     history_days: int

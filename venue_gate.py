@@ -76,7 +76,7 @@ def binance_bitget_venue_gate_enabled() -> bool:
 
 
 def assume_symbol_universe_is_binance_perp() -> bool:
-    return _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", True)
+    return _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", False)
 
 
 def binance_bitget_min_share_pct() -> float:
@@ -174,17 +174,41 @@ def holder_concentration_mask(
     return gate.fillna(False)
 
 
+def no_recent_pump_proof_mask(
+    frame: pd.DataFrame,
+    *,
+    min_history_days: int = 60,
+    max_recent_pump_pct: float = 35.0,
+) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    min_days = max(1, int(min_history_days))
+    proof_days = max(1, min(60, min_days))
+    history_days = _numeric_column(frame, "history_days")
+    recent_pump_days = _numeric_column(frame, "recent_pump_60d_days")
+    recent_pump = pd.to_numeric(frame.get("recent_max_pump_60d_pct", pd.Series(float("nan"), index=frame.index)), errors="coerce")
+    no_large_flag = _boolish_column(frame, "no_large_pump_60d_flag")
+    coverage = history_days.ge(min_days) | recent_pump_days.ge(proof_days)
+    pump_window_ready = recent_pump_days.ge(proof_days)
+    numeric_pass = recent_pump.notna() & recent_pump.lt(max(0.0, float(max_recent_pump_pct))) & pump_window_ready
+    flag_pass = no_large_flag & pump_window_ready
+    return (coverage & (numeric_pass | flag_pass)).fillna(False)
+
+
 def apply_thesis_alert_gate(
     frame: pd.DataFrame,
     *,
     min_whale_pct: float = 90.0,
     require_holder_evidence: bool = True,
     require_venue: bool = True,
+    require_no_recent_pump: bool = True,
     allow_cex_flow_targets: bool = False,
 ) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
     gated = frame[holder_concentration_mask(frame, min_whale_pct=min_whale_pct, require_holder_evidence=require_holder_evidence)].copy()
+    if require_no_recent_pump and not gated.empty:
+        gated = gated[no_recent_pump_proof_mask(gated)].copy()
     if gated.empty or not require_venue:
         return gated
     return gated[binance_bitget_venue_mask(gated, allow_cex_flow_targets=allow_cex_flow_targets)].copy()
@@ -195,6 +219,7 @@ def thesis_alert_header(
     min_whale_pct: float = 90.0,
     require_holder_evidence: bool = True,
     require_venue: bool = True,
+    require_no_recent_pump: bool = True,
     allow_cex_flow_targets: bool = False,
 ) -> str:
     threshold = max(THESIS_MIN_TOP10_HOLDER_PCT, float(min_whale_pct))
@@ -203,9 +228,10 @@ def thesis_alert_header(
         holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence"
     else:
         holder = f"{holder}; holder evidence diagnostic relaxed"
+    pump = "60D no-pump proof required" if require_no_recent_pump else "60D no-pump gate disabled"
     if not require_venue:
-        return f"{holder} | Venue gate: disabled"
-    return f"{holder} | {_binance_bitget_required_header(allow_cex_flow_targets=allow_cex_flow_targets)}"
+        return f"{holder} | {pump} | Venue gate: disabled"
+    return f"{holder} | {pump} | {_binance_bitget_required_header(allow_cex_flow_targets=allow_cex_flow_targets)}"
 
 
 def binance_bitget_venue_header(*, allow_cex_flow_targets: bool = False) -> str:

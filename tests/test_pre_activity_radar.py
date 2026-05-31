@@ -8,6 +8,7 @@ def test_pre_activity_radar_prioritizes_quiet_controlled_cex_setup() -> None:
         [
             {
                 "symbol": "QUIETUSDT",
+                "binance_perp_universe": True,
                 "token_platform": "bsc",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "BscScan holder endpoint",
@@ -109,6 +110,7 @@ def test_pre_activity_radar_requires_60d_no_pump_proof_for_alerts() -> None:
         [
             {
                 "symbol": "RECENTPUMPUSDT",
+                "binance_perp_universe": True,
                 "token_platform": "bsc",
                 "token_contract": "0x3333333333333333333333333333333333333333",
                 "holder_source": "BscScan holder endpoint",

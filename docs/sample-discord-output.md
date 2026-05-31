@@ -7,7 +7,7 @@ These examples are representative text outputs for reviewers. Live values depend
 ```text
 Alpha brief - strict thesis-gated convex watchlist
 Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Scan mode: Deep | Updated: 2026-05-16 15:40:00 UTC
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required
 Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel.
 
 Candidates: /FLOWUSDT /RAVEUSDT /PLAYUSDT
@@ -112,7 +112,7 @@ Matches: 3
 20D high breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_high_20d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 1
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 1
 
 Matches: 2 | Strict thesis matches: 1
 
@@ -126,7 +126,7 @@ Matches: 2 | Strict thesis matches: 1
 90D low breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_low_90d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | Thesis-only: False | Thesis breakout matches: 0
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 0
 
 Matches: 2 | Strict thesis matches: 0
 

@@ -3,6 +3,15 @@ import pandas as pd
 import discord_convex_watcher as watcher
 
 
+THESIS_PUMP_PROOF = {
+    "binance_perp_universe": True,
+    "history_days": 180,
+    "recent_max_pump_60d_pct": 6.0,
+    "recent_pump_60d_days": 60,
+    "no_large_pump_60d_flag": True,
+}
+
+
 def test_terminal_timing_alert_source_requires_both_scores(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_WATCHER_MIN_TERMINAL_SCORE", "60")
     monkeypatch.setenv("DISCORD_WATCHER_MIN_TIMING_SCORE", "55")
@@ -31,6 +40,7 @@ def test_terminal_timing_alert_source_requires_both_scores(monkeypatch) -> None:
                 "hour_close_location_pct": 78,
                 "distance_to_high_5d_pct": 1.5,
                 "bitget_volume_share_pct": 6.5,
+                **THESIS_PUMP_PROOF,
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
@@ -109,6 +119,7 @@ def test_timing_alert_source_excludes_fragile_states(monkeypatch) -> None:
                 "hour_close_location_pct": 82,
                 "gate_volume_share_pct": 4.0,
                 "bitget_volume_share_pct": 1.0,
+                **THESIS_PUMP_PROOF,
                 "token_platform": "ethereum",
                 "token_contract": "0x2222222222222222222222222222222222222222",
                 "holder_source": "Etherscan holder endpoint",
@@ -149,6 +160,7 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "float_trap_score": 60,
                 "short_dominance_score": 55,
                 "bitget_volume_share_pct": 2.0,
+                **THESIS_PUMP_PROOF,
                 "token_platform": "ethereum",
                 "token_contract": "0x3333333333333333333333333333333333333333",
                 "holder_source": "Etherscan holder endpoint",
@@ -165,6 +177,7 @@ def test_terminal_alert_source_sorts_by_terminal_score(monkeypatch) -> None:
                 "pre_pump_precision_flag": True,
                 "gate_volume_share_pct": 8.0,
                 "bitget_volume_share_pct": 2.0,
+                **THESIS_PUMP_PROOF,
                 "token_platform": "bsc",
                 "token_contract": "0x4444444444444444444444444444444444444444",
                 "holder_source": "BscScan holder endpoint",
@@ -198,6 +211,7 @@ def test_cex_flow_alert_source_uses_concentration_gated_flow(monkeypatch) -> Non
                 "cex_deposit_24h_count": 3,
                 "cex_deposit_24h_target_exchanges": "Bitget",
                 "bitget_volume_share_pct": 1.0,
+                **THESIS_PUMP_PROOF,
                 "token_platform": "ethereum",
                 "token_contract": "0x5555555555555555555555555555555555555555",
                 "holder_source": "Etherscan holder endpoint",
@@ -262,6 +276,7 @@ def test_terminal_alert_source_requires_binance_bitget_by_default(monkeypatch) -
                 "symbol": "BITGETUSDT",
                 "terminal_edge_score": 80,
                 "bitget_volume_share_pct": 0.1,
+                **THESIS_PUMP_PROOF,
                 "token_platform": "arbitrum",
                 "token_contract": "0x6666666666666666666666666666666666666666",
                 "holder_source": "Arbiscan holder endpoint",

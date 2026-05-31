@@ -5,13 +5,21 @@ import pandas as pd
 from venue_gate import apply_binance_bitget_venue_gate, apply_thesis_alert_gate, binance_bitget_venue_header, thesis_alert_header
 
 
+THESIS_PUMP_PROOF = {
+    "history_days": 180,
+    "recent_max_pump_60d_pct": 6.0,
+    "recent_pump_60d_days": 60,
+    "no_large_pump_60d_flag": True,
+}
+
+
 def test_binance_bitget_venue_gate_rejects_gate_only_rows(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     frame = pd.DataFrame(
         [
             {"symbol": "GATEONLYUSDT", "trade_bucket_score": 90, "gate_volume_share_pct": 4.0},
             {"symbol": "TARGETONLYUSDT", "trade_bucket_score": 88, "cex_deposit_24h_target_exchanges": "Bitget"},
-            {"symbol": "BITGETUSDT", "trade_bucket_score": 86, "bitget_volume_share_pct": 0.5},
+            {"symbol": "BITGETUSDT", "trade_bucket_score": 86, "binance_perp_universe": True, "bitget_volume_share_pct": 0.5},
         ]
     )
 
@@ -45,6 +53,7 @@ def test_binance_bitget_venue_header_treats_gate_as_optional(monkeypatch) -> Non
     assert "Binance perp + Bitget trading evidence required" in header
     assert "Gate optional" in header
     assert "transfer targets are supporting evidence only" in header
+    assert "explicit Binance perp marker/share" in header
 
 
 def test_thesis_alert_header_names_holder_and_venue_gates(monkeypatch) -> None:
@@ -54,6 +63,7 @@ def test_thesis_alert_header_names_holder_and_venue_gates(monkeypatch) -> None:
 
     assert "Holder gate: observed top10 holder concentration >= 90.0%" in header
     assert "ETH/BNB/ARB chain+contract holder-source snapshot evidence" in header
+    assert "60D no-pump proof required" in header
     assert "Binance perp + Bitget trading evidence required" in header
     assert "Gate optional" in header
 
@@ -65,12 +75,14 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
             {
                 "symbol": "GOODUSDT",
                 "trade_bucket_score": 90,
+                "binance_perp_universe": True,
                 "bitget_volume_share_pct": 1.0,
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
+                **THESIS_PUMP_PROOF,
             },
             {
                 "symbol": "PCTONLYUSDT",
@@ -136,18 +148,52 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
     assert selected["symbol"].tolist() == ["GOODUSDT"]
 
 
+def test_thesis_alert_gate_requires_60d_no_pump_proof(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
+    base = {
+        "trade_bucket_score": 90,
+        "binance_perp_universe": True,
+        "bitget_volume_share_pct": 1.0,
+        "token_platform": "ethereum",
+        "token_contract": "0x1111111111111111111111111111111111111111",
+        "holder_source": "Etherscan holder endpoint",
+        "top10_holder_pct": 91.0,
+        "top100_holder_pct": 99.0,
+    }
+    frame = pd.DataFrame(
+        [
+            {"symbol": "CLEANUSDT", **base, **THESIS_PUMP_PROOF},
+            {
+                "symbol": "PUMPEDUSDT",
+                **base,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 82.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": False,
+            },
+            {"symbol": "MISSINGUSDT", **base},
+        ]
+    )
+
+    selected = apply_thesis_alert_gate(frame)
+
+    assert selected["symbol"].tolist() == ["CLEANUSDT"]
+
+
 def test_thesis_alert_gate_ignores_disabled_generic_venue_env(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
     frame = pd.DataFrame(
         [
             {
                 "symbol": "GOODUSDT",
+                "binance_perp_universe": True,
                 "bitget_volume_share_pct": 1.0,
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
+                **THESIS_PUMP_PROOF,
             },
             {
                 "symbol": "GATEONLYUSDT",

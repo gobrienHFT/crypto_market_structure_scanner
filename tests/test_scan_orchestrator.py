@@ -37,12 +37,17 @@ def test_select_convex_long_candidates_applies_score_holder_and_venue_gates(monk
                 "symbol": "GOODUSDT",
                 "trade_bucket": "Convex Long",
                 "trade_bucket_score": 80,
+                "binance_perp_universe": True,
                 "bitget_volume_share_pct": 1.0,
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
                 "holder_source": "Etherscan holder endpoint",
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
             },
             {"symbol": "WATCHUSDT", "trade_bucket": "Watch", "trade_bucket_score": 95, "bitget_volume_share_pct": 5.0},
         ]
@@ -86,6 +91,10 @@ def test_run_scanner_scan_temporarily_overrides_cex_flow_threshold(monkeypatch) 
                     "holder_source": "Etherscan holder endpoint",
                     "top10_holder_pct": 91.0,
                     "top100_holder_pct": 99.0,
+                    "history_days": 180,
+                    "recent_max_pump_60d_pct": 6.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": True,
                 }
             ]
         )
