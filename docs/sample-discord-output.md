@@ -197,14 +197,14 @@ Concentration gate: top10 91.0% / top100 99.0%
 
 ```text
 Whale dominance ranking
-Source: computed holder composition (42 rows, 3 skipped) from contract hints | Threshold: >= 90.0% | Bucket: top100 | Read: observed contract-holder concentration, not proof of control or native-chain global supply.
-Matches: 18 | Showing: 3 | Hidden: 15
+Source: computed holder composition (42 rows, 3 skipped) from contract hints | Threshold: >= 90.0% | Bucket: top100 | Read: diagnostic holder-concentration rows, not the hard-gated crime-pump queue.
+Matches: 18 | Base thesis gate: 1 | Showing: 3 | Hidden: 15
 
-Candidates: /MEGAUSDT /WHALEUSDT /FLOWUSDT
+Diagnostic rows: /MEGAUSDT /WHALEUSDT /FLOWUSDT
 
-/MEGAUSDT | top100 99.4% | top10 91.0% | holders 120 | shorts 63.2% | terminal 82 | CEX 72 | chain ethereum
-/WHALEUSDT | top100 96.8% | top10 74.0% | holders 420 | shorts 58.4% | terminal 61 | CEX 30 | chain base
-/FLOWUSDT | top100 94.1% | top10 82.5% | holders 880 | shorts 55.0% | terminal 70 | CEX 88 | chain bsc
+/MEGAUSDT | top100 99.4% | top10 91.0% | holders 120 | shorts 63.2% | terminal 82 | CEX 72 | baseThesis Y | chain ethereum
+/WHALEUSDT | top100 96.8% | top10 74.0% | holders 420 | shorts 58.4% | terminal 61 | CEX 30 | baseThesis N | chain base
+/FLOWUSDT | top100 94.1% | top10 82.5% | holders 880 | shorts 55.0% | terminal 70 | CEX 88 | baseThesis N | chain bsc
 ... 15 more match(es) hidden; raise limit to inspect more.
 ```
 
@@ -303,11 +303,13 @@ Next check: Watch whether CEX balances keep rising, OI/volume expands, and price
 ```text
 CEX inventory-stress monitor
 Source: fresh Deep scan at 2026-05-16 15:47:00 UTC | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only
+Read: inventory-stress context rows; baseThesis Y means strict holder+venue+60D no-pump gate also passed.
 Inventory-stress rows before venue gate: 2 | After venue gate: 1
+Stress rows: 1 | Base thesis gate: 1
 
-Candidates: /FLOWUSDT
+Stress rows: /FLOWUSDT
 
-/FLOWUSDT | stress 72/100 | flow 88/100 | Bitget | notional 750.00K | deposits/ask 240.0% | source token_transfer_api
+/FLOWUSDT | stress 72/100 | flow 88/100 | Bitget | notional 750.00K | deposits/ask 240.0% | baseThesis Y | source token_transfer_api
   venue-inventory stress 72/100; total notional $750.00K; 240.0% of visible 1% ask depth
 ```
 

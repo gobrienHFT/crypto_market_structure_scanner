@@ -276,7 +276,7 @@ The bot can retrieve:
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ holder-source snapshot, Binance+Bitget, and 60D no-pump/dormancy gates
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowding, and not-late structure
 - symbol-level `/flowproof` and `/coincheck` views that separate verified transfer evidence from data gaps, with `/coincheck` also enforcing the Binance+Bitget thesis venue gate, 60D no-pump proof, and top-holder sender provenance when the transfer origin matches a scanned holder wallet
-- low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer leaderboards
+- low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer diagnostic boards that label raw rows separately from `baseThesis Y` rows
 - top terminal market-structure evidence rows
 - top timing-quality rows
 - BTC low-correlation rows with the actual correlation window used per symbol

@@ -358,11 +358,12 @@ def test_load_whale_dominance_list_ranks_top100_holder_concentration(monkeypatch
 
     assert title == "Whale dominance ranking"
     assert "Bucket: top100" in output
-    assert "Matches: 2 | Showing: 2" in output
-    assert "Candidates: /MEGAUSDT /WHALEUSDT" in output
+    assert "Matches: 2 | Base thesis gate: 0 | Showing: 2" in output
+    assert "Diagnostic rows: /MEGAUSDT /WHALEUSDT" in output
     assert output.index("/MEGAUSDT | top100 98.0% | top10 91.0%") < output.index("/WHALEUSDT | top100 94.0% | top10 70.0%")
+    assert "baseThesis N" in output
     assert "/LOWUSDT" not in output
-    assert "observed contract-holder concentration" in output
+    assert "diagnostic holder-concentration rows" in output
 
 
 def test_load_whale_dominance_list_supports_top10_bucket(monkeypatch) -> None:
@@ -432,8 +433,10 @@ def test_load_whale_dominance_list_computes_top100_when_scan_columns_missing(mon
 
     assert title == "Whale dominance ranking"
     assert "computed holder composition" in output
-    assert "Matches: 1 | Showing: 1" in output
+    assert "Matches: 1 | Base thesis gate: 0 | Showing: 1" in output
+    assert "Diagnostic rows: /CALCUSDT" in output
     assert "/CALCUSDT | top100 95.0% | top10 9.5%" in output
+    assert "baseThesis N" in output
     assert "/LOWUSDT" not in output
     assert (tmp_path / "whales.csv").exists()
 
@@ -1174,8 +1177,8 @@ def test_load_flow_stress_list_ranks_inventory_stress(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert title == "CEX inventory-stress monitor"
-    assert "Candidates: /STRESSUSDT" in output
-    assert "/STRESSUSDT | stress 91/100 | flow 72/100 | Bitget | notional 900.00K | deposits/ask 310.0% | source token_transfer_api" in output
+    assert "Stress rows: /STRESSUSDT" in output
+    assert "/STRESSUSDT | stress 91/100 | flow 72/100 | Bitget | notional 900.00K | deposits/ask 310.0% | baseThesis N | source token_transfer_api" in output
     assert "QUIETUSDT" not in output
 
 
@@ -3301,6 +3304,8 @@ def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None
 
     assert title == "Target CEX transfer board"
     assert "Bitget 1" in output
+    assert "Transfer rows: /BITGETUSDT" in output
+    assert "baseThesis N | noPump60 N" in output
     assert "/BITGETUSDT | Bitget | flow 90/100 | 2 tx | total 50.00K | max 30.00K | top tx 0xbitget" in output
     assert "KRAKENUSDT" not in output
 
@@ -3331,9 +3336,10 @@ def test_load_float_trap_list_ranks_low_float_high_fdv(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert title == "Low-float / high-FDV trap ranking"
-    assert "Candidates: /FLOATYUSDT" in output
+    assert "Diagnostic rows: /FLOATYUSDT" in output
     assert "/FLOATYUSDT | float" in output
     assert "FDV/MC 15x" in output
+    assert "baseThesis N" in output
     assert "NORMALUSDT" not in output
 
 
@@ -3369,10 +3375,11 @@ def test_load_squeeze_ready_list_ranks_short_crowded_names(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert title == "Squeeze-ready short-crowd ranking"
-    assert "Candidates: /SQUEEZEUSDT" in output
+    assert "Diagnostic rows: /SQUEEZEUSDT" in output
     assert "/SQUEEZEUSDT | squeeze" in output
     assert "shorts 68.0%" in output
     assert "target CEX flow" in output
+    assert "baseThesis N" in output
     assert "LONGUSDT" not in output
 
 

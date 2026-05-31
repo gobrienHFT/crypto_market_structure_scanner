@@ -973,7 +973,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
         "/shorts - all cached symbols with short-account majority.",
         "/funding - Binance funding/carry board.",
-        "/floattrap, /squeezeready, /cextargets, /terminal, /timing - single-lens context boards.",
+        "/floattrap, /squeezeready, /cextargets, /terminal, /timing - single-lens context boards; raw rows show baseThesis Y/N when available.",
         "",
         "Runtime and records:",
         "/dossier <symbol>, /coin <symbol> - symbol detail views.",
@@ -1670,7 +1670,7 @@ def _load_whale_dominance_list(
     header = (
         "Whale dominance ranking\n"
         f"Source: {source} | Threshold: >= {threshold:.1f}% | Bucket: {bucket_key} | "
-        "Read: observed contract-holder concentration, not proof of control or native-chain global supply."
+        "Read: diagnostic holder-concentration rows, not the hard-gated crime-pump queue."
     )
     if frame.empty:
         return "Whale dominance ranking", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -1717,16 +1717,19 @@ def _load_whale_dominance_list(
 
     rows["symbol"] = rows["symbol"].astype(str).str.upper().str.strip()
     rows = rows[rows["symbol"].ne("")]
+    rows["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(rows)
     rows = rows.sort_values(["_whale_metric", "_whale_top10", "symbol"], ascending=[False, False, True])
     rows = rows.drop_duplicates(subset=["symbol"], keep="first")
     visible = rows.head(min(max(int(limit), 1), 300))
     hidden_count = max(0, len(rows) - len(visible))
+    base_thesis_count = int(_boolish_series(rows.get("_discord_base_thesis_gate"), index=rows.index).sum())
 
     lines = [
         header,
-        f"Matches: {len(rows)} | Showing: {len(visible)}" + (f" | Hidden: {hidden_count}" if hidden_count else ""),
+        f"Matches: {len(rows)} | Base thesis gate: {base_thesis_count} | Showing: {len(visible)}"
+        + (f" | Hidden: {hidden_count}" if hidden_count else ""),
         "",
-        "Candidates: " + " ".join(f"/{symbol}" for symbol in visible["symbol"].tolist()),
+        "Diagnostic rows: " + " ".join(f"/{symbol}" for symbol in visible["symbol"].tolist()),
         "",
     ]
     for _, row in visible.iterrows():
@@ -1743,9 +1746,10 @@ def _load_whale_dominance_list(
         cex_text = f"{cex_score:.0f}" if cex_score is not None else "n/a"
         platform = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""))
         platform_text = f" | chain {platform}" if platform else ""
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
         lines.append(
             f"/{symbol} | top100 {top100_text} | top10 {top10_text} | holders {holder_text} | "
-            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text}{platform_text}"
+            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text} | baseThesis {base_thesis}{platform_text}"
         )
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")
@@ -2355,6 +2359,7 @@ def _load_flow_stress_list(
         f"Source: {source} | Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | "
         f"Lookback: {effective_lookback}h | "
         f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'}"
+        "\nRead: inventory-stress context rows; baseThesis Y means strict holder+venue+60D no-pump gate also passed."
     )
     if frame.empty:
         return "CEX inventory-stress monitor", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -2372,8 +2377,16 @@ def _load_flow_stress_list(
         return "CEX inventory-stress monitor", [header + "\n\nNo CEX inventory-stress rows found in the active scan coverage."]
     rows["_flow_stress"] = stress.loc[rows.index]
     rows["_flow_score"] = score.loc[rows.index]
+    rows["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(rows)
     rows = rows.sort_values(["_flow_stress", "_flow_score", "symbol"], ascending=[False, False, True]).head(min(max(int(limit), 1), 100))
-    lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
+    base_thesis_count = int(_boolish_series(rows.get("_discord_base_thesis_gate"), index=rows.index).sum())
+    lines = [
+        header,
+        f"Stress rows: {len(rows)} | Base thesis gate: {base_thesis_count}",
+        "",
+        "Stress rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()),
+        "",
+    ]
     for _, row in rows.iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         stress_value = _safe_float(row.get("cex_deposit_inventory_stress_score")) or 0.0
@@ -2384,9 +2397,10 @@ def _load_flow_stress_list(
         depth_text = f" | deposits/ask {depth_pct:.1f}%" if depth_pct is not None else ""
         source_text = _clip_text(row.get("cex_deposit_flow_source", ""), 40)
         note = _clip_text(_first_nonempty_text(row.get("cex_deposit_inventory_stress_note", ""), row.get("cex_deposit_flow_note", "")), 160)
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
         lines.append(
             f"/{symbol} | stress {stress_value:.0f}/100 | flow {flow_score:.0f}/100 | {targets} | "
-            f"notional {notional}{depth_text} | source {source_text or 'n/a'}"
+            f"notional {notional}{depth_text} | baseThesis {base_thesis} | source {source_text or 'n/a'}"
         )
         if note:
             lines.append(f"  {note}")
@@ -5001,7 +5015,8 @@ def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, 
         source = "latest Convex cache fallback"
     header = (
         "Low-float / high-FDV trap ranking\n"
-        f"Source: {source} | Minimum score: {float(min_score):.0f} | Read: observed float/FDV pressure, not insider proof."
+        f"Source: {source} | Minimum score: {float(min_score):.0f} | "
+        "Read: diagnostic float/FDV lens, not the hard-gated crime-pump queue."
     )
     if frame.empty:
         return "Low-float / high-FDV trap ranking", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -5031,16 +5046,25 @@ def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, 
     selected = selected.sort_values(["_floattrap_rank_score", "_floattrap_fdv_ratio", "symbol"], ascending=[False, False, True]).head(
         min(max(int(limit), 1), 100)
     )
-    lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()), ""]
+    selected["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(selected)
+    base_thesis_count = int(_boolish_series(selected.get("_discord_base_thesis_gate"), index=selected.index).sum())
+    lines = [
+        header,
+        f"Diagnostic rows: {len(selected)} | Base thesis gate: {base_thesis_count}",
+        "",
+        "Diagnostic rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()),
+        "",
+    ]
     for _, row in selected.iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
         lines.append(
             f"/{symbol} | float {(_safe_float(row.get('_floattrap_rank_score')) or 0.0):.0f}/100 | "
             f"low-float {(_safe_float(row.get('low_float_score')) or 0.0):.0f} | trap {(_safe_float(row.get('float_trap_score')) or 0.0):.0f} | "
             f"FDV {_fmt_compact_number(row.get('fdv_usd'))} | MC {_fmt_compact_number(row.get('market_cap_usd'))} | "
             f"FDV/MC {_fmt_compact_number(row.get('fdv_to_market_cap'))}x | circ {_fmt_compact_number(row.get('circulating_supply_pct'))}% | "
             f"locked {_fmt_compact_number(row.get('locked_supply_pct'))}% | top100 {_fmt_compact_number(row.get('top100_holder_pct'))}% | "
-            f"shorts {_fmt_compact_number(row.get('short_account_pct'))}%"
+            f"shorts {_fmt_compact_number(row.get('short_account_pct'))}% | baseThesis {base_thesis}"
         )
     return "Low-float / high-FDV trap ranking", _chunk_text_lines(lines)
 
@@ -5063,7 +5087,8 @@ def _load_squeeze_ready_list(limit: int, *, min_short_pct: float = 50.0, min_sco
         source = "latest Convex cache fallback"
     header = (
         "Squeeze-ready short-crowd ranking\n"
-        f"Source: {source} | Short gate: >= {min_short_pct:.1f}% | Minimum score: {min_score:.0f}"
+        f"Source: {source} | Short gate: >= {min_short_pct:.1f}% | Minimum score: {min_score:.0f} | "
+        "Read: diagnostic short-squeeze lens, not the hard-gated crime-pump queue."
     )
     if frame.empty:
         return "Squeeze-ready short-crowd ranking", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -5094,16 +5119,26 @@ def _load_squeeze_ready_list(limit: int, *, min_short_pct: float = 50.0, min_sco
     selected = selected.sort_values(["_squeeze_ready_score", "short_account_pct", "symbol"], ascending=[False, False, True]).head(
         min(max(int(limit), 1), 100)
     )
-    lines = [header, "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()), ""]
+    selected["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(selected)
+    base_thesis_count = int(_boolish_series(selected.get("_discord_base_thesis_gate"), index=selected.index).sum())
+    lines = [
+        header,
+        f"Diagnostic rows: {len(selected)} | Base thesis gate: {base_thesis_count}",
+        "",
+        "Diagnostic rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()),
+        "",
+    ]
     for _, row in selected.iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         funding = _funding_pressure_value(row)
         target_flow = "target CEX flow" if bool(row.get("_goal_target_flow")) else "no target CEX flow"
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
         lines.append(
             f"/{symbol} | squeeze {(_safe_float(row.get('_squeeze_ready_score')) or 0.0):.0f}/100 | "
             f"shorts {(_safe_pct(row.get('short_account_pct')) or 0.0):.1f}% | OI {_fmt_compact_number(row.get('oi_delta_pct'))}% | "
             f"funding {_format_signed_pct(funding, decimals=4) if funding is not None else 'n/a'} | "
-            f"whale {(_safe_float(row.get('_goal_whale_component')) or 0.0):.0f} | float {(_safe_float(row.get('_goal_float_component')) or 0.0):.0f} | {target_flow}"
+            f"whale {(_safe_float(row.get('_goal_whale_component')) or 0.0):.0f} | float {(_safe_float(row.get('_goal_float_component')) or 0.0):.0f} | "
+            f"{target_flow} | baseThesis {base_thesis}"
         )
     return "Squeeze-ready short-crowd ranking", _chunk_text_lines(lines)
 
@@ -5120,7 +5155,8 @@ def _load_cex_targets_list(
     )
     header = (
         "Target CEX transfer board\n"
-        f"Source: {source} | Target CEX: Binance, Gate.io, Bitget | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h"
+        f"Source: {source} | Target CEX: Binance, Gate.io, Bitget | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h\n"
+        "Read: raw confirmed transfer hits; baseThesis Y means strict holder+venue+60D no-pump gate also passed."
     )
     if frame.empty:
         return "Target CEX transfer board", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -5130,9 +5166,12 @@ def _load_cex_targets_list(
         return "Target CEX transfer board", [header + "\n\nNo confirmed Binance/Gate/Bitget transfer rows met the requested floor/lookback."]
     rows["_target_flow_score"] = pd.to_numeric(rows.get("cex_deposit_flow_score", pd.Series(0.0, index=rows.index)), errors="coerce").fillna(0.0)
     rows["_target_max_amount"] = pd.to_numeric(rows.get("cex_deposit_24h_max_amount", pd.Series(0.0, index=rows.index)), errors="coerce").fillna(0.0)
+    rows["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(rows)
+    rows["_discord_no_pump_proof"] = _no_recent_pump_proof_mask(rows)
     rows = rows.sort_values(["_target_flow_score", "_target_max_amount", "symbol"], ascending=[False, False, True]).head(
         min(max(int(limit), 1), 100)
     )
+    base_thesis_count = int(_boolish_series(rows.get("_discord_base_thesis_gate"), index=rows.index).sum())
     exchange_counts: dict[str, int] = {"Binance": 0, "Bitget": 0, "Gate": 0}
     for target_text in rows.get("cex_deposit_24h_target_exchanges", pd.Series(dtype="object")).astype(str):
         lowered = target_text.lower()
@@ -5143,15 +5182,23 @@ def _load_cex_targets_list(
         if "gate" in lowered:
             exchange_counts["Gate"] += 1
     counts = " | ".join(f"{exchange} {count}" for exchange, count in exchange_counts.items() if count)
-    lines = [header, f"Rows: {len(rows)}" + (f" | {counts}" if counts else ""), "", "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()), ""]
+    lines = [
+        header,
+        f"Transfer rows: {len(rows)} | Base thesis gate: {base_thesis_count}" + (f" | {counts}" if counts else ""),
+        "",
+        "Transfer rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()),
+        "",
+    ]
     for _, row in rows.iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         whale_sender = _whale_sender_text(row)
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
+        no_pump = "Y" if _boolish_scalar(row.get("_discord_no_pump_proof")) else "N"
         lines.append(
             f"/{symbol} | {_target_cex_text(row)} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.0f}/100 | "
             f"{int(_safe_float(row.get('cex_deposit_24h_count')) or 0)} tx | total {_fmt_compact_number(row.get('cex_deposit_24h_token_amount'))} | "
             f"max {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))} | top tx {_clip_text(row.get('cex_deposit_24h_top_tx', ''), 48) or 'n/a'} | "
-            f"source {_clip_text(row.get('cex_deposit_flow_source', ''), 38) or 'n/a'}"
+            f"baseThesis {base_thesis} | noPump60 {no_pump} | source {_clip_text(row.get('cex_deposit_flow_source', ''), 38) or 'n/a'}"
             f"{f' | {whale_sender}' if whale_sender else ''}"
         )
     return "Target CEX transfer board", _chunk_text_lines(lines)
@@ -6205,7 +6252,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
 
-    floattrap_kwargs = {"name": "floattrap", "description": "Rank low-float, high-FDV, whale-controlled structures."}
+    floattrap_kwargs = {"name": "floattrap", "description": "Diagnostic low-float/high-FDV context board."}
     if guild is not None:
         floattrap_kwargs["guild"] = guild
 
@@ -6233,7 +6280,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
-    squeezeready_kwargs = {"name": "squeezeready", "description": "Rank short-crowded coins with squeeze fuel."}
+    squeezeready_kwargs = {"name": "squeezeready", "description": "Diagnostic short-crowd squeeze-fuel context board."}
     if guild is not None:
         squeezeready_kwargs["guild"] = guild
 
@@ -6263,7 +6310,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
 
-    cextargets_kwargs = {"name": "cextargets", "description": "Rank confirmed recent transfers into Binance, Gate.io, or Bitget."}
+    cextargets_kwargs = {"name": "cextargets", "description": "Diagnostic confirmed transfers into Binance, Gate.io, or Bitget."}
     if guild is not None:
         cextargets_kwargs["guild"] = guild
 
