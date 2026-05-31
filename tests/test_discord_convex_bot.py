@@ -3105,6 +3105,71 @@ def test_ravelab_trigger_text_prioritizes_whale_flow_then_breakout() -> None:
     assert bot._ravelab_trigger_text(row) == "whale-CEX 1.50M, breakout 1D,2D"
 
 
+def test_ravelab_near_misses_can_show_missing_squeeze_blocker() -> None:
+    scored = pd.DataFrame(
+        [
+            {
+                "symbol": "NOSQUEEZEUSDT",
+                "_ravelab_early_score": 78.0,
+                "_ravelab_archetype_score": 82.0,
+                "_ravelab_thesis_score": 70.0,
+                "_ravelab_whale_pct": 92.0,
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_squeeze_gate": False,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": False,
+                "_ravelab_whale_origin_flow": False,
+                "_ravelab_core_gate_count": 5,
+                "_ravelab_core_gate_total": 6,
+                "_ravelab_missing_core_gates": "squeeze",
+                "_ravelab_side": "RAVE-like",
+            },
+            {
+                "symbol": "WEAKUSDT",
+                "_ravelab_early_score": 80.0,
+                "_ravelab_archetype_score": 80.0,
+                "_ravelab_thesis_score": 30.0,
+                "_ravelab_whale_pct": 92.0,
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": False,
+                "_ravelab_float_gate": False,
+                "_ravelab_no_large_pump_gate": False,
+                "_ravelab_dormant_2m_gate": False,
+                "_ravelab_squeeze_gate": False,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": False,
+                "_ravelab_whale_origin_flow": False,
+                "_ravelab_core_gate_count": 2,
+                "_ravelab_core_gate_total": 6,
+                "_ravelab_missing_core_gates": "Binance+Bitget,float/FDV,2mo no-pump,squeeze",
+                "_ravelab_side": "RAVE-like",
+            },
+        ]
+    )
+    selected = pd.DataFrame([{"symbol": "PASSUSDT"}])
+
+    near = bot._ravelab_near_miss_rows(
+        scored,
+        selected,
+        limit=5,
+        style_key="both",
+        min_score=0,
+        min_archetype=0,
+        min_squeeze_score=50,
+        require_holder_evidence=True,
+        require_binance_bitget=True,
+    )
+
+    assert near["symbol"].tolist() == ["NOSQUEEZEUSDT"]
+    assert near.iloc[0]["_ravelab_missing_core_gates"] == "squeeze"
+
+
 def test_ravelab_whale_origin_flow_uses_separate_massive_floor(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS", raising=False)
     frame = pd.DataFrame(

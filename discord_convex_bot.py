@@ -4477,8 +4477,11 @@ def _ravelab_near_miss_rows(
         _num_series(candidates, "_ravelab_early_score").ge(max(0.0, float(min_score)))
         & _num_series(candidates, "_ravelab_archetype_score").ge(max(0.0, float(min_archetype)))
         & _boolish_series(candidates.get("_ravelab_whale_gate"), index=candidates.index)
-        & _boolish_series(candidates.get("_ravelab_squeeze_gate"), index=candidates.index)
         & _num_series(candidates, "_ravelab_core_gate_count").ge(3.0)
+        & (
+            _boolish_series(candidates.get("_ravelab_squeeze_gate"), index=candidates.index)
+            | _boolish_series(candidates.get("_ravelab_dormant_2m_gate"), index=candidates.index)
+        )
     )
     candidates = candidates[base_mask].copy()
     if candidates.empty:
