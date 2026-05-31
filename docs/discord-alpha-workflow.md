@@ -125,7 +125,7 @@ terminal_timing  both structural evidence and timing quality
 terminal         structural ranking only
 timing           timing ranking only
 cex_flow         concentration-gated wallet-to-CEX transfer flow
-convex           legacy Convex Long candidate selection
+convex           legacy Convex Long selection after the same core thesis gates
 ```
 
 Suggested starting point:

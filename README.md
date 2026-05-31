@@ -399,7 +399,7 @@ DISCORD_HOLDER_COMPOSITION_ENABLED=1
 - `terminal` alerts from the structural evidence ranking only.
 - `timing` alerts from the timing ranking only.
 - `cex_flow` alerts from concentration-gated wallet-to-CEX token-transfer flow.
-- `convex` keeps the older candidate-selection behavior.
+- `convex` keeps the older Convex Long source, but rows still pass the core thesis gates before posting.
 
 The watcher stores state locally so unchanged candidates are not reposted every scan:
 

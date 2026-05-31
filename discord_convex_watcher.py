@@ -20,7 +20,7 @@ from discord_flag_formatter import (
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from proof_engine import archive_alerts, refresh_outcomes
-from scan_orchestrator import run_scanner_scan, select_convex_long_candidates
+from scan_orchestrator import apply_core_setup_gate, run_scanner_scan, select_convex_long_candidates
 from terminal_engine import apply_terminal_model
 from timing_engine import apply_timing_model
 from venue_gate import apply_thesis_alert_gate, thesis_alert_header
@@ -216,6 +216,7 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         candidates = scored[scored.get("trade_bucket", pd.Series("", index=scored.index)).astype(str).eq("Convex Long")].copy()
         if candidates.empty and "trade_bucket_score" in scored.columns:
             candidates = scored.sort_values(["trade_bucket_score", "symbol"], ascending=[False, True]).head(top_n).copy()
+        candidates = apply_core_setup_gate(candidates)
         return candidates.head(top_n)
 
     if source == "terminal":

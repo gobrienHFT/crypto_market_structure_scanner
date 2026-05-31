@@ -796,7 +796,7 @@ def _convex_candidates_from_frame(frame: pd.DataFrame) -> pd.DataFrame:
     candidates = source[source["trade_bucket"].astype(str).eq("Convex Long") & (score >= min_score)].copy()
     if candidates.empty:
         return candidates
-    candidates = _apply_thesis_candidate_gate(candidates)
+    candidates = _apply_core_thesis_candidate_gate(candidates)
     if candidates.empty:
         return candidates
     candidates["_discord_bucket_score"] = pd.to_numeric(candidates.get("trade_bucket_score"), errors="coerce").fillna(0.0)
@@ -903,14 +903,14 @@ def _load_candidates(limit: int) -> tuple[str, str]:
         frame = _convex_candidates_from_frame(frame)
         if frame.empty:
             description = (
-                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_candidate_header()}\n\n"
-                "No current market-structure candidates met the strict holder-evidence and Binance+Bitget thesis gate."
+                f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_candidate_header(core=True)}\n\n"
+                "No current market-structure candidates met the strict core thesis gate."
             )
             return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     elif not _source_is_unavailable(source):
         description = (
-            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_candidate_header()}\n\n"
-            "No current market-structure candidates met the strict holder-evidence and Binance+Bitget thesis gate."
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{source}\n{_thesis_candidate_header(core=True)}\n\n"
+            "No current market-structure candidates met the strict core thesis gate."
         )
         return "Fresh scanner sample - no current Convex candidates", description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
     else:
@@ -932,12 +932,14 @@ def _load_candidates(limit: int) -> tuple[str, str]:
         return ("No market-structure candidates in the latest scan", f"Cache: `{path}`")
 
     cache_header = _cache_age_header(frame, source)
-    frame = _apply_thesis_candidate_gate(frame)
+    if "trade_bucket" in frame.columns:
+        frame = frame[frame["trade_bucket"].astype(str).eq("Convex Long")].copy()
+    frame = _apply_core_thesis_candidate_gate(frame)
     if frame.empty:
         return (
             "No market-structure candidates met the strict thesis gate",
-            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{_thesis_candidate_header()}\n\n"
-            "No cached candidates currently show both strict holder evidence and Binance+Bitget venue support.",
+            f"{DISCORD_PRODUCT_IDENTITY}\n\n{cache_header}\n{_thesis_candidate_header(core=True)}\n\n"
+            "No cached candidates currently pass the strict core thesis gate.",
         )
 
     score_col = "trade_bucket_score" if "trade_bucket_score" in frame.columns else None
@@ -953,7 +955,7 @@ def _load_candidates(limit: int) -> tuple[str, str]:
     frame = apply_timing_model(frame)
     lines = [_candidate_line(row) for _, row in frame.head(limit).iterrows()]
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(DISCORD_PRODUCT_IDENTITY) - 2
-    header = _cache_age_header(frame, source) + "\n" + _thesis_candidate_header()
+    header = _cache_age_header(frame, source) + "\n" + _thesis_candidate_header(core=True)
     description = f"{DISCORD_PRODUCT_IDENTITY}\n\n{header}\n\n{join_discord_flag_cards(lines, max_chars=card_budget)}"
     title = f"Fresh scanner sample - market-structure candidates ({scan_mode}, {scanned_at})"
     if source.startswith("cached fallback"):

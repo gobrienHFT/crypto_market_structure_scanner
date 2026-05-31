@@ -25,6 +25,65 @@ def _utc_scan_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _num_series(frame: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[column], errors="coerce").fillna(default).astype("float64")
+
+
+def _score_linear(series: pd.Series, low: float, high: float) -> pd.Series:
+    if high <= low:
+        return pd.Series(0.0, index=series.index, dtype="float64")
+    return ((series - low) / (high - low) * 100.0).clip(lower=0.0, upper=100.0)
+
+
+def _max_series(frame: pd.DataFrame, *columns: str, default: float = 0.0) -> pd.Series:
+    parts = [_num_series(frame, column, default=float("nan")) for column in columns if column in frame.columns]
+    if not parts:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    return pd.concat(parts, axis=1).max(axis=1).fillna(default).astype("float64")
+
+
+def apply_core_setup_gate(frame: pd.DataFrame, *, min_short_pct: float = 50.0) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    output = frame.loc[:, ~frame.columns.duplicated()].copy()
+    short_pct = _num_series(output, "short_account_pct")
+    float_component = pd.concat(
+        [
+            _num_series(output, "low_float_score"),
+            _num_series(output, "float_trap_score"),
+            _num_series(output, "terminal_float_score"),
+            _num_series(output, "terminal_hidden_float_reflexivity_score"),
+            _score_linear(_num_series(output, "fdv_to_market_cap"), 1.8, 12.0),
+            _score_linear(_num_series(output, "locked_supply_pct"), 15.0, 85.0),
+        ],
+        axis=1,
+    ).max(axis=1)
+    structure_component = _max_series(
+        output,
+        "terminal_pre_ignition_quality_score",
+        "timing_score",
+        "dormant_short_fuse_score",
+        "pre_pump_precision_score",
+        "rave_lab_setup_score",
+        "accumulation_absorption_score",
+    )
+    late_risk = pd.concat(
+        [
+            _num_series(output, "timing_too_late_score"),
+            _num_series(output, "convexity_late_penalty"),
+            _num_series(output, "no_chase_penalty_score"),
+            _num_series(output, "exit_fragility_score") * 0.7,
+        ],
+        axis=1,
+    ).max(axis=1)
+    not_late = (100.0 - late_risk).clip(lower=0.0, upper=100.0)
+    float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
+    core_mask = short_pct.ge(float(min_short_pct or 0.0)) & float_pass & structure_component.ge(35.0) & not_late.ge(45.0)
+    return output[core_mask.fillna(False)].copy()
+
+
 def select_convex_long_candidates(
     frame: pd.DataFrame,
     *,
@@ -42,6 +101,7 @@ def select_convex_long_candidates(
     if candidates.empty:
         return candidates
     candidates = apply_thesis_alert_gate(candidates, allow_cex_flow_targets=allow_cex_flow_targets)
+    candidates = apply_core_setup_gate(candidates)
     if candidates.empty:
         return candidates
     return candidates.sort_values(["_discord_bucket_score", "symbol"], ascending=[False, True])

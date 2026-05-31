@@ -279,6 +279,50 @@ def test_cex_flow_watcher_cards_use_flow_format(monkeypatch) -> None:
     assert archive.iloc[0]["_raw_bot_output"] == cards[0]
 
 
+def test_convex_alert_source_requires_core_setup_gate(monkeypatch) -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "GOODUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 90,
+                "bitget_volume_share_pct": 1.0,
+                **THESIS_PUMP_PROOF,
+                "token_platform": "ethereum",
+                "token_contract": "0x8888888888888888888888888888888888888888",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "short_account_pct": 63.0,
+                "pre_pump_precision_score": 76.0,
+            },
+            {
+                "symbol": "BASEONLYUSDT",
+                "trade_bucket": "Convex Long",
+                "trade_bucket_score": 95,
+                "bitget_volume_share_pct": 1.0,
+                **THESIS_PUMP_PROOF,
+                "token_platform": "bsc",
+                "token_contract": "0x9999999999999999999999999999999999999999",
+                "holder_source": "BscScan holder endpoint",
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.0,
+                "low_float_score": 5.0,
+                "float_trap_score": 8.0,
+                "fdv_to_market_cap": 1.1,
+                "short_account_pct": 42.0,
+            },
+        ]
+    )
+
+    selected = watcher._select_alert_candidates(frame, alert_source="convex", top_n=10)
+
+    assert selected["symbol"].tolist() == ["GOODUSDT"]
+
+
 def test_terminal_alert_source_requires_binance_bitget_by_default(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     monkeypatch.setenv("DISCORD_WATCHER_MIN_TERMINAL_SCORE", "50")
