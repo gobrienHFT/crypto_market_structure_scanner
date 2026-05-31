@@ -951,6 +951,7 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
     assert "CEX Flow Score: 88/100" in output
+    assert "Whale sender: not verified from scanned top-holder wallet; generic target-CEX flow only" in output
     assert "Venue-flow read:" in output
     assert "Next check:" in output
     assert "Bitget" in output

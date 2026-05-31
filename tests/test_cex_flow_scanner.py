@@ -480,6 +480,7 @@ def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
     assert "/PLAYUSDT" in output
     assert "CEX Flow Score: 88/100 | Risk: High" in output
     assert "Evidence:" in output
+    assert "Whale sender: verified top-holder origin: 1 tx | total 1.20M | top sender rank 1 91.0% 0x1111...1111" in output
     assert "whale-origin total 1.20M" in output
     assert "top sender rank 1 91.0% 0x1111...1111" in output
     assert "Venue-flow read:" in output
@@ -488,6 +489,23 @@ def test_build_cex_flow_discord_block_has_shared_product_language() -> None:
     assert "Source: https://basescan.org/advanced-filter?tkn=0xabc" in output
     assert "pump call" not in output.lower()
     assert len(output) <= 900
+
+
+def test_build_cex_flow_discord_block_marks_generic_flow_without_whale_sender() -> None:
+    row = {
+        "symbol": "GENERICUSDT",
+        "cex_deposit_flow_score": 55,
+        "cex_deposit_24h_count": 2,
+        "cex_deposit_24h_token_amount": 50_000,
+        "cex_deposit_24h_max_amount": 30_000,
+        "cex_deposit_24h_target_exchanges": "Bitget",
+        "cex_deposit_concentration_gate": "top10 91.0% / top100 99.0%",
+    }
+
+    output = cex.build_cex_flow_discord_block(row, max_chars=900)
+
+    assert "Whale sender: not verified from scanned top-holder wallet; generic target-CEX flow only" in output
+    assert "verified top-holder origin" not in output
 
 
 def test_build_cex_flow_discord_block_shows_transfer_data_errors() -> None:
@@ -503,6 +521,7 @@ def test_build_cex_flow_discord_block_shows_transfer_data_errors() -> None:
     output = cex.build_cex_flow_discord_block(row, max_chars=900)
 
     assert "/BLOCKEDUSDT" in output
+    assert "Whale sender: n/a; no verified labelled transfer rows" in output
     assert "Data status: CEX-flow check blocked/error: advanced filter HTTP 403" in output
     assert "Source: https://basescan.org/advanced-filter?tkn=0xabc" in output
 

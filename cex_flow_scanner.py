@@ -1010,6 +1010,33 @@ def build_cex_flow_alert_line(row: Mapping[str, Any] | pd.Series) -> str:
     return f"{symbol} | flow {score:.0f}/100 | {risk} | {count} tx | {targets} | total {total_amount}{pct_text}{stress_text}{whale_text}"
 
 
+def build_cex_flow_whale_sender_line(row: Mapping[str, Any] | pd.Series) -> str:
+    count = int(_safe_float(_row_value(row, "cex_deposit_24h_count", 0.0)) or 0)
+    whale_sender_count = int(_safe_float(_row_value(row, "cex_deposit_24h_whale_sender_count", 0)) or 0)
+    whale_sender_amount = _safe_float(_row_value(row, "cex_deposit_24h_whale_sender_token_amount", 0.0)) or 0.0
+    whale_sender_rank = _safe_float(_row_value(row, "cex_deposit_24h_top_sender_rank", math.nan))
+    whale_sender_pct = _holder_pct_value(_row_value(row, "cex_deposit_24h_top_sender_pct", math.nan))
+    whale_sender_address = _short_address(_row_value(row, "cex_deposit_24h_top_sender_address", ""))
+    if whale_sender_count <= 0:
+        if count <= 0:
+            return "n/a; no verified labelled transfer rows"
+        return "not verified from scanned top-holder wallet; generic target-CEX flow only"
+    parts = [
+        f"verified top-holder origin: {whale_sender_count} tx",
+        f"total {_fmt_amount(whale_sender_amount)}",
+    ]
+    detail_parts: list[str] = []
+    if whale_sender_rank is not None and whale_sender_rank > 0:
+        detail_parts.append(f"rank {int(whale_sender_rank)}")
+    if whale_sender_pct is not None:
+        detail_parts.append(_fmt_holder_pct(whale_sender_pct))
+    if whale_sender_address:
+        detail_parts.append(whale_sender_address)
+    if detail_parts:
+        parts.append("top sender " + " ".join(detail_parts))
+    return " | ".join(parts)
+
+
 def build_cex_flow_discord_block(row: Mapping[str, Any] | pd.Series, *, max_chars: int = 900) -> str:
     symbol = str(_row_value(row, "symbol", "")).upper().strip() or "UNKNOWN"
     score = _safe_float(_row_value(row, "cex_deposit_flow_score", 0.0)) or 0.0
@@ -1018,20 +1045,20 @@ def build_cex_flow_discord_block(row: Mapping[str, Any] | pd.Series, *, max_char
     interpretation = _clean_text(_row_value(row, "cex_deposit_flow_interpretation", "")) or build_cex_flow_interpretation(row)
     next_check = _clean_text(_row_value(row, "cex_deposit_flow_next_check", "")) or build_cex_flow_next_check(row)
     inventory_note = _clean_text(_row_value(row, "cex_deposit_inventory_stress_note", ""))
+    whale_sender = build_cex_flow_whale_sender_line(row)
     source_url = _clean_text(_row_value(row, "cex_deposit_24h_source_url", ""))
     error = _clean_text(_row_value(row, "cex_deposit_flow_error", ""))
     lines = [
         f"/{symbol}",
         f"CEX Flow Score: {score:.0f}/100 | Risk: {risk}",
         f"Evidence: {evidence}",
+        f"Whale sender: {whale_sender}",
         f"Venue-flow read: {interpretation}",
         *( [f"Inventory stress: {inventory_note}"] if inventory_note else [] ),
+        *( [f"Data status: CEX-flow check blocked/error: {error}"] if error else [] ),
+        *( [f"Source: {source_url}"] if source_url else [] ),
         f"Next check: {next_check}",
     ]
-    if error:
-        lines.append(f"Data status: CEX-flow check blocked/error: {error}")
-    if source_url:
-        lines.append(f"Source: {source_url}")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text

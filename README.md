@@ -284,6 +284,7 @@ The bot can retrieve:
 - top timing-quality rows after the strict base thesis gate, with `baseThesis Y` printed per row
 - BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N` blockers
 - concentration-gated wallet-to-CEX flow rows
+- explicit `Whale sender` status on every CEX-flow card, separating verified top-holder-origin transfers from generic labelled target-CEX flow
 - CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, empty explorer HTML parses, venue-gate filtering, and attempted-symbol review
 - lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt
 - symbol-specific wallet-to-CEX flow checks with a custom transfer floor
