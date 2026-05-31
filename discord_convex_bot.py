@@ -3548,6 +3548,7 @@ def _load_pump_watch_list(
     require_holder_evidence = True
     require_binance_bitget = True
     require_venue_gate = True
+    require_dormant_60d = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -3762,6 +3763,7 @@ def _load_precrime_list(
 ) -> tuple[str, list[str]]:
     require_holder_evidence = True
     require_binance_bitget = True
+    require_dormant_60d = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -6241,7 +6243,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
-        require_dormant_60d="Require 60D no-pump/dormancy proof before showing score-only rows.",
+        require_dormant_60d="Legacy option; 60D no-pump/dormancy is pinned on for this thesis screen.",
     )
     async def pumpwatch(
         interaction: discord.Interaction,
@@ -6290,7 +6292,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_quiet="Require the no-chase quiet/low-activity gate.",
         require_behavior_gate="Require target CEX flow, venue-inventory tell, or short-fuse venue behaviour.",
-        require_dormant_60d="Require 60D no-pump/dormancy proof before showing score-only rows.",
+        require_dormant_60d="Legacy option; 60D no-pump/dormancy is pinned on for this thesis screen.",
     )
     async def precrime(
         interaction: discord.Interaction,

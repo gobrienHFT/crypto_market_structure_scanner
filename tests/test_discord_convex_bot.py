@@ -2335,6 +2335,48 @@ def test_pumpwatch_target_flow_respects_min_transfer_floor(monkeypatch) -> None:
     assert "/LOWFLOWUSDT" not in output
 
 
+def test_pumpwatch_pins_dormant_gate_when_legacy_toggle_is_false(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                **_holder_evidence(),
+                "symbol": "PUMPEDUSDT",
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 30_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                "centralized_ownership_score": 88.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 88.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": False,
+                "short_account_pct": 66.0,
+                "short_dominance_score": 80.0,
+                "short_account_build_score": 74.0,
+                "dormant_short_fuse_score": 82.0,
+                "pre_pump_precision_score": 76.0,
+                "binance_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 2.4,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_pump_watch_list(10, min_score=0, min_tokens=20_000, require_dormant_60d=False)
+    output = "\n".join(chunks)
+
+    assert title == "Early pump watch"
+    assert "60D no-pump required: True" in output
+    assert "60D no-pump proof rows: 0. No rows had enough 60D no-pump/dormancy proof." in output
+    assert "/PUMPEDUSDT" not in output
+
+
 def test_load_precrime_list_prioritizes_quiet_latent_target_flow(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [
@@ -2593,6 +2635,63 @@ def test_precrime_target_flow_respects_min_transfer_floor(monkeypatch) -> None:
     assert "Target-flow rows: 1" in output
     assert "/BIGFLOWUSDT" in output
     assert "/LOWFLOWUSDT" not in output
+
+
+def test_precrime_pins_dormant_gate_when_legacy_toggle_is_false(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                **_holder_evidence(chain="bsc", contract="0x2222222222222222222222222222222222222222"),
+                "symbol": "PUMPEDUSDT",
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_max_amount": 30_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                "inventory_transfer_risk_score": 80,
+                "centralized_ownership_score": 88.0,
+                "low_float_score": 86.0,
+                "float_trap_score": 82.0,
+                "fdv_to_market_cap": 11.0,
+                "locked_supply_pct": 70.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 88.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": False,
+                "short_account_pct": 62.0,
+                "short_account_change_max_pp": 1.8,
+                "short_account_build_score": 52.0,
+                "oi_to_24h_volume_pct": 9.0,
+                "ask_depth_1pct_usdt": 42_000,
+                "ask_depth_to_24h_volume_pct": 0.03,
+                "binance_volume_share_pct": 8.0,
+                "bitget_volume_share_pct": 1.8,
+                "low_volatility_coil_score": 82.0,
+                "day_return_pct": 0.9,
+                "price_change_24h_pct": 0.9,
+                "hour_return_pct": 0.2,
+                "range_24h_pct": 3.2,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_precrime_list(
+        10,
+        min_score=0,
+        min_tokens=20_000,
+        require_quiet=False,
+        require_behavior_gate=False,
+        require_dormant_60d=False,
+    )
+    output = "\n".join(chunks)
+
+    assert title == "Pre-activity radar"
+    assert "60D no-pump required: True" in output
+    assert "60D no-pump proof rows: 0. No rows had enough 60D no-pump/dormancy proof." in output
+    assert "/PUMPEDUSDT" not in output
 
 
 def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None:
