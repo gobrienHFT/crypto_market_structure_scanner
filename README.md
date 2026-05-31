@@ -281,7 +281,7 @@ The bot can retrieve:
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer diagnostic boards that label raw rows separately from `baseThesis Y` rows
 - top terminal market-structure evidence rows
 - top timing-quality rows
-- BTC low-correlation rows with the actual correlation window used per symbol
+- BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N`
 - concentration-gated wallet-to-CEX flow rows
 - CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, venue-gate filtering, and attempted-symbol review
 - lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt

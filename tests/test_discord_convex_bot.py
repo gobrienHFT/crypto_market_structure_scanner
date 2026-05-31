@@ -695,6 +695,9 @@ def test_load_corr_list_filters_high_btc_correlation(monkeypatch) -> None:
                 "corr_window_days": 37,
                 "short_account_pct": 61.2,
                 "price_change_24h_pct": 4.5,
+                "binance_perp_universe": True,
+                "bitget_volume_share_pct": 1.0,
+                **_holder_evidence("ethereum", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -739,11 +742,13 @@ def test_load_corr_list_filters_high_btc_correlation(monkeypatch) -> None:
     assert title == "BTC low-correlation screen"
     assert "Threshold: corr <= 0.50" in output
     assert "Target window: max 180d" in output
+    assert "Read: context screen only; baseThesis Y means strict holder+venue+60D no-pump gate also passed." in output
     assert "Matches: 4" in output
-    assert "/YOUNGUSDT | corr -0.820 | used 37d (max available)" in output
-    assert "/INVERSEUSDT | corr -0.610 | used 180d" in output
-    assert "/WEAKUSDT | corr -0.210 | used 180d" in output
-    assert "/POSUSDT | corr 0.420 | used 180d" in output
+    assert "Base thesis gate: 1" in output
+    assert "/YOUNGUSDT | corr -0.820 | used 37d (max available) | shorts 61.2% | 24h 4.5% | baseThesis Y" in output
+    assert "/INVERSEUSDT | corr -0.610 | used 180d | shorts 54.0% | 24h -2.1% | baseThesis N" in output
+    assert "/WEAKUSDT | corr -0.210 | used 180d | baseThesis N" in output
+    assert "/POSUSDT | corr 0.420 | used 180d | 24h 1.1% | baseThesis N" in output
     assert "shorts 61.2%" in output
     assert "24h 4.5%" in output
     assert "HIGHUSDT" not in output
@@ -762,7 +767,8 @@ def test_load_corr_list_without_threshold_shows_all_negative_rows(monkeypatch) -
     output = "\n".join(chunks)
 
     assert "Threshold: corr < 0.00" in output
-    assert "/NEGUSDT | corr -0.010 | used 12d (max available)" in output
+    assert "Base thesis gate: 0" in output
+    assert "/NEGUSDT | corr -0.010 | used 12d (max available) | baseThesis N" in output
     assert "POSUSDT" not in output
 
 

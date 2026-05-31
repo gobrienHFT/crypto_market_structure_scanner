@@ -1820,14 +1820,18 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
         selected = frame[corr.notna() & corr.lt(0.0)].copy()
     selected["_discord_corr_to_btc"] = corr.loc[selected.index]
     selected["_discord_corr_window_days"] = window.loc[selected.index]
-    selected = selected.sort_values(["_discord_corr_to_btc", "symbol"], ascending=[True, True])
+    if not selected.empty:
+        selected["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(selected)
+    base_thesis_count = int(_boolish_series(selected.get("_discord_base_thesis_gate"), index=selected.index).sum()) if not selected.empty else 0
+    selected = selected.sort_values(["_discord_base_thesis_gate", "_discord_corr_to_btc", "symbol"], ascending=[False, True, True])
 
     target_window_days = 180
     threshold_text = f"corr <= {max_corr:.2f}" if max_corr > 0.0 else "corr < 0.00"
     header = (
         "BTC low-correlation screen\n"
         f"{_cache_age_header(frame, source)}\n"
-        f"Threshold: {threshold_text} | Target window: max {target_window_days}d; younger symbols use available overlap."
+        f"Threshold: {threshold_text} | Target window: max {target_window_days}d; younger symbols use available overlap.\n"
+        "Read: context screen only; baseThesis Y means strict holder+venue+60D no-pump gate also passed."
     )
     if selected.empty:
         return "BTC low-correlation screen", [header + "\n\nNo symbols currently met the BTC-correlation threshold."]
@@ -1837,7 +1841,12 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
     visible = selected.head(capped_limit) if capped_limit > 0 else selected
     hidden_count = max(0, len(selected) - len(visible))
 
-    lines = [header, "", f"Matches: {len(selected)}" + (f" | Showing: {len(visible)}" if hidden_count else ""), ""]
+    lines = [
+        header,
+        "",
+        f"Matches: {len(selected)} | Base thesis gate: {base_thesis_count}" + (f" | Showing: {len(visible)}" if hidden_count else ""),
+        "",
+    ]
     for _, row in visible.iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         corr_value = _safe_float(row.get("_discord_corr_to_btc"))
@@ -1857,6 +1866,8 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
         market_type = _clean_scalar_text(row.get("market_type", "")).strip()
         if market_type:
             line += f" | {market_type}"
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
+        line += f" | baseThesis {base_thesis}"
         lines.append(line)
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")

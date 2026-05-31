@@ -97,12 +97,13 @@ Near misses (blocked, not eligible yet; failed gates are shown as blockers):
 BTC low-correlation screen
 Source: fresh Deep scan at 2026-05-17 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-17 10:15:00 UTC
 Threshold: corr <= 0.50 | Target window: max 180d; younger symbols use available overlap.
+Read: context screen only; baseThesis Y means strict holder+venue+60D no-pump gate also passed.
 
-Matches: 3
+Matches: 3 | Base thesis gate: 1
 
-/YOUNGUSDT | corr -0.820 | used 37d (max available) | shorts 61.2% | 24h 4.5%
-/INVERSEUSDT | corr -0.610 | used 180d | shorts 54.0% | 24h -2.1%
-/WEAKPOSUSDT | corr 0.420 | used 180d | shorts 51.5% | 24h 1.1%
+/YOUNGUSDT | corr -0.820 | used 37d (max available) | shorts 61.2% | 24h 4.5% | baseThesis Y
+/INVERSEUSDT | corr -0.610 | used 180d | shorts 54.0% | 24h -2.1% | baseThesis N
+/WEAKPOSUSDT | corr 0.420 | used 180d | shorts 51.5% | 24h 1.1% | baseThesis N
 ```
 
 ## `/high days:20D`
