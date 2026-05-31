@@ -1971,6 +1971,55 @@ def test_pumpwatch_holder_gate_requires_top10_even_when_min_whale_lowered(monkey
     assert "/TOP100ONLYUSDT" not in output
 
 
+def test_pumpwatch_rejects_short_pct_without_squeeze_fuel(monkeypatch) -> None:
+    base = {
+        **_holder_evidence(),
+        "cex_deposit_flow_score": 86,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 2,
+        "cex_deposit_24h_token_amount": 2_400_000,
+        "cex_deposit_24h_max_amount": 1_200_000,
+        "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+        "cex_deposit_inventory_stress_score": 80,
+        "centralized_ownership_score": 86.0,
+        "low_float_score": 82.0,
+        "float_trap_score": 78.0,
+        "fdv_to_market_cap": 8.0,
+        "short_account_pct": 72.0,
+        "short_dominance_score": 80.0,
+        "dormant_short_fuse_score": 82.0,
+        "pre_pump_precision_score": 76.0,
+        "hour_return_pct": 1.2,
+        "day_return_pct": 3.0,
+        "binance_volume_share_pct": 6.0,
+        "bitget_volume_share_pct": 2.4,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "now",
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "SHORTONLYUSDT"},
+            {
+                **base,
+                "symbol": "FUELUSDT",
+                "short_account_build_score": 52.0,
+                "oi_delta_pct": 4.0,
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_pump_watch_list(10, min_score=0, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "Early pump watch"
+    assert "Gate rows: strict holder 2 | Binance+Bitget 2 | 60D no-pump 2 | Float/FDV 2 | Squeeze fuel 1" in output
+    assert "/FUELUSDT" in output
+    assert "| shorts 72.0% | squeeze" in output
+    assert "fuel " in output
+    assert "/SHORTONLYUSDT" not in output
+
+
 def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(monkeypatch) -> None:
     fresh = pd.DataFrame(
         [
@@ -2150,6 +2199,8 @@ def test_load_pump_watch_list_collapses_goal_stack_and_keeps_binance_targets(mon
     assert "Candidates: /PRIMEUSDT" in output
     assert "/PRIMEUSDT | Prime early squeeze" in output
     assert "flow 94 Binance 3tx max 12.00M" in output
+    assert "| shorts 64.0% | squeeze" in output
+    assert "fuel " in output
     assert "WEAKUSDT" not in output
     assert "NOFLOATUSDT" not in output
     assert "NOSQUEEZEUSDT" not in output

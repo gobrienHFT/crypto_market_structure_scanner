@@ -286,3 +286,58 @@ def test_early_pump_radar_target_flow_respects_transfer_floor() -> None:
     assert bool(row["early_pump_confirmed_target_flow"]) is False
     assert "Binance below transfer floor" in row["early_pump_note"]
     assert "target CEX flow" not in row["early_pump_primary_signal"]
+
+
+def test_early_pump_short_gate_requires_squeeze_fuel_not_short_pct_alone() -> None:
+    base = {
+        "cex_deposit_flow_score": 90,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 2,
+        "cex_deposit_24h_max_amount": 2_000_000,
+        "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+        "binance_perp_universe": True,
+        "bitget_volume_share_pct": 2.4,
+        "token_platform": "ethereum",
+        "token_contract": "0x5555555555555555555555555555555555555555",
+        "holder_source": "Etherscan holder endpoint",
+        "holder_count": 6_000,
+        "top10_holder_pct": 92.0,
+        "top100_holder_pct": 99.0,
+        "centralized_ownership_score": 86.0,
+        "low_float_score": 82.0,
+        "float_trap_score": 78.0,
+        "fdv_to_market_cap": 8.0,
+        "history_days": 180,
+        "recent_max_pump_60d_pct": 6.0,
+        "recent_pump_60d_days": 60,
+        "no_large_pump_60d_flag": True,
+        "short_account_pct": 72.0,
+        "short_dominance_score": 80.0,
+        "hour_return_pct": 1.2,
+        "day_return_pct": 3.0,
+    }
+    scored = apply_early_pump_radar(
+        pd.DataFrame(
+            [
+                {**base, "symbol": "SHORTONLYUSDT"},
+                {
+                    **base,
+                    "symbol": "FUELUSDT",
+                    "short_account_build_score": 52.0,
+                    "oi_delta_pct": 4.0,
+                },
+            ]
+        ),
+        min_transfer_tokens=20_000,
+    ).set_index("symbol")
+
+    assert scored.loc["SHORTONLYUSDT", "early_pump_short_squeeze_score"] >= 55.0
+    assert scored.loc["SHORTONLYUSDT", "early_pump_squeeze_fuel_score"] < 40.0
+    assert not bool(scored.loc["SHORTONLYUSDT", "early_pump_short_gate"])
+    assert not bool(scored.loc["SHORTONLYUSDT", "early_pump_alert_flag"])
+    assert scored.loc["SHORTONLYUSDT", "early_pump_state"] == "Squeeze fuel unproven"
+    assert "short crowd plus squeeze fuel" in scored.loc["SHORTONLYUSDT", "early_pump_next_check"]
+
+    assert scored.loc["FUELUSDT", "early_pump_squeeze_fuel_score"] >= 40.0
+    assert bool(scored.loc["FUELUSDT", "early_pump_short_gate"])
+    assert bool(scored.loc["FUELUSDT", "early_pump_alert_flag"])

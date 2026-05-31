@@ -16,6 +16,7 @@ EARLY_PUMP_RADAR_COLUMNS = [
     "early_pump_whale_score",
     "early_pump_float_score",
     "early_pump_short_squeeze_score",
+    "early_pump_squeeze_fuel_score",
     "early_pump_timing_score",
     "early_pump_venue_score",
     "early_pump_archetype_score",
@@ -159,7 +160,8 @@ def _primary_signal(row: Mapping[str, Any] | pd.Series) -> str:
     flow_label = "exchange-flow stress" if _target_cex_text(row) else "flow stress"
     candidates = {
         flow_label: flow_score,
-        "short-squeeze fuel": _first_float(row, "early_pump_short_squeeze_score") or 0.0,
+        "short-squeeze setup": _first_float(row, "early_pump_short_squeeze_score") or 0.0,
+        "short-squeeze fuel": _first_float(row, "early_pump_squeeze_fuel_score") or 0.0,
         "whale/control plane": _first_float(row, "early_pump_whale_score") or 0.0,
         "low-float pressure": _first_float(row, "early_pump_float_score") or 0.0,
         "timing": _first_float(row, "early_pump_timing_score") or 0.0,
@@ -213,7 +215,7 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
     if not _row_bool(row, "early_pump_whale_gate"):
         missing.append("top10 whale-control evidence")
     if not _row_bool(row, "early_pump_short_gate"):
-        missing.append("short-account majority")
+        missing.append("short crowd plus squeeze fuel")
     if not _row_bool(row, "early_pump_float_gate"):
         missing.append("low-float/FDV evidence")
     if not _row_bool(row, "early_pump_binance_bitget_gate"):
@@ -307,16 +309,40 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
             axis=1,
         ).max(axis=1)
     )
-    squeeze_score = _clip(
+    short_crowd_score = _clip(
         pd.concat(
             [
                 _score_linear(short_pct, 50.0, 72.0),
                 _num(output, "terminal_short_pressure_score"),
                 _num(output, "short_dominance_score"),
+                _num(output, "short_crowding_score"),
+            ],
+            axis=1,
+        ).max(axis=1)
+    )
+    squeeze_fuel_score = _clip(
+        pd.concat(
+            [
                 _num(output, "short_account_build_score"),
+                _num(output, "silent_oi_accumulation_score"),
                 _num(output, "short_liquidation_fuel_score"),
                 _num(output, "short_squeeze_score"),
+                _num(output, "funding_flip_score"),
+                _boolish(output.get("fresh_flip_flag"), index=output.index).astype(float) * 100.0,
+                _num(output, "forced_buying_setup_score"),
+                _num(output, "perp_squeeze_confluence_score"),
                 _score_linear(_num(output, "oi_delta_pct"), 0.5, 7.5),
+                _score_linear(_num(output, "oi_to_24h_volume_pct"), 2.0, 18.0),
+            ],
+            axis=1,
+        ).max(axis=1)
+    )
+    squeeze_score = _clip(
+        pd.concat(
+            [
+                short_crowd_score * 0.60 + squeeze_fuel_score * 0.40,
+                squeeze_fuel_score,
+                short_crowd_score * 0.45 + _num(output, "terminal_short_pressure_score") * 0.55,
             ],
             axis=1,
         ).max(axis=1)
@@ -383,7 +409,10 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
     holder_evidence_gate = holder_evidence_mask(output)
     whale_gate = holder_concentration_mask(output, min_whale_pct=90.0, require_holder_evidence=True)
     venue_pair_gate = binance_bitget_venue_mask(output, allow_cex_flow_targets=False)
-    short_gate = short_pct.ge(50.0) | squeeze_score.ge(55.0)
+    short_crowd_gate = short_pct.ge(50.0) | short_crowd_score.ge(55.0)
+    short_gate = (short_crowd_gate & squeeze_fuel_score.ge(40.0)) | (
+        squeeze_fuel_score.ge(75.0) & squeeze_score.ge(55.0)
+    )
     float_gate = float_score.ge(55.0)
     venue_gate = venue_pair_gate
     not_late_gate = not_late.ge(45.0)
@@ -418,6 +447,7 @@ def apply_early_pump_radar(frame: pd.DataFrame, *, min_transfer_tokens: float = 
     output["early_pump_whale_score"] = whale_score
     output["early_pump_float_score"] = float_score
     output["early_pump_short_squeeze_score"] = squeeze_score
+    output["early_pump_squeeze_fuel_score"] = squeeze_fuel_score
     output["early_pump_timing_score"] = timing_score
     output["early_pump_venue_score"] = venue_score
     output["early_pump_archetype_score"] = archetype_score

@@ -171,8 +171,8 @@ Matches: 3 | Confirmed target-flow rows: 2 | Read: rank-order evidence, not an e
 
 Candidates: /PRIMEUSDT /STOUSDT /SIRENUSDT
 
-/PRIMEUSDT | Prime early squeeze | radar 89/100 | target CEX flow 92/100 | flow 92 Bitget, GateIO 3tx max 12.00M | top10 91.0%, top100 99.0% | shorts 64.0% | float 82 | timing 78 | not-late 95 | noPump60 Y | LAB-style venue-inventory stress | next: check whether deposited inventory is absorbed while OI/volume expand and rejection wicks stay muted
-/STOUSDT | Flow-first watch | radar 76/100 | target CEX flow 74/100 | flow 74 Binance 1tx max 3.20M | top10 92.0%, top100 96.0% | shorts 58.0% | float 70 | timing 64 | not-late 88 | noPump60 Y | STO-style target-venue squeeze
+/PRIMEUSDT | Prime early squeeze | radar 89/100 | target CEX flow 92/100 | flow 92 Bitget, GateIO 3tx max 12.00M | top10 91.0%, top100 99.0% | shorts 64.0% | squeeze 82 fuel 74 | float 82 | timing 78 | not-late 95 | noPump60 Y | LAB-style venue-inventory stress | next: check whether deposited inventory is absorbed while OI/volume expand and rejection wicks stay muted
+/STOUSDT | Flow-first watch | radar 76/100 | target CEX flow 74/100 | flow 74 Binance 1tx max 3.20M | top10 92.0%, top100 96.0% | shorts 58.0% | squeeze 66 fuel 49 | float 70 | timing 64 | not-late 88 | noPump60 Y | STO-style target-venue squeeze
 ```
 
 ## `/flowproof symbol:PRIMEUSDT min_tokens:20000`

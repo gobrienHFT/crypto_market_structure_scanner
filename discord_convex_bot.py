@@ -3591,6 +3591,8 @@ def _pump_watch_line(row: pd.Series) -> str:
     top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
     top100_text = f"{top100:.1f}%" if top100 is not None else "n/a"
     short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    squeeze = _safe_float(row.get("early_pump_short_squeeze_score")) or 0.0
+    fuel = _safe_float(row.get("early_pump_squeeze_fuel_score")) or 0.0
     float_score = _safe_float(row.get("early_pump_float_score")) or 0.0
     timing = _safe_float(row.get("early_pump_timing_score")) or 0.0
     not_late = _safe_float(row.get("early_pump_not_late_score")) or 0.0
@@ -3602,7 +3604,7 @@ def _pump_watch_line(row: pd.Series) -> str:
     return (
         f"/{symbol} | {state} | radar {radar:.0f}/100 | {signal} | "
         f"flow {flow_score:.0f} {targets} {cex_count}tx max {max_amount} | "
-        f"top10 {top10_text}, top100 {top100_text} | shorts {short_text} | "
+        f"top10 {top10_text}, top100 {top100_text} | shorts {short_text} | squeeze {squeeze:.0f} fuel {fuel:.0f} | "
         f"float {float_score:.0f} | timing {timing:.0f} | not-late {not_late:.0f} | noPump60 {no_pump}"
         f"{archetype_suffix}{next_suffix}"
     )
