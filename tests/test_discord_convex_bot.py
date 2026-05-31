@@ -465,11 +465,15 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
                     "price_change_24h_pct": 8.2,
                 "last_price": 0.1234,
                     "range_high_break_count": 2,
-                    "range_low_break_count": 0,
-                    "short_account_pct": 61.0,
-                    "binance_volume_share_pct": 3.0,
-                    "bitget_volume_share_pct": 2.0,
-                    **_holder_evidence("ethereum", "0x9999999999999999999999999999999999999999"),
+                "range_low_break_count": 0,
+                "short_account_pct": 61.0,
+                "low_float_score": 82.0,
+                "float_trap_score": 78.0,
+                "fdv_to_market_cap": 8.0,
+                "pre_pump_precision_score": 76.0,
+                "binance_volume_share_pct": 3.0,
+                "bitget_volume_share_pct": 2.0,
+                **_holder_evidence("ethereum", "0x9999999999999999999999999999999999999999"),
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -502,6 +506,7 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     assert "20D high breakout screen" in output
     assert "Filter: `broke_high_20d` is true" in output
     assert "60D no-pump/dormancy proof required" in output
+    assert "Core setup also requires short majority, low-float/high-FDV, and not-late structure" in output
     assert "Thesis breakout matches: 1" in output
     assert "Matches: 2" in output
     assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | thesis Y" in output
@@ -3756,6 +3761,7 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
                 "price_volume_ignition_score": 68,
                 "convexity_preignition_score": 66,
                 "convexity_runway_score": 75,
+                "pre_pump_precision_score": 76,
                 "short_account_pct": 63,
                 "oi_delta_pct": 3.1,
                 "binance_volume_share_pct": 3.0,
@@ -3767,6 +3773,21 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
                 "cex_deposit_flow_score": 88,
                 "cex_deposit_24h_count": 3,
                 "cex_deposit_24h_target_exchanges": "Bitget",
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
+                "symbol": "BASEONLYUSDT",
+                "bitget_volume_share_pct": 5.0,
+                "binance_volume_share_pct": 3.0,
+                **_holder_evidence("bsc", "0x4444444444444444444444444444444444444444"),
+                "trade_bucket_score": 99,
+                "terminal_edge_score": 95,
+                "timing_score": 92,
+                "low_float_score": 5,
+                "float_trap_score": 8,
+                "fdv_to_market_cap": 1.1,
+                "short_account_pct": 42,
                 "scan_mode": "Deep",
                 "scanned_at_utc": "now",
             },
@@ -3791,10 +3812,12 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
     assert title == "Alpha brief"
     assert "Alpha brief - strict thesis-gated convex watchlist" in output
     assert "Thesis gate: observed top10 holder >= 90.0%" in output
+    assert "Core setup also requires short majority, low-float/high-FDV, and not-late structure" in output
     assert "FLOWUSDT | brief" in output
     assert "evidence:" in output
     assert "next:" in output
     assert "CEX 88" in output
+    assert "BASEONLYUSDT" not in output
     assert "NOGATEUSDT" not in output
 
 

@@ -1469,7 +1469,8 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_
         mask = _boolish_series(frame[column], index=frame.index)
     selected = frame[mask].copy()
     if not selected.empty:
-        selected["_discord_thesis_gate"] = _thesis_candidate_gate_mask(selected)
+        selected = _goal_score_frame(selected)
+        selected["_discord_thesis_gate"] = _boolish_series(selected.get("_goal_core_setup_pass"), index=selected.index)
     thesis_match_count = int(_boolish_series(selected.get("_discord_thesis_gate"), index=selected.index).sum()) if not selected.empty else 0
     if thesis_only and not selected.empty:
         selected = selected[_boolish_series(selected.get("_discord_thesis_gate"), index=selected.index)].copy()
@@ -1477,7 +1478,7 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_
         f"{parsed_days}D {direction} breakout screen\n"
         f"{_cache_age_header(frame, source)}\n"
         f"{filter_text}\n"
-        f"{_thesis_candidate_header()} | Thesis-only: {bool(thesis_only)} | Thesis breakout matches: {thesis_match_count}"
+        f"{_thesis_candidate_header(core=True)} | Thesis-only: {bool(thesis_only)} | Thesis breakout matches: {thesis_match_count}"
     )
     if selected.empty:
         qualifier = " and passed the strict thesis gate" if thesis_only else ""
@@ -2709,13 +2710,16 @@ def _thesis_venue_header() -> str:
     return "Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only"
 
 
-def _thesis_candidate_header(*, min_whale_pct: float = 90.0) -> str:
+def _thesis_candidate_header(*, min_whale_pct: float = 90.0, core: bool = False) -> str:
     threshold = _strict_thesis_min_whale_pct(min_whale_pct)
-    return (
+    text = (
         f"Thesis gate: observed top10 holder >= {threshold:.1f}% with "
         f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence | "
         f"{_thesis_venue_header()} | 60D no-pump/dormancy proof required"
     )
+    if core:
+        text += " | Core setup also requires short majority, low-float/high-FDV, and not-late structure"
+    return text
 
 
 def _apply_thesis_venue_gate(frame: pd.DataFrame) -> pd.DataFrame:
@@ -2739,6 +2743,13 @@ def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 
     if frame.empty:
         return frame.copy()
     return frame[_thesis_candidate_gate_mask(frame, min_whale_pct=min_whale_pct)].copy()
+
+
+def _apply_core_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 90.0, min_short_pct: float = 50.0) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    scored = _goal_score_frame(frame, min_whale_pct=min_whale_pct, min_short_pct=min_short_pct)
+    return scored[_boolish_series(scored.get("_goal_core_setup_pass"), index=scored.index)].copy()
 
 
 def _no_recent_pump_proof_mask(
@@ -5364,11 +5375,10 @@ def _load_alpha_brief(limit: int) -> tuple[str, list[str]]:
         return "Alpha brief", [f"No live scan, scanner snapshot, or cache exists yet. `{source}`"]
 
     source_frame = frame.loc[:, ~frame.columns.duplicated()].copy()
-    source_frame = apply_timing_model(apply_terminal_model(source_frame))
-    source_frame = _apply_thesis_candidate_gate(source_frame)
-    thesis_header = _thesis_candidate_header()
+    source_frame = _apply_core_thesis_candidate_gate(source_frame)
+    thesis_header = _thesis_candidate_header(core=True)
     if source_frame.empty:
-        return "Alpha brief", [thesis_header + "\n\nNo rows met the strict holder-evidence and Binance+Bitget thesis gate."]
+        return "Alpha brief", [thesis_header + "\n\nNo rows met the strict core thesis gate."]
 
     def num(column: str) -> pd.Series:
         return pd.to_numeric(source_frame.get(column, pd.Series(0.0, index=source_frame.index)), errors="coerce").fillna(0.0)
@@ -5836,7 +5846,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
-        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget trading evidence, and 60D no-pump proof.",
+        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget, 60D no-pump, float, short, and not-late gates.",
     )
     async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
         if not _channel_allowed(interaction):
@@ -5867,7 +5877,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
-        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget trading evidence, and 60D no-pump proof.",
+        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget, 60D no-pump, float, short, and not-late gates.",
     )
     async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
         if not _channel_allowed(interaction):

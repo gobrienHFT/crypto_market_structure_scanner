@@ -62,7 +62,7 @@ Recommended live workflow:
 /convex_scoreboard
 ```
 
-Use `/alpha` as the triage queue. It first applies the strict thesis gate, observed top-10 holder concentration at or above 90% with ETH/BNB/ARB chain+contract holder-source snapshot evidence plus Binance+Bitget trading evidence, then blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact watchlist.
+Use `/alpha` as the triage queue. It first applies the strict core thesis gate, observed top-10 holder concentration at or above 90% with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget trading evidence, 60D no-pump proof, low-float/high-FDV structure, short majority, and not-late structure, then blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact watchlist.
 
 Use `/help` or `/commands` when the slash-command surface feels noisy. It gives the short operator map: `/radar` first, `/coincheck` for one symbol, `/ravelab` for detailed blockers and near misses, and `/cexdiag`/`/flowhealth` for data-source problems.
 
@@ -104,7 +104,7 @@ Use `/flowhealth` to see API-key readiness and local CEX-address-label coverage.
 
 Use `/sethflow` to run the whole checklist in one shot: verified Binance/Gate/Bitget wallet-to-CEX flow above the requested transfer floor, observed top-10 holder concentration at or above 90% with holder evidence by default, low-float/FDV evidence, more than 50% short accounts by default, and then a dormant/early chart-structure gate. The output says `RESEARCH`, `WAIT`, or `SKIP`; it is a triage state, not an execution instruction.
 
-Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/below the selected range. The bot accepts any `1D`-`1499D` lookback; common dashboard columns such as `5D`, `20D`, `90D`, and `180D` are read directly, while custom windows are computed from live Binance daily candles. Rows that also pass the strict top10 holder-evidence, Binance+Bitget, and 60D no-pump thesis gate sort first and print `thesis Y`; set `thesis_only:true` when you only want hard-gated breakout rows.
+Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/below the selected range. The bot accepts any `1D`-`1499D` lookback; common dashboard columns such as `5D`, `20D`, `90D`, and `180D` are read directly, while custom windows are computed from live Binance daily candles. Rows that also pass the strict core thesis gate, top10 holder evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short majority, and not-late structure, sort first and print `thesis Y`; set `thesis_only:true` when you only want hard-gated breakout rows.
 
 Use `/terminal` for slower structural evidence and `/timing` for current trigger quality. A symbol that appears on both lists is usually more interesting than a symbol that appears on only one.
 
@@ -141,7 +141,7 @@ DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
 
-Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so symbol text alone cannot satisfy Binance evidence; set it to `1` only for legacy Binance-only caches generated before that marker existed. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof.
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so symbol text alone cannot satisfy Binance evidence; set it to `1` only for legacy Binance-only caches generated before that marker existed. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
 
 For a dedicated transfer monitor:
 

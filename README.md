@@ -202,7 +202,7 @@ DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 ```
 
-Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` always require explicit Binance evidence and 60D no-pump proof; they do not use symbol text as proof.
+Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
 
 Per-symbol cooldown state is stored locally in:
 
@@ -267,7 +267,7 @@ Use `/help` or `/commands` inside Discord when you want the operator map. It lab
 
 The bot can retrieve:
 
-- a strict thesis-gated alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget, and 60D no-pump gates
+- a strict core-thesis alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract holder-source snapshot evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short majority, and not-late gates
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
@@ -291,7 +291,7 @@ The bot can retrieve:
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full CEX-flow -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
-- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, and 60D no-pump proof
+- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short majority, and not-late structure
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries
