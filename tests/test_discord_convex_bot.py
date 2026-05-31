@@ -35,41 +35,11 @@ def test_normalize_symbol_query_accepts_fast_coin_forms() -> None:
 
 
 def test_normalize_symbol_query_rejects_bot_commands() -> None:
-    assert bot._normalize_symbol_query("/convex") == ""
-    assert bot._normalize_symbol_query("/commands") == ""
-    assert bot._normalize_symbol_query("/help") == ""
-    assert bot._normalize_symbol_query("/convex_status") == ""
-    assert bot._normalize_symbol_query("/coin") == ""
-    assert bot._normalize_symbol_query("/whales") == ""
-    assert bot._normalize_symbol_query("/funding") == ""
+    for command_name in bot.STATIC_SLASH_COMMAND_NAMES:
+        assert bot._normalize_symbol_query(f"/{command_name}") == ""
+
     assert bot._normalize_symbol_query("/fundingrates") == ""
-    assert bot._normalize_symbol_query("/setupscore") == ""
-    assert bot._normalize_symbol_query("/precrime") == ""
-    assert bot._normalize_symbol_query("/ravelab") == ""
-    assert bot._normalize_symbol_query("/radar") == ""
-    assert bot._normalize_symbol_query("/prime") == ""
-    assert bot._normalize_symbol_query("/crimepump") == ""
-    assert bot._normalize_symbol_query("/flowproof") == ""
-    assert bot._normalize_symbol_query("/coincheck") == ""
-    assert bot._normalize_symbol_query("/floattrap") == ""
-    assert bot._normalize_symbol_query("/squeezeready") == ""
-    assert bot._normalize_symbol_query("/cextargets") == ""
-    assert bot._normalize_symbol_query("/high") == ""
-    assert bot._normalize_symbol_query("/low") == ""
-    assert bot._normalize_symbol_query("/timing") == ""
-    assert bot._normalize_symbol_query("/corr") == ""
-    assert bot._normalize_symbol_query("/dossier") == ""
-    assert bot._normalize_symbol_query("/cexflow") == ""
     assert bot._normalize_symbol_query("/cex_flow") == ""
-    assert bot._normalize_symbol_query("/cexdiag") == ""
-    assert bot._normalize_symbol_query("/earlyflow") == ""
-    assert bot._normalize_symbol_query("/flowcoin") == ""
-    assert bot._normalize_symbol_query("/flowstress") == ""
-    assert bot._normalize_symbol_query("/flowblocked") == ""
-    assert bot._normalize_symbol_query("/flowhealth") == ""
-    assert bot._normalize_symbol_query("/sethflow") == ""
-    assert bot._normalize_symbol_query("/alpha") == ""
-    assert bot._normalize_symbol_query("/sync_commands") == ""
 
 
 def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
@@ -81,6 +51,10 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert "/help - same operator map" in output
     assert "Use /radar first" in output
     assert "/ravelab - diagnostic microscope" in output
+    assert "/crimepump - legacy blunt-name alias for /radar." in output
+    assert "/sethflow - compact full checklist" in output
+    assert "/startbot, /stopbot, /tradebot_status" in output
+    assert "/convex_status, /convex_scoreboard, /convex_archive" in output
     assert "/cexdiag" in output
     assert "/flowhealth" in output
     assert "Rule of thumb: /radar for candidates" in output
