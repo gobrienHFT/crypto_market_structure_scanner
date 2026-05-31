@@ -283,11 +283,11 @@ The bot can retrieve:
 - top timing-quality rows
 - BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N`
 - concentration-gated wallet-to-CEX flow rows
-- CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, venue-gate filtering, and attempted-symbol review
+- CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, empty explorer HTML parses, venue-gate filtering, and attempted-symbol review
 - lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt
 - symbol-specific wallet-to-CEX flow checks with a custom transfer floor
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
-- blocked/error rows when explorer HTML or API fallback cannot verify labelled CEX destinations
+- Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with blocked/error rows when labelled CEX destinations still cannot be verified
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply

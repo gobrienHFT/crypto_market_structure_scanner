@@ -1120,7 +1120,8 @@ def scan_cex_deposit_flow(
             else:
                 rows = _read_advanced_filter_rows(response.text, lookback_hours=lookback_hours)
 
-    if not rows and html_error:
+    api_error = ""
+    if not rows:
         label_lookup = _cex_label_lookup(chain, composition)
         api_rows, api_source_url, api_error = _fetch_token_transfer_api_rows(
             chain,
@@ -1145,6 +1146,8 @@ def scan_cex_deposit_flow(
                 lookback_hours=lookback_hours,
                 source="token_transfer_api",
             )
+
+    if not rows and html_error:
         result["cex_deposit_flow_source"] = "advanced_filter_blocked_api_fallback"
         result["cex_deposit_flow_error"] = f"{html_error}; {api_error}" if api_error else html_error
         result["cex_deposit_flow_note"] = (
@@ -1158,10 +1161,13 @@ def scan_cex_deposit_flow(
         return result
 
     if not rows:
+        result["cex_deposit_flow_source"] = "advanced_filter_api_fallback" if api_error else "advanced_filter"
+        if "no known CEX address labels are configured" in api_error:
+            result["cex_deposit_flow_error"] = api_error
         result["cex_deposit_flow_note"] = (
-            f"concentration gate met ({gate_text}); no large labelled CEX deposits found in last {lookback_hours}h."
+            f"concentration gate met ({gate_text}); no large labelled CEX deposits found in last {lookback_hours}h"
+            f"{' after advanced-filter and API fallback checks' if api_error else ''}."
         )
-        result["cex_deposit_flow_source"] = "advanced_filter"
         result["cex_deposit_flow_evidence_summary"] = build_cex_flow_evidence_summary(result)
         result["cex_deposit_flow_interpretation"] = build_cex_flow_interpretation(result)
         result["cex_deposit_flow_next_check"] = build_cex_flow_next_check(result)

@@ -163,6 +163,60 @@ def test_scan_cex_deposit_flow_falls_back_to_token_transfer_api_after_403(monkey
     assert "chainid=8453" in result["cex_deposit_24h_source_url"]
 
 
+def test_scan_cex_deposit_flow_uses_api_when_advanced_filter_has_no_parsed_rows(monkeypatch) -> None:
+    deposit_address = "0x8888888888888888888888888888888888888888"
+    monkeypatch.setenv("CEX_ADDRESS_LABELS", f"base:{deposit_address}=Binance Deposit")
+    monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
+    now = pd.Timestamp.utcnow().timestamp()
+    calls: list[str] = []
+
+    def fake_get(url, **_kwargs):
+        calls.append(str(url))
+        if "advanced-filter" in str(url):
+            response = _ApiResponse({})
+            response.status_code = 200
+            response.text = "<html><body><table><tbody></tbody></table></body></html>"
+            return response
+        return _ApiResponse(
+            {
+                "status": "1",
+                "message": "OK",
+                "result": [
+                    {
+                        "hash": "0xapiemptyhtml",
+                        "timeStamp": str(int(now - 20 * 60)),
+                        "from": "0x1111111111111111111111111111111111111111",
+                        "to": deposit_address,
+                        "value": str(2_000_000 * 10**18),
+                        "tokenDecimal": "18",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(cex.requests, "get", fake_get)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "HTMLZEROUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+        },
+        min_transfer_tokens=500_000,
+    )
+
+    assert any("advanced-filter" in call for call in calls)
+    assert any("api.etherscan.io/v2/api" in call and "chainid=8453" in call for call in calls)
+    assert result["cex_deposit_flow_flag"] is True
+    assert result["cex_deposit_flow_source"] == "token_transfer_api"
+    assert result["cex_deposit_flow_error"] == ""
+    assert result["cex_deposit_24h_count"] == 1
+    assert result["cex_deposit_24h_token_amount"] == 2_000_000
+    assert result["cex_deposit_24h_target_exchanges"] == "Binance"
+    assert result["cex_deposit_24h_whale_sender_count"] == 1
+    assert "0xapiemptyhtml" == result["cex_deposit_24h_top_tx"]
+
+
 def test_scan_cex_deposit_flow_does_not_call_tiny_top100_sender_whale_origin(monkeypatch) -> None:
     deposit_address = "0x9999999999999999999999999999999999999999"
     monkeypatch.setenv("CEX_ADDRESS_LABELS", f"base:{deposit_address}=Bitget Deposit")
