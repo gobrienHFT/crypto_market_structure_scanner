@@ -904,10 +904,12 @@ def _coin_stats_description(row: pd.Series, *, source: str) -> str:
     enriched = scored.iloc[0] if not scored.empty else apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
     holder_text = _holder_composition_text(row)
     gate_line = _goal_thesis_gates_line(enriched)
+    ravelab_line = _single_symbol_ravelab_trigger_line(row)
     prefix = (
         f"{DISCORD_PRODUCT_IDENTITY}\n\n"
         f"Scan source: {source}\n"
         f"{gate_line}\n"
+        f"{ravelab_line}\n"
         "Read: baseThesis/coreSetup are structure gates; targetFlow/whaleOrigin are flow triggers, not venue proof.\n\n"
     )
     card = build_discord_flag_card(enriched, holder_text=holder_text, max_chars=DISCORD_EMBED_DESCRIPTION_LIMIT - len(prefix))
@@ -924,6 +926,45 @@ def _load_coin_stats(symbol_query: str) -> tuple[str, str]:
     if row is None:
         return f"{symbol} stats", "No latest scan row or live Binance futures symbol found yet."
     return f"{symbol} stats", _coin_stats_description(row, source=source)
+
+
+def _cached_breakout_windows_from_row(row: pd.Series) -> list[str]:
+    windows: list[tuple[int, str]] = []
+    for key, value in row.items():
+        match = re.fullmatch(r"broke_high_(\d+)d", str(key or "").strip().lower())
+        if match and _boolish_scalar(value):
+            days = int(match.group(1))
+            windows.append((days, f"{days}D"))
+    windows.sort(key=lambda item: item[0])
+    return [label for _, label in windows]
+
+
+def _single_symbol_ravelab_trigger_line(row: pd.Series, *, min_transfer_tokens: float = 0.0) -> str:
+    scored = _score_ravelab_early_frame(
+        pd.DataFrame([row.to_dict()]),
+        min_transfer_tokens=max(0.0, float(min_transfer_tokens or 0.0)),
+    )
+    if scored.empty:
+        return "RAVELAB triggers: unavailable"
+    holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
+    scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
+    cached_highs = _cached_breakout_windows_from_row(row)
+    if cached_highs:
+        scored["_ravelab_breakout_any"] = True
+        scored["_ravelab_breakout_windows"] = ",".join(cached_highs)
+    scored = _ravelab_apply_thesis_columns(
+        scored,
+        min_squeeze_score=50.0,
+        min_transfer_tokens=max(0.0, float(min_transfer_tokens or 0.0)),
+    )
+    row_scored = scored.iloc[0]
+    stage = _ravelab_stage_label(row_scored)
+    trigger = _ravelab_trigger_text(row_scored)
+    core_count = int(_safe_float(row_scored.get("_ravelab_core_gate_count")) or 0)
+    core_total = int(_safe_float(row_scored.get("_ravelab_core_gate_total")) or 6)
+    blockers = _clip_text(row_scored.get("_ravelab_missing_core_gates", ""), 80) or "none"
+    mechanics = _ravelab_forced_flow_text(row_scored)
+    return f"RAVELAB triggers: {trigger} | {stage} | core {core_count}/{core_total} | blockers {blockers} | flowMech {mechanics}"
 
 
 def _load_candidates(limit: int) -> tuple[str, str]:
@@ -1084,8 +1125,10 @@ def _load_dossier(symbol_query: str) -> tuple[str, str]:
     scored = _goal_score_frame(pd.DataFrame([row.to_dict()]))
     enriched = scored.iloc[0] if not scored.empty else apply_timing_model(apply_terminal_model(pd.DataFrame([row.to_dict()]))).iloc[0]
     gate_line = _goal_thesis_gates_line(enriched)
+    ravelab_line = _single_symbol_ravelab_trigger_line(row)
     text = (
         f"{gate_line}\n"
+        f"{ravelab_line}\n"
         "Read: baseThesis/coreSetup are structure gates; targetFlow/whaleOrigin are flow triggers, not venue proof.\n\n"
         + build_setup_dossier(enriched)
         + "\n\n## Timing\n\n```text\n"
@@ -5184,6 +5227,7 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
         "Read: only rows with count > 0, largest transfer above floor, and a labelled destination are treated as confirmed.",
         "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate.",
         thesis_line,
+        _single_symbol_ravelab_trigger_line(row, min_transfer_tokens=effective_min_transfer),
         "",
         f"Targets: {_clip_text(row.get('cex_deposit_24h_target_exchanges', ''), 80) or 'n/a'}",
         f"Transfers: {int(_safe_float(row.get('cex_deposit_24h_count')) or 0)}",
@@ -5274,6 +5318,7 @@ def _load_coin_check(
         f"Verdict: {status} | setup score {score:.0f}/100 | Source: {source}",
         f"Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | Top10 whale floor: >= {effective_min_whale_pct:.1f}%",
         _goal_thesis_gates_line(scored_row),
+        _single_symbol_ravelab_trigger_line(row, min_transfer_tokens=effective_min_transfer),
         "Read: baseThesis/coreSetup can pass before CEX flow; targetFlow/whaleOrigin are trigger/risk evidence, not venue proof.",
         "",
         gate_line("target CEX flow", _boolish_scalar(scored_row.get("_goal_target_flow")), f"{_target_cex_text(scored_row) or 'no Binance/Gate/Bitget confirmed transfer'}; max {_fmt_compact_number(scored_row.get('cex_deposit_24h_max_amount'))}"),

@@ -4068,10 +4068,12 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
     assert "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate." in proof
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin Y" in proof
+    assert "RAVELAB triggers: whale-CEX 12.00M | A3 WHALE-CEX PRIME" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y" in check
+    assert "RAVELAB triggers: whale-CEX 12.00M | A3 WHALE-CEX PRIME" in check
     assert "baseThesis/coreSetup can pass before CEX flow" in check
     assert "PASS target CEX flow" in check
     assert "PASS Binance+Bitget trading venue" in check
@@ -4098,6 +4100,55 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert target_title == "TARGETONLYUSDT flow proof"
     assert "Verdict: VERIFIED target-CEX transfer evidence" in target_proof
     assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow Y | holder Y | venueBnBg N | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin N" in target_proof
+
+
+def test_coincheck_prints_ravelab_forced_flow_lane(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "MECHUSDT",
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 8_500,
+                "top10_holder_pct": 92.0,
+                "top100_holder_pct": 99.1,
+                "short_account_pct": 70.0,
+                "short_dominance_score": 85.0,
+                "short_account_build_score": 95.0,
+                "silent_oi_accumulation_score": 90.0,
+                "short_account_change_max_pp": 4.0,
+                "oi_delta_pct": 8.0,
+                "hour_volume_multiple": 5.0,
+                "daily_quote_volume_multiple": 2.0,
+                "low_float_score": 84.0,
+                "float_trap_score": 80.0,
+                "fdv_to_market_cap": 9.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "dormant_short_fuse_score": 78.0,
+                "pre_pump_precision_score": 70.0,
+                "binance_volume_share_pct": 6.0,
+                "bitget_volume_share_pct": 1.2,
+                "day_return_pct": 1.0,
+                "price_change_24h_pct": 1.0,
+                "range_24h_pct": 3.5,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, check = bot._load_coin_check("MECH", min_tokens=20_000)
+
+    assert title == "MECHUSDT checklist"
+    assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup N | targetFlow N" in check
+    assert "RAVELAB triggers: forced-flow" in check
+    assert "| A1 CORE PRIME | core 6/6 | blockers none | flowMech FORCED" in check
+    assert "FAIL target CEX flow" in check
 
 
 def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None:
