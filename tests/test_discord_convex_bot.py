@@ -188,7 +188,10 @@ def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch)
     assert "CCCUSDT" in output
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
-    assert output.index("CCCUSDT 72.5%") < output.index("BBBUSDT 50.1%")
+    assert "Read: high short-account percentage is weak context only" in output
+    assert "/CCCUSDT | shorts 72.5% | baseThesis ? | no scanner thesis context" in output
+    assert "/BBBUSDT | shorts 50.1% | baseThesis ? | no scanner thesis context" in output
+    assert output.index("/CCCUSDT | shorts 72.5%") < output.index("/BBBUSDT | shorts 50.1%")
 
 
 def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
@@ -199,13 +202,53 @@ def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
         ]
     )
     monkeypatch.setattr(bot, "_load_live_shorts_frame", lambda: (live, ""))
+    monkeypatch.setattr(bot, "_latest_snapshot_frame", lambda: pd.DataFrame())
+    monkeypatch.setattr(bot, "_read_csv_if_exists", lambda path: pd.DataFrame())
 
     _, chunks = bot._load_shorts_list()
     output = "\n".join(chunks)
 
     assert "Source: live Binance account-ratio scan" in output
-    assert "PLAYUSDT 52.3%" in output
+    assert "/PLAYUSDT | shorts 52.3% | baseThesis ? | no scanner thesis context" in output
     assert "RAVEUSDT" not in output
+
+
+def test_load_shorts_list_overlays_base_thesis_context(tmp_path, monkeypatch) -> None:
+    cache = tmp_path / "latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "THESISUSDT",
+                "short_account_pct": 62.0,
+                **_holder_evidence(),
+                "binance_volume_share_pct": 9.0,
+                "bitget_volume_share_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-01-01T00:00:00Z",
+            },
+            {
+                "symbol": "SHORTONLYUSDT",
+                "short_account_pct": 71.0,
+                **_holder_evidence(),
+                "top10_holder_pct": 55.0,
+                "binance_volume_share_pct": 9.0,
+                "bitget_volume_share_pct": 2.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "2026-01-01T00:00:00Z",
+            },
+        ]
+    ).to_csv(cache, index=False)
+    monkeypatch.setenv("DISCORD_CONVEX_CACHE_PATH", str(cache))
+    monkeypatch.setattr(bot, "_latest_snapshot_frame", lambda: pd.DataFrame())
+    monkeypatch.setattr(bot, "_load_live_shorts_frame", lambda: (pd.DataFrame(), "live unavailable"))
+
+    title, chunks = bot._load_shorts_list()
+    output = "\n".join(chunks)
+
+    assert title == "Short-account majority list"
+    assert "Thesis context: latest scanner cache | Base thesis rows: 1" in output
+    assert "/SHORTONLYUSDT | shorts 71.0% | baseThesis N | holder N top10 55.0% | BnBg Y | noPump60 Y" in output
+    assert "/THESISUSDT | shorts 62.0% | baseThesis Y | holder Y top10 91.0% | BnBg Y | noPump60 Y" in output
 
 
 def test_load_funding_leaderboard_splits_long_and_short_carry(monkeypatch) -> None:

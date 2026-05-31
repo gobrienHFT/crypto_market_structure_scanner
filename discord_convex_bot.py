@@ -1070,7 +1070,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "Market context:",
         "/high <days> and /low <days> - breakout highs/lows for any 1D-1499D window; use thesis_only:true for hard-gated rows.",
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
-        "/shorts - all cached symbols with short-account majority.",
+        "/shorts - weak-context short-majority board with baseThesis Y/N/? overlay.",
         "/funding - Binance funding/carry board.",
         "/floattrap, /squeezeready, /cextargets, /terminal, /timing - single-lens context boards; raw rows show baseThesis Y/N when available.",
         "",
@@ -5902,6 +5902,76 @@ def _load_cached_shorts_list(prefix: str = "") -> tuple[str, list[str]]:
     return _format_shorts_frame(frame, source="latest scanner cache", prefix=prefix)
 
 
+def _shorts_frame_has_thesis_context(frame: pd.DataFrame) -> bool:
+    if frame.empty:
+        return False
+    context_columns = {
+        "token_platform",
+        "token_contract",
+        "holder_source",
+        "top10_holder_pct",
+        "filtered_top_10_manipulable_pct",
+        "binance_perp_universe",
+        "binance_volume_share_pct",
+        "bitget_volume_share_pct",
+        "history_days",
+        "recent_max_pump_60d_pct",
+        "recent_pump_60d_days",
+        "no_large_pump_60d_flag",
+    }
+    return bool(context_columns & set(frame.columns))
+
+
+def _shorts_context_frame() -> tuple[pd.DataFrame, str]:
+    snapshot = _latest_snapshot_frame()
+    if _shorts_frame_has_thesis_context(snapshot):
+        return snapshot, "latest scanner snapshot"
+    cache = _read_csv_if_exists(_cache_path())
+    if _shorts_frame_has_thesis_context(cache):
+        return cache, "latest Convex cache"
+    return pd.DataFrame(), ""
+
+
+def _with_shorts_thesis_context(matches: pd.DataFrame, *, source: str) -> tuple[pd.DataFrame, str]:
+    if matches.empty or "symbol" not in matches.columns:
+        return matches.copy(), ""
+    rows = matches.loc[:, ~matches.columns.duplicated()].copy()
+    rows["_shorts_symbol_key"] = rows["symbol"].astype(str).str.upper().str.strip()
+    context_label = source if _shorts_frame_has_thesis_context(rows) else ""
+    if not context_label:
+        context, context_label = _shorts_context_frame()
+        if not context.empty and "symbol" in context.columns:
+            context = context.loc[:, ~context.columns.duplicated()].copy()
+            context["_shorts_symbol_key"] = context["symbol"].astype(str).str.upper().str.strip()
+            context = context[context["_shorts_symbol_key"].ne("")].drop_duplicates(subset=["_shorts_symbol_key"], keep="first")
+            context = context.set_index("_shorts_symbol_key", drop=False)
+            protected = {"symbol", "short_account_pct", "long_account_pct", "long_short_account_ratio", "scan_mode", "scanned_at_utc"}
+            for column in context.columns:
+                if column in protected or column == "_shorts_symbol_key":
+                    continue
+                mapped = rows["_shorts_symbol_key"].map(context[column])
+                if column in rows.columns:
+                    rows[column] = rows[column].where(pd.notna(rows[column]), mapped)
+                else:
+                    rows[column] = mapped
+            rows["_shorts_context_available"] = rows["_shorts_symbol_key"].isin(set(context.index))
+        else:
+            rows["_shorts_context_available"] = False
+    else:
+        rows["_shorts_context_available"] = True
+
+    rows["_shorts_top10_effective"] = effective_top10_holder_pct(rows)
+    rows["_shorts_holder_gate"] = _strict_top10_thesis_holder_gate_mask(rows, min_whale_pct=90.0, require_holder_evidence=True)
+    rows["_shorts_venue_gate"] = _explicit_binance_bitget_trading_gate_mask(rows)
+    rows["_shorts_no_pump_gate"] = _no_recent_pump_proof_mask(rows)
+    rows["_discord_base_thesis_gate"] = (
+        _boolish_series(rows.get("_shorts_holder_gate"), index=rows.index)
+        & _boolish_series(rows.get("_shorts_venue_gate"), index=rows.index)
+        & _boolish_series(rows.get("_shorts_no_pump_gate"), index=rows.index)
+    ).fillna(False)
+    return rows.drop(columns=["_shorts_symbol_key"], errors="ignore"), context_label
+
+
 def _format_shorts_frame(frame: pd.DataFrame, *, source: str, prefix: str = "") -> tuple[str, list[str]]:
     frame = frame.copy()
     frame["short_account_pct"] = pd.to_numeric(frame["short_account_pct"], errors="coerce")
@@ -5911,31 +5981,38 @@ def _format_shorts_frame(frame: pd.DataFrame, *, source: str, prefix: str = "") 
     matches["symbol"] = matches["symbol"].astype(str).str.upper().str.strip()
     matches = matches[matches["symbol"].ne("")].drop_duplicates(subset=["symbol"], keep="first")
     matches = matches.sort_values(["short_account_pct", "symbol"], ascending=[False, True])
+    matches, context_label = _with_shorts_thesis_context(matches, source=source)
     scanned_at = str(frame.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
     scan_mode = str(frame.get("scan_mode", pd.Series(["unknown"])).iloc[0])
     include_pct = _env_bool("DISCORD_SHORTS_INCLUDE_PCT", True)
-    symbols = [
-        f"{row.symbol} {float(row.short_account_pct):.1f}%" if include_pct else str(row.symbol)
-        for row in matches[["symbol", "short_account_pct"]].itertuples(index=False)
-    ]
+    base_thesis_count = int(_boolish_series(matches.get("_discord_base_thesis_gate"), index=matches.index).sum())
+    context_text = context_label or "none"
     header = (
-        f"Short-account majority tokens ({len(symbols)})\n"
-        f"Threshold: >50% accounts short | Source: {source} | Scan: {scan_mode} | Updated: {scanned_at}\n\n"
+        f"Short-account majority tokens ({len(matches)})\n"
+        f"Threshold: >50% accounts short | Source: {source} | Scan: {scan_mode} | Updated: {scanned_at}\n"
+        f"Thesis context: {context_text} | Base thesis rows: {base_thesis_count}\n"
+        "Read: high short-account percentage is weak context only; baseThesis Y means strict holder+Binance/Bitget+60D no-pump also passed."
     )
     if prefix:
         header = f"{prefix}\n\n{header}"
-    chunks: list[str] = []
-    current = header
-    for symbol in symbols:
-        addition = f"{symbol}\n"
-        if len(current) + len(addition) > 1850:
-            chunks.append(current.rstrip())
-            current = addition
+    lines = [header, ""]
+    for _, row in matches.iterrows():
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        short_pct = _safe_pct(row.get("short_account_pct"))
+        short_text = f"{short_pct:.1f}%" if short_pct is not None and include_pct else "short-majority"
+        has_context = _boolish_scalar(row.get("_shorts_context_available"))
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N" if has_context else "?"
+        if has_context:
+            holder = "Y" if _boolish_scalar(row.get("_shorts_holder_gate")) else "N"
+            venue = "Y" if _boolish_scalar(row.get("_shorts_venue_gate")) else "N"
+            no_pump = "Y" if _boolish_scalar(row.get("_shorts_no_pump_gate")) else "N"
+            top10 = _safe_pct(row.get("_shorts_top10_effective"))
+            top10_text = f" top10 {top10:.1f}%" if top10 is not None else ""
+            context = f" | holder {holder}{top10_text} | BnBg {venue} | noPump60 {no_pump}"
         else:
-            current += addition
-    if current.strip():
-        chunks.append(current.rstrip())
-    return "Short-account majority list", chunks
+            context = " | no scanner thesis context"
+        lines.append(f"/{symbol} | shorts {short_text} | baseThesis {base_thesis}{context}")
+    return "Short-account majority list", _chunk_text_lines(lines)
 
 
 def _cache_status() -> str:
@@ -6057,7 +6134,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             return
         await _send_command_guide(interaction)
 
-    shorts_kwargs = {"name": "shorts", "description": "List every cached token with more than 50% of accounts short."}
+    shorts_kwargs = {"name": "shorts", "description": "Diagnostic short-majority board with base-thesis context."}
     if guild is not None:
         shorts_kwargs["guild"] = guild
 
