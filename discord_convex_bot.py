@@ -1072,7 +1072,8 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
         "/shorts - weak-context short-majority board with baseThesis Y/N/? overlay.",
         "/funding - Binance funding/carry board.",
-        "/floattrap, /squeezeready, /cextargets, /terminal, /timing - single-lens context boards; raw rows show baseThesis Y/N when available.",
+        "/floattrap, /squeezeready, /cextargets - single-lens diagnostics; raw rows show baseThesis Y/N when available.",
+        "/terminal, /timing - strict base-thesis-filtered structure/timing boards; shown rows print baseThesis Y.",
         "",
         "Runtime and records:",
         "/dossier <symbol>, /coin <symbol> - symbol detail views.",
@@ -1097,9 +1098,10 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
         return "Market-structure evidence terminal", f"No live scan, scanner snapshot, or cache exists yet. `{source}`"
     frame = apply_terminal_model(frame)
     frame = apply_timing_model(frame)
-    frame = _apply_thesis_candidate_gate(frame)
+    frame = _add_base_thesis_context(frame)
+    frame = frame[_boolish_series(frame.get("_discord_base_thesis_gate"), index=frame.index)].copy()
     if frame.empty:
-        return "Market-structure evidence terminal", "```text\n" + _thesis_candidate_header() + "\n\nNo current rows met the strict holder-evidence and Binance+Bitget thesis gate.\n```"
+        return "Market-structure evidence terminal", "```text\n" + _thesis_candidate_header() + "\n\nNo current rows met the strict holder-evidence, Binance+Bitget, and 60D no-pump thesis gate.\n```"
     frame = frame.sort_values(["terminal_edge_score", "symbol"], ascending=[False, True]).head(limit)
     header = _cache_age_header(frame, source) + "\n" + _thesis_candidate_header()
     lines = [
@@ -1107,7 +1109,8 @@ def _load_terminal_list(limit: int) -> tuple[str, str]:
             f"{str(row.get('symbol', '')).upper()} | terminal {(_safe_float(row.get('terminal_edge_score')) or 0.0):.1f} | "
             f"{row.get('terminal_setup_archetype', 'watchlist structure')} | shorts "
             f"{(_safe_float(row.get('short_account_pct')) or 0.0):.1f}% | "
-            f"{row.get('terminal_liquidity_reality', 'liquidity check required')}"
+            f"{row.get('terminal_liquidity_reality', 'liquidity check required')} | "
+            f"{_base_thesis_status_text(row)}"
         )
         for _, row in frame.iterrows()
     ]
@@ -1150,9 +1153,10 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
     if frame.empty:
         return "Timing watchlist", "No live scan, scanner snapshot, or cache exists yet."
     frame = apply_timing_model(apply_terminal_model(frame))
-    frame = _apply_thesis_candidate_gate(frame)
+    frame = _add_base_thesis_context(frame)
+    frame = frame[_boolish_series(frame.get("_discord_base_thesis_gate"), index=frame.index)].copy()
     if frame.empty:
-        return "Timing watchlist", "```text\n" + _thesis_candidate_header() + "\n\nNo current timing rows met the strict holder-evidence and Binance+Bitget thesis gate.\n```"
+        return "Timing watchlist", "```text\n" + _thesis_candidate_header() + "\n\nNo current timing rows met the strict holder-evidence, Binance+Bitget, and 60D no-pump thesis gate.\n```"
     frame = frame.sort_values(
         ["timing_score", "timing_trigger_score", "timing_too_late_score", "symbol"],
         ascending=[False, False, True, True],
@@ -1161,7 +1165,7 @@ def _load_timing_list(limit: int) -> tuple[str, str]:
         (
             f"{str(row.get('symbol', '')).upper()} | timing {(_safe_float(row.get('timing_score')) or 0.0):.1f} | "
             f"{row.get('timing_state', 'No timing edge')} | shorts {(_safe_float(row.get('short_account_pct')) or 0.0):.1f}% | "
-            f"{row.get('timing_observed_trigger', 'pending')}"
+            f"{row.get('timing_observed_trigger', 'pending')} | {_base_thesis_status_text(row)}"
         )
         for _, row in frame.iterrows()
     ]

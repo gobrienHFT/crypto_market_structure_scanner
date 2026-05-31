@@ -516,6 +516,7 @@ def test_load_timing_list_ranks_current_timing_cache(tmp_path, monkeypatch) -> N
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
     assert "timing" in output
+    assert "baseThesis Y" in output
 
 
 def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
@@ -4680,6 +4681,7 @@ def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -
     assert "Source: fresh Deep scan" in output
     assert "AAAUSDT" not in output
     assert "BBBUSDT" in output
+    assert "baseThesis Y" in output
     assert "OLDUSDT" not in output
 
 

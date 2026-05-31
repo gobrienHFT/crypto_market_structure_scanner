@@ -280,8 +280,8 @@ The bot can retrieve:
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowd plus squeeze fuel, and not-late structure
 - symbol-level `/flowproof`, `/coincheck`, `/coin`, and `/dossier` views that separate base thesis, core setup, and CEX-flow triggers; transfer labels cannot masquerade as venue proof, and a clean core structure no longer looks rejected merely because the CEX-flow trigger has not appeared yet
 - holder-concentration, low-float/high-FDV, squeeze-ready, inventory-stress, and Binance/Gate/Bitget target-transfer diagnostic boards that label raw rows separately from `baseThesis Y` rows and show base-gate blockers when the strict holder, Binance+Bitget, or 60D no-pump gates fail
-- top terminal market-structure evidence rows
-- top timing-quality rows
+- top terminal market-structure evidence rows after the strict base thesis gate, with `baseThesis Y` printed per row
+- top timing-quality rows after the strict base thesis gate, with `baseThesis Y` printed per row
 - BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N` blockers
 - concentration-gated wallet-to-CEX flow rows
 - CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, empty explorer HTML parses, venue-gate filtering, and attempted-symbol review
