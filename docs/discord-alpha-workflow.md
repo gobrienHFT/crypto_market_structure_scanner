@@ -30,6 +30,7 @@ Recommended live workflow:
 ```text
 /alpha
 /commands
+/help
 /radar
 /prime
 /precrime min_tokens:20000
@@ -63,7 +64,7 @@ Recommended live workflow:
 
 Use `/alpha` as the triage queue. It first applies the strict thesis gate, observed top-10 holder concentration at or above 90% with ETH/BNB/ARB chain+contract holder-source snapshot evidence plus Binance+Bitget trading evidence, then blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact watchlist.
 
-Use `/commands` when the slash-command surface feels noisy. It gives the short operator map: `/radar` first, `/coincheck` for one symbol, `/ravelab` for detailed blockers and near misses, and `/cexdiag`/`/flowhealth` for data-source problems.
+Use `/help` or `/commands` when the slash-command surface feels noisy. It gives the short operator map: `/radar` first, `/coincheck` for one symbol, `/ravelab` for detailed blockers and near misses, and `/cexdiag`/`/flowhealth` for data-source problems.
 
 Use `/radar` as the simplest hard-gated operator queue and the default place to start. It uses the strict `/ravelab` gates with near misses hidden by default, then prints only the live queue and concise evidence per symbol. The `trigger` choice accepts `all`, `triggered`, `flow`, `target_flow`, `breakout`, or `core`. Generic target-CEX tells use `min_tokens`; the higher-conviction `flow`/`whale-CEX` lane uses `whale_flow_min_tokens`, defaulting to `DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS` or 100k tokens. `/prime` is the short alias, `/crimepump` is the legacy blunt-name alias, and `/ravelab` is the diagnostic microscope for near misses, style filtering, blockers, and full evidence rows.
 

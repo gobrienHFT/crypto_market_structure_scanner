@@ -301,6 +301,7 @@ def _feature_required_tier(feature: str) -> str:
     defaults = {
         "convex": "free",
         "commands": "free",
+        "help": "free",
         "coin": "paid",
         "scoreboard": "paid",
         "archive": "pro",
@@ -642,6 +643,7 @@ def _normalize_symbol_query(raw_symbol: str) -> str:
     if symbol in {
         "CONVEX",
         "COMMANDS",
+        "HELP",
         "CONVEX_STATUS",
         "CONVEX_SCOREBOARD",
         "CONVEX_ARCHIVE",
@@ -955,6 +957,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "",
         "Primary queue:",
         "/commands - this operator map.",
+        "/help - same operator map, easier to remember.",
         "/radar [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - default operator queue; trigger can show all, triggered, whale-CEX, target-CEX, breakout, or core-watch rows.",
         "/prime - short alias for /radar.",
         "/alpha [limit] - compact thesis-gated brief across structure, timing, CEX flow, scanner score, and short fuel.",
@@ -5681,6 +5684,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("commands")):
             await interaction.response.send_message(_access_denied_message("commands"), ephemeral=True)
             return
+        await _send_command_guide(interaction)
+
+    async def _send_command_guide(interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
         title, chunks = await asyncio.to_thread(_load_command_guide)
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x38BDF8)
@@ -5688,6 +5694,20 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:
             await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    help_kwargs = {"name": "help", "description": "Show the recommended Discord operator command map."}
+    if guild is not None:
+        help_kwargs["guild"] = guild
+
+    @tree.command(**help_kwargs)
+    async def help(interaction: discord.Interaction) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("help")):
+            await interaction.response.send_message(_access_denied_message("help"), ephemeral=True)
+            return
+        await _send_command_guide(interaction)
 
     shorts_kwargs = {"name": "shorts", "description": "List every cached token with more than 50% of accounts short."}
     if guild is not None:
@@ -7119,7 +7139,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Use `/convex_status`, `/alpha`, `/radar`, `/prime`, `/precrime min_tokens:20000`, `/pumpwatch min_tokens:20000`, `/setupscore min_tokens:20000`, `/flowproof symbol:PLAYUSDT`, `/coincheck symbol:PLAYUSDT`, `/funding side:both`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`, `/sethflow min_tokens:10000000`, `/corr threshold:0.5`, `/cexflow min_tokens:20000`, `/flowstress`, `/flowblocked`, `/flowhealth`, `/cexdiag min_tokens:1000`, `/earlyflow`, `/coin PLAYUSDT`, or `/playusdt` in this channel."
+                    "Convex bot online. Start with `/radar`, use `/coincheck symbol:PLAYUSDT` for one name, "
+                    "and use `/help` or `/commands` for the full operator map. Diagnostics: `/cexdiag min_tokens:1000`, "
+                    "`/flowhealth`, `/whales min_pct:90`, `/high days:20D thesis_only:true`, `/low days:20D thesis_only:true`."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")

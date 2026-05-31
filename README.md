@@ -220,6 +220,7 @@ Supported commands include:
 
 ```text
 /commands
+/help
 /alpha [limit]
 /convex [limit]
 /shorts
@@ -262,7 +263,7 @@ Supported commands include:
 /<configured-symbol-alias>
 ```
 
-Use `/commands` inside Discord when you want the operator map. It labels `/radar` as the primary hard-gated queue, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
+Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/radar` as the primary hard-gated queue, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
 
 The bot can retrieve:
 
