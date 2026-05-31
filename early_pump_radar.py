@@ -177,28 +177,27 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
         return "Dormancy unproven"
     if not _row_bool(row, "early_pump_not_late_gate") or timing_late >= 72.0:
         return "Too late / fragile"
+    if not _row_bool(row, "early_pump_whale_gate"):
+        return "Holder gate unproven"
+    if not _row_bool(row, "early_pump_binance_bitget_gate"):
+        return "Venue gate unproven"
+    if not _row_bool(row, "early_pump_float_gate"):
+        return "Float gate unproven"
+    if not _row_bool(row, "early_pump_short_gate"):
+        return "Squeeze fuel unproven"
     if (
         score >= 75.0
         and _row_bool(row, "early_pump_confirmed_target_flow")
-        and _row_bool(row, "early_pump_whale_gate")
-        and _row_bool(row, "early_pump_short_gate")
-        and _row_bool(row, "early_pump_float_gate")
-        and _row_bool(row, "early_pump_binance_bitget_gate")
     ):
         return "Prime early squeeze"
     if score >= 62.0 and _row_bool(row, "early_pump_confirmed_target_flow"):
         return "Flow-first watch"
     if (
         score >= 60.0
-        and _row_bool(row, "early_pump_whale_gate")
-        and _row_bool(row, "early_pump_short_gate")
-        and _row_bool(row, "early_pump_float_gate")
     ):
         return "Squeeze watch"
     if (
         score >= 55.0
-        and _row_bool(row, "early_pump_whale_gate")
-        and _row_bool(row, "early_pump_float_gate")
         and (_first_float(row, "early_pump_timing_score") or 0.0) >= 50.0
     ):
         return "Sleeper watch"

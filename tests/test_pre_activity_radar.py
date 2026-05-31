@@ -222,3 +222,87 @@ def test_pre_activity_radar_does_not_alert_on_top100_only_control() -> None:
     assert bool(row["pre_activity_whale_gate"]) is False
     assert bool(row["pre_activity_structure_gate"]) is False
     assert bool(row["pre_activity_alert_flag"]) is False
+
+
+def test_pre_activity_state_names_missing_holder_structure_gate() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "TOP100QUIETUSDT",
+                "binance_perp_universe": True,
+                "token_platform": "ethereum",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "holder_source": "Etherscan holder endpoint",
+                "top10_holder_pct": 55,
+                "top100_holder_pct": 99,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 8.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "low_float_score": 84,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_max_amount": 250_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                "short_account_pct": 62,
+                "bitget_volume_share_pct": 2.0,
+                "ask_depth_1pct_usdt": 42_000,
+                "ask_depth_to_24h_volume_pct": 0.03,
+                "day_return_pct": 0.9,
+                "price_change_24h_pct": 0.9,
+                "hour_return_pct": 0.2,
+                "range_24h_pct": 3.2,
+                "low_volatility_coil_score": 82,
+            }
+        ]
+    )
+
+    row = apply_pre_activity_radar(frame).iloc[0]
+
+    assert bool(row["pre_activity_whale_gate"]) is False
+    assert row["pre_activity_state"] == "Holder/float gate unproven"
+    assert bool(row["pre_activity_alert_flag"]) is False
+
+
+def test_pre_activity_state_names_missing_binance_bitget_gate() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "QUIETNOVENUEUSDT",
+                "token_platform": "bsc",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "BscScan holder endpoint",
+                "top10_holder_pct": 91,
+                "top100_holder_pct": 98.5,
+                "holder_count": 8_000,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "low_float_score": 84,
+                "float_trap_score": 80,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_max_amount": 250_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                "short_account_pct": 62,
+                "ask_depth_1pct_usdt": 42_000,
+                "ask_depth_to_24h_volume_pct": 0.03,
+                "day_return_pct": 0.9,
+                "price_change_24h_pct": 0.9,
+                "hour_return_pct": 0.2,
+                "range_24h_pct": 3.2,
+                "low_volatility_coil_score": 82,
+            }
+        ]
+    )
+
+    row = apply_pre_activity_radar(frame).iloc[0]
+
+    assert bool(row["pre_activity_whale_gate"]) is True
+    assert bool(row["pre_activity_structure_gate"]) is True
+    assert bool(row["pre_activity_binance_bitget_gate"]) is False
+    assert row["pre_activity_state"] == "Venue gate unproven"
+    assert bool(row["pre_activity_alert_flag"]) is False

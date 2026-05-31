@@ -193,11 +193,17 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
         return "Dormancy unproven"
     if heat >= 70.0 or not quiet:
         return "Already active / chase risk"
+    if not structure:
+        return "Holder/float gate unproven"
+    if not venue:
+        return "Venue gate unproven"
+    if not behavior:
+        return "Behavior trigger unproven"
     if score >= 76.0 and flow and structure and venue:
         return "Stealth inventory setup"
     if score >= 68.0 and behavior and structure and venue:
         return "Silent squeeze fuse"
-    if score >= 60.0 and structure:
+    if score >= 60.0:
         return "Control-plane watch"
     return "No latent edge"
 

@@ -193,6 +193,75 @@ def test_early_pump_radar_does_not_alert_on_top100_only_control() -> None:
     assert bool(row["early_pump_alert_flag"]) is False
 
 
+def test_early_pump_state_names_missing_holder_gate_before_watch_state() -> None:
+    row = apply_early_pump_radar(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "TOP100FLOWUSDT",
+                    "cex_deposit_flow_score": 95,
+                    "cex_deposit_flow_flag": True,
+                    "cex_deposit_24h_count": 2,
+                    "cex_deposit_24h_max_amount": 2_000_000,
+                    "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                    "binance_perp_universe": True,
+                    "token_platform": "ethereum",
+                    "token_contract": "0x2222222222222222222222222222222222222222",
+                    "holder_source": "Etherscan holder endpoint",
+                    "top10_holder_pct": 55,
+                    "top100_holder_pct": 99,
+                    "history_days": 180,
+                    "recent_max_pump_60d_pct": 8.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": True,
+                    "short_account_pct": 64,
+                    "low_float_score": 82,
+                    "bitget_volume_share_pct": 2.4,
+                }
+            ]
+        )
+    ).iloc[0]
+
+    assert bool(row["early_pump_confirmed_target_flow"]) is True
+    assert bool(row["early_pump_whale_gate"]) is False
+    assert row["early_pump_state"] == "Holder gate unproven"
+    assert bool(row["early_pump_alert_flag"]) is False
+
+
+def test_early_pump_state_names_missing_binance_bitget_gate_before_flow_watch() -> None:
+    row = apply_early_pump_radar(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "FLOWNOVENUEUSDT",
+                    "cex_deposit_flow_score": 95,
+                    "cex_deposit_flow_flag": True,
+                    "cex_deposit_24h_count": 2,
+                    "cex_deposit_24h_max_amount": 2_000_000,
+                    "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                    "token_platform": "ethereum",
+                    "token_contract": "0x4444444444444444444444444444444444444444",
+                    "holder_source": "Etherscan holder endpoint",
+                    "top10_holder_pct": 92,
+                    "top100_holder_pct": 99,
+                    "history_days": 180,
+                    "recent_max_pump_60d_pct": 8.0,
+                    "recent_pump_60d_days": 60,
+                    "no_large_pump_60d_flag": True,
+                    "short_account_pct": 64,
+                    "low_float_score": 82,
+                }
+            ]
+        )
+    ).iloc[0]
+
+    assert bool(row["early_pump_confirmed_target_flow"]) is True
+    assert bool(row["early_pump_whale_gate"]) is True
+    assert bool(row["early_pump_binance_bitget_gate"]) is False
+    assert row["early_pump_state"] == "Venue gate unproven"
+    assert bool(row["early_pump_alert_flag"]) is False
+
+
 def test_early_pump_radar_target_flow_respects_transfer_floor() -> None:
     scored = _score(
         pd.DataFrame(

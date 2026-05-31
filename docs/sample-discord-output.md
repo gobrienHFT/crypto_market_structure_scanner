@@ -26,13 +26,12 @@ RAVEUSDT | brief 74.1 | terminal 81 | timing 58 | CEX 36 | shorts 68.5% | Coilin
 ```text
 Pre-activity crime-pump radar
 Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Quiet required: True | Behaviour gate required: True | 60D no-pump required: True
-Gate rows: strict holder 9 | Binance+Bitget 5 | 60D no-pump 3 | Shown after latent filters 2
-Matches: 2 | Target-flow rows: 1 | Quiet-gated rows: 2 | Read: structural-risk evidence, not trade instruction.
+Gate rows: strict holder 9 | Binance+Bitget 5 | 60D no-pump 3 | Shown after latent filters 1
+Matches: 1 | Target-flow rows: 1 | Quiet-gated rows: 1 | Read: structural-risk evidence, not trade instruction.
 
-Candidates: /SLEEPUSDT /COILUSDT
+Candidates: /SLEEPUSDT
 
 /SLEEPUSDT | Stealth inventory setup | latent 79/100 | target CEX flow 92/100 | CEX-tell 92 Binance, Gate.io 2tx max 240.00K | control 91 | float 86 | thin-book 94 | quiet 82 heat 12 | noPump60 Y | top10 90.0%, top100 99.0% | shorts 63.0% | anchor LABUSDT 2026-05-11 | next: watch for absorption, OI expansion, and first volume lift while price remains below chase heat
-/COILUSDT | Control-plane watch | latent 64/100 | holder control 88/100 | CEX-tell 43 no target flow 0tx max n/a | control 88 | float 79 | thin-book 81 | quiet 90 heat 6 | noPump60 Y | top10 91.0%, top100 98.7% | shorts 58.2% | next: verify target CEX flow or venue-inventory tell before treating this as live
 ```
 
 ## `/radar`
