@@ -3759,6 +3759,42 @@ def test_ravelab_requires_explicit_binance_trading_evidence(monkeypatch) -> None
     assert bool(scored.loc["SHAREUSDT", "_ravelab_venue_gate"])
 
 
+def test_ravelab_holder_gate_uses_filtered_manipulable_top10() -> None:
+    base = {
+        "history_days": 160,
+        "token_platform": "ethereum",
+        "holder_source": "Etherscan holder endpoint",
+        "holder_count": 8_000,
+        "top10_holder_pct": 96.0,
+        "top100_holder_pct": 99.2,
+    }
+    frame = pd.DataFrame(
+        [
+            {
+                **base,
+                "symbol": "REALUSDT",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "filtered_top_10_manipulable_pct": 92.0,
+            },
+            {
+                **base,
+                "symbol": "CUSTODYUSDT",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "filtered_top_10_manipulable_pct": 3.0,
+                "top_1_category": "exchange",
+                "cex_storage_supply_pct": 93.0,
+            },
+        ]
+    )
+
+    mask = bot._strict_top10_thesis_holder_gate_mask(frame)
+    scored = bot._score_ravelab_early_frame(frame).set_index("symbol")
+
+    assert mask.tolist() == [True, False]
+    assert bool(scored.loc["REALUSDT", "_ravelab_whale_gate"])
+    assert not bool(scored.loc["CUSTODYUSDT", "_ravelab_whale_gate"])
+
+
 def test_ravelab_line_handles_missing_target_exchange_text() -> None:
     row = pd.Series(
         {
@@ -3784,6 +3820,10 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
             "cex_deposit_24h_max_amount": pd.NA,
             "top10_holder_pct": 94.0,
             "top100_holder_pct": 99.8,
+            "filtered_top_10_manipulable_pct": 91.0,
+            "adjusted_top_10_pct": 98.0,
+            "largest_manipulable_holder_pct": 58.0,
+            "top_1_category": "unexplained_whale",
         }
     )
 
@@ -3792,6 +3832,7 @@ def test_ravelab_line_handles_missing_target_exchange_text() -> None:
     assert "/MISSUSDT | RAVE-like" in output
     assert "CEX no target flow 0tx max n/a" in output
     assert "venues Bn N/Bg N/Gate N" in output
+    assert "manipT10 91.0%, adjT10 98.0%, largest 58.0%, top1 unexplained_whale" in output
     assert "needs 42d history" in output
     assert "anchor RAVEUSDT 2026-04-18" in output
 

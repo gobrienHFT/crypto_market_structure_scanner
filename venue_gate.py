@@ -13,6 +13,21 @@ BITGET_RE = re.compile(r"\bbitget\b", re.IGNORECASE)
 THESIS_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 THESIS_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
 THESIS_MIN_TOP10_HOLDER_PCT = 90.0
+BENIGN_STORAGE_HOLDER_CATEGORIES = {
+    "exchange",
+    "bridge",
+    "wrapper",
+    "liquidity_pool",
+    "burn",
+    "staking",
+    "vesting",
+    "treasury",
+    "treasury_reserve",
+    "dao_multisig_reserve",
+    "protocol_contract",
+    "protocol_storage",
+    "claim_distribution_reserve",
+}
 HOLDER_EXPLORER_SOURCE_RE = re.compile(
     r"\b(?:etherscan|bscscan|arbiscan|explorer)\b|holder\s+endpoint",
     re.IGNORECASE,
@@ -54,6 +69,50 @@ def _pct_column(frame: pd.DataFrame, column: str) -> pd.Series:
     )
     parsed = pd.to_numeric(values, errors="coerce").astype("float64")
     return parsed.mask((parsed != 0.0) & (parsed.abs() <= 1.0), parsed * 100.0)
+
+
+def _first_pct_column(frame: pd.DataFrame, *columns: str) -> pd.Series:
+    output = pd.Series(float("nan"), index=frame.index, dtype="float64")
+    for column in columns:
+        values = _pct_column(frame, column)
+        output = output.where(output.notna(), values)
+    return output
+
+
+def effective_top10_holder_pct(frame: pd.DataFrame) -> pd.Series:
+    """Top-10 concentration after known custody/storage false positives are filtered when available."""
+    if frame.empty:
+        return pd.Series(float("nan"), index=frame.index, dtype="float64")
+    raw_top10 = _first_pct_column(frame, "top10_holder_pct", "raw_top_10_pct")
+    filtered_top10 = _pct_column(frame, "filtered_top_10_manipulable_pct")
+    adjusted_top10 = _pct_column(frame, "adjusted_top_10_pct")
+    effective = raw_top10.where(filtered_top10.isna(), filtered_top10)
+    return effective.where(effective.notna(), adjusted_top10)
+
+
+def holder_storage_false_positive_mask(frame: pd.DataFrame, *, min_whale_pct: float = THESIS_MIN_TOP10_HOLDER_PCT) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    threshold = max(THESIS_MIN_TOP10_HOLDER_PCT, float(min_whale_pct))
+    raw_top10 = _first_pct_column(frame, "top10_holder_pct", "raw_top_10_pct").fillna(0.0)
+    filtered_top10 = _pct_column(frame, "filtered_top_10_manipulable_pct")
+    top_category = _text_column(frame, "top_1_category").str.lower()
+    storage_supply = pd.concat(
+        [
+            _pct_column(frame, "cex_storage_supply_pct"),
+            _pct_column(frame, "treasury_storage_supply_pct"),
+            _pct_column(frame, "vesting_lockup_supply_pct"),
+            _pct_column(frame, "bridge_wrapper_supply_pct"),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    key_flags = _text_column(frame, "key_flags").str.lower() + " " + _text_column(frame, "key_forensic_flags").str.lower()
+    storage_hint = (
+        top_category.isin(BENIGN_STORAGE_HOLDER_CATEGORIES)
+        | storage_supply.ge(30.0)
+        | key_flags.str.contains("false-positive|storage-dominated|custody", regex=True, na=False)
+    )
+    return (raw_top10.ge(threshold) & filtered_top10.notna() & filtered_top10.lt(threshold) & storage_hint).fillna(False)
 
 
 def _text_column(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -177,9 +236,9 @@ def holder_concentration_mask(
 ) -> pd.Series:
     if frame.empty:
         return pd.Series(False, index=frame.index)
-    top10 = _pct_column(frame, "top10_holder_pct").fillna(0.0)
+    top10 = effective_top10_holder_pct(frame).fillna(0.0)
     threshold = max(THESIS_MIN_TOP10_HOLDER_PCT, float(min_whale_pct))
-    gate = top10.ge(threshold)
+    gate = top10.ge(threshold) & (~holder_storage_false_positive_mask(frame, min_whale_pct=threshold))
     if require_holder_evidence:
         gate = gate & holder_evidence_mask(frame)
     return gate.fillna(False)

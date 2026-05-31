@@ -293,6 +293,34 @@ def test_cex_flow_watcher_cards_use_flow_format(monkeypatch) -> None:
     assert archive.iloc[0]["_raw_bot_output"] == cards[0]
 
 
+def test_cex_flow_watcher_webhook_header_keeps_binance_bitget_required(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(watcher, "_holder_composition_text", lambda row: "")
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "PLAYUSDT",
+                "watcher_alert_source": "cex_flow",
+                "watcher_alert_score": 88,
+                "terminal_edge_score": 80,
+                "timing_score": 70,
+                "timing_state": "Triggering",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 2_500_000,
+                "cex_deposit_24h_max_amount": 1_500_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+            }
+        ]
+    )
+
+    watcher._post_webhook(frame, scan_mode="Deep", alert_source="cex_flow", dry_run=True)
+    output = capsys.readouterr().out
+
+    assert "Binance perp + Bitget trading evidence required" in output
+    assert "transfer targets are supporting evidence only" not in output
+
+
 def test_convex_alert_source_requires_core_setup_gate(monkeypatch) -> None:
     frame = pd.DataFrame(
         [

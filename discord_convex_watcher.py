@@ -374,9 +374,7 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, alert_source: str
         raise RuntimeError("DISCORD_WEBHOOK_URL is not set.")
 
     lines, archive_rows = _candidate_cards_and_archive_rows(candidates)
-    normalized_source = alert_source.strip().lower().replace("-", "_")
-    allow_cex_targets = normalized_source in {"cex_flow", "cexflow", "cex_deposit_flow"}
-    alert_header = thesis_alert_header(allow_cex_flow_targets=allow_cex_targets)
+    alert_header = thesis_alert_header(allow_cex_flow_targets=False)
     description_prefix = f"{DISCORD_PRODUCT_IDENTITY}\n\n{alert_header}\n\n"
     card_budget = DISCORD_EMBED_DESCRIPTION_LIMIT - len(description_prefix)
     description = f"{description_prefix}{join_discord_flag_cards(lines, max_chars=card_budget)}"

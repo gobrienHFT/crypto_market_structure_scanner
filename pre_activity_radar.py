@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from venue_gate import binance_bitget_venue_mask, holder_concentration_mask, holder_evidence_mask
+from venue_gate import binance_bitget_venue_mask, effective_top10_holder_pct, holder_concentration_mask, holder_evidence_mask
 
 
 TARGET_CEX_RE = re.compile(r"\b(?:binance|bitget|gate(?:\.io|io)?)\b", flags=re.IGNORECASE)
@@ -287,7 +287,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     index = output.index
     transfer_floor = max(0.0, _safe_float(min_transfer_tokens) or 0.0)
 
-    top10 = _pct_series(output, "top10_holder_pct").fillna(0.0)
+    top10 = effective_top10_holder_pct(output).fillna(0.0)
     top100 = _pct_series(output, "top100_holder_pct").fillna(0.0)
     owner_team = (_pct_series(output, "owner_holder_pct").fillna(0.0) + _pct_series(output, "creator_holder_pct").fillna(0.0)).clip(
         lower=0.0,

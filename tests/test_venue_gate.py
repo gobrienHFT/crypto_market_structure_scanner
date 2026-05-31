@@ -161,6 +161,44 @@ def test_thesis_alert_gate_requires_holder_evidence_and_binance_bitget(monkeypat
     assert selected["symbol"].tolist() == ["GOODUSDT"]
 
 
+def test_thesis_alert_gate_rejects_storage_false_positive_when_filtered_top10_available(monkeypatch) -> None:
+    monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
+    base = {
+        "trade_bucket_score": 90,
+        "binance_perp_universe": True,
+        "bitget_volume_share_pct": 1.0,
+        "token_platform": "ethereum",
+        "holder_source": "Etherscan holder endpoint",
+        "holder_count": 8_000,
+        "top100_holder_pct": 99.0,
+        **THESIS_PUMP_PROOF,
+    }
+    frame = pd.DataFrame(
+        [
+            {
+                **base,
+                "symbol": "REALUSDT",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "top10_holder_pct": 96.0,
+                "filtered_top_10_manipulable_pct": 92.0,
+            },
+            {
+                **base,
+                "symbol": "CUSTODYUSDT",
+                "token_contract": "0x2222222222222222222222222222222222222222",
+                "top10_holder_pct": 96.0,
+                "filtered_top_10_manipulable_pct": 3.0,
+                "top_1_category": "exchange",
+                "cex_storage_supply_pct": 93.0,
+            },
+        ]
+    )
+
+    selected = apply_thesis_alert_gate(frame)
+
+    assert selected["symbol"].tolist() == ["REALUSDT"]
+
+
 def test_thesis_alert_gate_requires_60d_no_pump_proof(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     base = {

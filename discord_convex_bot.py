@@ -47,6 +47,7 @@ from short_squeeze_scoring import apply_short_squeeze_model
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
 from trade_setup_pipeline import TradeBotConfig, TradeBotRuntime
+from venue_gate import effective_top10_holder_pct, holder_storage_false_positive_mask
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -2687,6 +2688,38 @@ def _holder_evidence_text(row: pd.Series) -> str:
     return f"{detail}; needs {'+'.join(missing)}"
 
 
+def _adjusted_holder_control_text(row: pd.Series) -> str:
+    filtered_top10 = _safe_pct(row.get("filtered_top_10_manipulable_pct"))
+    adjusted_top10 = _safe_pct(row.get("adjusted_top_10_pct"))
+    largest = _safe_pct(row.get("largest_manipulable_holder_pct"))
+    cluster = _safe_pct(row.get("cluster_manipulable_supply_pct"))
+    top_category = _clip_text(row.get("top_1_category", ""), 22)
+    storage_parts: list[str] = []
+    for label, column in (
+        ("CEX", "cex_storage_supply_pct"),
+        ("treasury", "treasury_storage_supply_pct"),
+        ("vesting", "vesting_lockup_supply_pct"),
+        ("bridge", "bridge_wrapper_supply_pct"),
+    ):
+        value = _safe_pct(row.get(column))
+        if value is not None and value > 0:
+            storage_parts.append(f"{label} {value:.1f}%")
+    parts: list[str] = []
+    if filtered_top10 is not None:
+        parts.append(f"manipT10 {filtered_top10:.1f}%")
+    if adjusted_top10 is not None:
+        parts.append(f"adjT10 {adjusted_top10:.1f}%")
+    if largest is not None and largest > 0:
+        parts.append(f"largest {largest:.1f}%")
+    if cluster is not None and cluster > 0:
+        parts.append(f"cluster {cluster:.1f}%")
+    if top_category:
+        parts.append(f"top1 {top_category}")
+    if storage_parts:
+        parts.append("storage " + "/".join(storage_parts[:3]))
+    return ", ".join(parts[:6])
+
+
 def _holder_snapshot_mask(frame: pd.DataFrame) -> pd.Series:
     if frame.empty:
         return pd.Series(False, index=frame.index)
@@ -2732,7 +2765,8 @@ def _strict_top10_thesis_holder_gate_mask(
     if frame.empty:
         return pd.Series(False, index=frame.index)
     threshold = _strict_thesis_min_whale_pct(min_whale_pct)
-    gate = _safe_pct_series(frame, "top10_holder_pct").fillna(0.0).ge(threshold)
+    gate = effective_top10_holder_pct(frame).fillna(0.0).ge(threshold)
+    gate = gate & (~holder_storage_false_positive_mask(frame, min_whale_pct=threshold))
     if require_holder_evidence:
         holder_evidence_mask, _ = _strict_holder_evidence_masks(frame)
         gate = gate & holder_evidence_mask
@@ -2748,7 +2782,8 @@ def _strict_cex_holder_gate_mask(
     if frame.empty:
         return pd.Series(False, index=frame.index)
     threshold = _strict_thesis_min_whale_pct(min_whale_pct)
-    gate = _safe_pct_series(frame, "top10_holder_pct").fillna(0.0).ge(threshold)
+    gate = effective_top10_holder_pct(frame).fillna(0.0).ge(threshold)
+    gate = gate & (~holder_storage_false_positive_mask(frame, min_whale_pct=threshold))
     if require_holder_evidence:
         holder_evidence_mask, _ = _strict_holder_evidence_masks(frame)
         gate = gate & holder_evidence_mask
@@ -2956,7 +2991,7 @@ def _load_seth_flow_playbook(
         )
 
     rows = raw_target_flow.copy()
-    top10 = pd.to_numeric(rows.get("top10_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
+    top10 = effective_top10_holder_pct(rows)
     top100 = pd.to_numeric(rows.get("top100_holder_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     shorts = pd.to_numeric(rows.get("short_account_pct", pd.Series(0.0, index=rows.index)), errors="coerce")
     float_score = _max_series(
@@ -2975,7 +3010,9 @@ def _load_seth_flow_playbook(
     whale_pct = top10.fillna(0.0)
     rows["_seth_whale_pct"] = whale_pct
     rows["_seth_holder_evidence_pass"] = holder_evidence_mask
-    rows["_seth_whale_concentration_pass"] = whale_pct.ge(effective_min_whale_pct)
+    rows["_seth_whale_concentration_pass"] = whale_pct.ge(effective_min_whale_pct) & (
+        ~holder_storage_false_positive_mask(rows, min_whale_pct=effective_min_whale_pct)
+    )
     rows["_seth_whale_pass"] = rows["_seth_whale_concentration_pass"] & (
         rows["_seth_holder_evidence_pass"] if require_holder_evidence else True
     )
@@ -3180,7 +3217,7 @@ def _confirmed_cex_flow_mask(frame: pd.DataFrame, *, min_transfer_tokens: float 
 
 
 def _whale_component_series(frame: pd.DataFrame) -> pd.Series:
-    top10 = _safe_pct_series(frame, "top10_holder_pct")
+    top10 = effective_top10_holder_pct(frame)
     top100 = _safe_pct_series(frame, "top100_holder_pct")
     return pd.concat(
         [
@@ -3270,11 +3307,13 @@ def _goal_score_frame(
         axis=1,
     ).max(axis=1)
     not_late_component = (100.0 - late_risk).clip(lower=0.0, upper=100.0)
-    top10 = _safe_pct_series(output, "top10_holder_pct").fillna(0.0)
+    top10 = effective_top10_holder_pct(output).fillna(0.0)
     top100 = _safe_pct_series(output, "top100_holder_pct").fillna(0.0)
     whale_pct = top10.fillna(0.0)
     holder_evidence_mask, _ = _strict_holder_evidence_masks(output)
-    whale_concentration_pass = whale_pct.ge(effective_min_whale_pct)
+    whale_concentration_pass = whale_pct.ge(effective_min_whale_pct) & (
+        ~holder_storage_false_positive_mask(output, min_whale_pct=effective_min_whale_pct)
+    )
     whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
     venue_pass = _explicit_binance_bitget_trading_gate_mask(output)
     no_recent_pump_pass = _no_recent_pump_proof_mask(output)
@@ -4016,7 +4055,7 @@ def _score_ravelab_early_frame(
     lab = _num_series(scored, "archetype_lab_score")
     dashboard_setup = _num_series(scored, "rave_lab_setup_score")
     latent = _num_series(scored, "pre_activity_pump_score")
-    top10 = _safe_pct_series(scored, "top10_holder_pct").fillna(0.0)
+    top10 = effective_top10_holder_pct(scored).fillna(0.0)
     top100 = _safe_pct_series(scored, "top100_holder_pct").fillna(0.0)
     whale_pct = top10.fillna(0.0)
     whale_component = pd.concat(
@@ -4413,6 +4452,8 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     thesis = _safe_float(row.get("_ravelab_thesis_score")) or 0.0
     whale_pct = _safe_pct(row.get("_ravelab_whale_pct"))
     whale_text = f"{whale_pct:.1f}%" if whale_pct is not None else "n/a"
+    adjusted_holder = _adjusted_holder_control_text(row)
+    adjusted_whale_suffix = f" adj {adjusted_holder}" if adjusted_holder else ""
     has_binance = "Y" if _boolish_scalar(row.get("_ravelab_has_binance")) else "N"
     has_bitget = "Y" if _boolish_scalar(row.get("_ravelab_has_bitget")) else "N"
     has_gate = "Y" if _boolish_scalar(row.get("_ravelab_has_gate")) else "N"
@@ -4443,7 +4484,7 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     if whale_flow:
         flow_text += f" | {whale_flow}"
     return (
-        f"/{symbol} | {stage} | {side} | trigger {trigger_text} | thesis {thesis:.0f}/100 | whale {whale_text} holderEv {holder_evidence_gate} | "
+        f"/{symbol} | {stage} | {side} | trigger {trigger_text} | thesis {thesis:.0f}/100 | whale {whale_text}{adjusted_whale_suffix} holderEv {holder_evidence_gate} | "
         f"venues Bn/Bg/Gate {has_binance}/{has_bitget}/{has_gate} | float {float_score:.0f}{fdv_text} | hist {history_text} pump60 {pump_text} | "
         f"flowMech {mechanics_text} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f} shorts {short_text} | highs {breakout_windows} | CEX {flow_text}\n"
         f"  next: {_clip_text(_ravelab_next_check(row), 120)}"
@@ -4512,6 +4553,8 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
         pump_text = "n/a"
     pump_source = _clip_text(row.get("_ravelab_recent_pump_source", ""), 28) or "unverified"
     holder_evidence = _holder_evidence_text(row)
+    adjusted_holder = _adjusted_holder_control_text(row)
+    adjusted_holder_suffix = f" adj({adjusted_holder})" if adjusted_holder else ""
     venue_evidence = _venue_evidence_text(row)
     whale_flow = _whale_sender_text(row, include_amount=True)
     whale_flow_text = f" whale-CEX {whale_flow}" if whale_flow else ""
@@ -4527,7 +4570,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
         f"trigger {trigger_text} | thesis {thesis_score:.0f}/100{crime_text} early {score:.0f}/100 | blockers {missing_core}{anchor}"
     )
     proof = (
-        f"  proof: whale {whale_text} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
+        f"  proof: whale {whale_text}{adjusted_holder_suffix} holderEv {holder_evidence_gate} | venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | "
         f"float {ravelab_float_score:.0f}({float_gate}) FDV/MC {fdv_text} | "
         f"noPump {no_pump} pump60 {pump_text} {pump_source} | hist {history_text} dormant2m {dormant} | "
         f"flowMech {mechanics_text} | "
@@ -4542,7 +4585,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
         f"venues Bn {has_binance}/Bg {has_bitget}/Gate {has_gate} | highs {breakout_windows}"
     )
     evidence = (
-        f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}) | holder {holder_evidence} | float {ravelab_float_score:.0f} FDV/MC {fdv_text} | "
+        f"  evidence: whale {whale_text} (t10 {top10_text}, t100 {top100_text}{f', {adjusted_holder}' if adjusted_holder else ''}) | holder {holder_evidence} | float {ravelab_float_score:.0f} FDV/MC {fdv_text} | "
         f"venue {venue_evidence} | flowMech {mechanics_text} | squeeze {squeeze:.0f} fuel {squeeze_fuel:.0f}{short_squeeze_text} flip {fresh_flip} shortMaj {short_majority} shorts {short_text} | history {history_text} pump60 {pump_text} {pump_source}"
     )
     flow = (
@@ -4565,11 +4608,15 @@ def _ravelab_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.S
 
 
 def _ravelab_whale_control_series(frame: pd.DataFrame) -> pd.Series:
-    return _safe_pct_series(frame, "top10_holder_pct").fillna(0.0)
+    return effective_top10_holder_pct(frame).fillna(0.0)
 
 
 def _ravelab_whale_gate_series(frame: pd.DataFrame, *, min_whale_pct: float) -> pd.Series:
-    return _ravelab_whale_control_series(frame).ge(_strict_thesis_min_whale_pct(min_whale_pct)).fillna(False)
+    threshold = _strict_thesis_min_whale_pct(min_whale_pct)
+    return (
+        _ravelab_whale_control_series(frame).ge(threshold)
+        & (~holder_storage_false_positive_mask(frame, min_whale_pct=threshold))
+    ).fillna(False)
 
 
 def _ravelab_near_miss_rows(
@@ -5372,7 +5419,7 @@ def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, 
     scored = apply_terminal_model(frame.loc[:, ~frame.columns.duplicated()].copy())
     if "symbol" not in scored.columns:
         return "Low-float / high-FDV trap ranking", [header + "\n\nThe active scan source has no symbol column."]
-    top10 = _safe_pct_series(scored, "top10_holder_pct").fillna(0.0)
+    top10 = effective_top10_holder_pct(scored).fillna(0.0)
     top100 = _safe_pct_series(scored, "top100_holder_pct").fillna(0.0)
     fdv_score = _score_linear_series(_num_series(scored, "fdv_to_market_cap"), 1.8, 12.0)
     scored["_floattrap_fdv_ratio"] = _num_series(scored, "fdv_to_market_cap")
