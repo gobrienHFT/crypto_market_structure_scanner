@@ -7,7 +7,7 @@ These examples are representative text outputs for reviewers. Live values depend
 ```text
 Alpha brief - strict thesis-gated convex watchlist
 Source: fresh Deep scan at 2026-05-16 15:40:00 UTC | Scan mode: Deep | Updated: 2026-05-16 15:40:00 UTC
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required
 Ranking blends structural edge, timing quality, wallet-to-CEX flow, scanner score, and short-account fuel.
 
 Candidates: /FLOWUSDT /RAVEUSDT /PLAYUSDT
@@ -39,7 +39,7 @@ Candidates: /SLEEPUSDT
 ```text
 Early structure radar
 Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Whale-CEX >= 100.00K | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
-Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.
+Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.
 Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Breakout highs: 1
 Gate funnel: scan 11 -> score 10 -> whale90 9 -> holderSrc 5 -> Bn+Bg 4 -> float 4 -> squeeze 4 -> dormant 2 -> early 2 -> shown 2
 Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2
@@ -61,14 +61,14 @@ Use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence.
 Strict RAVE/LAB crime-pump early radar
 Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Whale-CEX floor: 100.00K tokens | Style: both | Min early score: 0 | Min RAVE/LAB archetype: 0 | Whale gate: top10 >= 90.0% | Squeeze stack gate: >= 50 | History gate: >= 60d | Max recent pump: < 35% over 60d | Holder evidence required: True | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False | Whale-origin CEX required: False | High breakout windows: 1D,2D,3D,4D,5D,20D | Breakout required: False | Near misses: 5 | Trigger filter: all | Detail: False
 No-pump proof: requires 60D closed daily-candle pump history; missing/insufficient proof fails dormant2m.
-Core gates: top10 whale-control threshold with chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.
+Core gates: top10 whale-control threshold with chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
 Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 6/6: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
 Gate funnel: scan 11 -> score 10 -> whale90 9 -> holderSrc 5 -> Bn+Bg 4 -> float 4 -> squeeze 4 -> dormant 2 -> early 2 -> shown 2
 Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | breakout 1 | core-watch 0 | shown 2
 Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
-All shown rows passed top10 whale-control >= 90.0%, holder-source snapshot evidence, Binance+Bitget, float/FDV trap, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
-Holder evidence rows: 2 with ETH/BNB/ARB chain+contract holder-source snapshot | contract rows 2 | pct-only rows 0
+All shown rows passed top10 whale-control >= 90.0%, explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
+Holder evidence rows: 2 with ETH/BNB/ARB chain+contract explorer holder-source snapshot | contract rows 2 | pct-only rows 0
 Breakout high checks: 1D,2D,3D,4D,5D,20D | dynamic checks 8 | cached flags 4 | errors 0 | insufficient 0
 Daily pump checks: cached 0 | Binance checked 2 | errors 0 | insufficient 0 | skipped 0
 
@@ -112,7 +112,7 @@ Matches: 3 | Base thesis gate: 1
 20D high breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_high_20d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 1
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 1
 
 Matches: 2 | Strict thesis matches: 1
 
@@ -126,7 +126,7 @@ Matches: 2 | Strict thesis matches: 1
 90D low breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_low_90d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 0
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 0
 
 Matches: 2 | Strict thesis matches: 0
 

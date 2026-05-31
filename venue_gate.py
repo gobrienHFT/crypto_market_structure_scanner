@@ -13,6 +13,10 @@ BITGET_RE = re.compile(r"\bbitget\b", re.IGNORECASE)
 THESIS_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 THESIS_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
 THESIS_MIN_TOP10_HOLDER_PCT = 90.0
+HOLDER_EXPLORER_SOURCE_RE = re.compile(
+    r"\b(?:etherscan|bscscan|arbiscan|explorer)\b|holder\s+endpoint",
+    re.IGNORECASE,
+)
 
 
 def _env_value(name: str, default: str = "") -> str:
@@ -124,9 +128,16 @@ def holder_evidence_mask(frame: pd.DataFrame) -> pd.Series:
 
     source_columns = [column for column in ("holder_source", "holder_data_source") if column in frame.columns]
     if source_columns:
-        source_mask = pd.concat([_text_column(frame, column).str.strip().ne("") for column in source_columns], axis=1).any(axis=1)
+        source_mask = pd.concat(
+            [
+                _text_column(frame, column).str.contains(HOLDER_EXPLORER_SOURCE_RE, regex=True, na=False)
+                for column in source_columns
+            ],
+            axis=1,
+        ).any(axis=1)
     else:
         source_mask = pd.Series(False, index=frame.index)
+
     def row_has_chain(row: pd.Series) -> bool:
         for column in ("token_platform", "chain", "token_chain"):
             value = row.get(column)
@@ -225,7 +236,7 @@ def thesis_alert_header(
     threshold = max(THESIS_MIN_TOP10_HOLDER_PCT, float(min_whale_pct))
     holder = f"Holder gate: observed top10 holder concentration >= {threshold:.1f}%"
     if require_holder_evidence:
-        holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence"
+        holder = f"{holder} with {THESIS_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract explorer holder-source snapshot evidence"
     else:
         holder = f"{holder}; holder evidence diagnostic relaxed"
     pump = "60D no-pump proof required" if require_no_recent_pump else "60D no-pump gate disabled"

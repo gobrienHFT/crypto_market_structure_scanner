@@ -58,6 +58,10 @@ RAVELAB_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
 THESIS_MIN_TOP10_WHALE_PCT = 90.0
 RAVELAB_DEFAULT_WHALE_FLOW_MIN_TOKENS = 100_000.0
+HOLDER_EXPLORER_SOURCE_PATTERN = re.compile(
+    r"\b(?:etherscan|bscscan|arbiscan|explorer)\b|holder\s+endpoint",
+    flags=re.IGNORECASE,
+)
 STATIC_SLASH_COMMAND_NAMES = (
     "alpha",
     "cexdiag",
@@ -2171,7 +2175,7 @@ def _load_cex_flow_list(
         if raw_flow_count > 0 and strict_flow.empty:
             message = (
                 "Verified labelled CEX transfer rows exist, but none cleared the strict holder gate for this command. "
-                "Use `require_holder_evidence:false` only to diagnose missing holder-source snapshot coverage."
+                "Use `require_holder_evidence:false` only to diagnose missing explorer holder-source snapshot coverage."
             )
         elif raw_flow_count > 0 and require_venue_gate:
             message = (
@@ -2579,6 +2583,7 @@ def _holder_evidence_text(row: pd.Series) -> str:
     top10 = _safe_pct(row.get("top10_holder_pct"))
     top100 = _safe_pct(row.get("top100_holder_pct"))
     has_snapshot = bool((holders is not None and holders > 0) or top10 is not None or top100 is not None)
+    explorer_source = bool(source and HOLDER_EXPLORER_SOURCE_PATTERN.search(source))
 
     parts: list[str] = []
     if chain:
@@ -2596,7 +2601,7 @@ def _holder_evidence_text(row: pd.Series) -> str:
         parts.append(f"src {_clip_text(source, 28)}")
     if contract:
         parts.append(f"contract {_short_contract_text(contract)}")
-    strict_ok = chain in RAVELAB_HOLDER_EVIDENCE_CHAINS and bool(contract) and bool(source) and has_snapshot
+    strict_ok = chain in RAVELAB_HOLDER_EVIDENCE_CHAINS and bool(contract) and explorer_source and has_snapshot
     if strict_ok:
         return ", ".join(parts)
     missing: list[str] = []
@@ -2606,6 +2611,8 @@ def _holder_evidence_text(row: pd.Series) -> str:
         missing.append("contract")
     if not source:
         missing.append("source")
+    elif not explorer_source:
+        missing.append("explorer source")
     if not has_snapshot:
         missing.append("holder snapshot")
     detail = ", ".join(parts) if parts else "pct-only"
@@ -2635,7 +2642,13 @@ def _strict_holder_evidence_masks(frame: pd.DataFrame) -> tuple[pd.Series, pd.Se
     chain_mask = frame.apply(lambda row: _holder_chain_key(row) in RAVELAB_HOLDER_EVIDENCE_CHAINS, axis=1).astype(bool)
     snapshot_mask = _holder_snapshot_mask(frame)
     if source_cols:
-        source_mask = pd.concat([_text_series(frame, column).ne("") for column in source_cols], axis=1).any(axis=1)
+        source_mask = pd.concat(
+            [
+                _text_series(frame, column).str.contains(HOLDER_EXPLORER_SOURCE_PATTERN, regex=True, na=False)
+                for column in source_cols
+            ],
+            axis=1,
+        ).any(axis=1)
     else:
         source_mask = pd.Series(False, index=frame.index)
     evidence_mask = chain_mask & contract_mask & source_mask & snapshot_mask
@@ -2716,7 +2729,7 @@ def _thesis_candidate_header(*, min_whale_pct: float = 90.0, core: bool = False)
     threshold = _strict_thesis_min_whale_pct(min_whale_pct)
     text = (
         f"Thesis gate: observed top10 holder >= {threshold:.1f}% with "
-        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot evidence | "
+        f"{RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract explorer holder-source snapshot evidence | "
         f"{_thesis_venue_header()} | 60D no-pump/dormancy proof required"
     )
     if core:
@@ -4680,7 +4693,7 @@ def _load_ravelab_list(
         f"High breakout windows: {breakout_label} | Breakout required: {require_breakout_high} | Near misses: {max(0, int(near_miss_limit))} | "
         f"Trigger filter: {trigger_filter_key} | Detail: {detail}{ignored_breakout_text}\n"
         f"No-pump proof: requires {pump_proof_days}D closed daily-candle pump history; missing/insufficient proof fails dormant2m.\n"
-        "Core gates: top10 whale-control threshold with chain+contract holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
+        "Core gates: top10 whale-control threshold with chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.\n"
         "Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress."
     )
     if frame.empty:
@@ -4776,7 +4789,7 @@ def _load_ravelab_list(
                     f"Whale-CEX >= {_fmt_compact_number(effective_whale_flow_floor)} | "
                     f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
                 ),
-                "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+                "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
                 gate_counts,
                 funnel_line,
                 lane_counts_line,
@@ -4806,7 +4819,7 @@ def _load_ravelab_list(
             funnel_line,
             lane_counts_line,
             (
-                f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot | "
+                f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract explorer holder-source snapshot | "
                 f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
             ),
             (
@@ -4861,7 +4874,7 @@ def _load_ravelab_list(
     mixed_count = int(selected["_ravelab_side"].astype(str).eq("Mixed RAVE/LAB").sum())
     gate_summary = (
         f"All shown rows passed top10 whale-control >= {effective_min_whale_pct:.1f}%"
-        f"{', holder-source snapshot evidence' if require_holder_evidence else ''}"
+        f"{', explorer holder-source snapshot evidence' if require_holder_evidence else ''}"
         f"{', Binance+Bitget' if require_binance_bitget else ''}"
         ", float/FDV trap"
         f"{f', no recent pump >= {float(max_recent_pump_pct):.0f}%, history >= {int(min_history_days)}d and dormant2m' if require_dormant_2m else ''}"
@@ -4879,7 +4892,7 @@ def _load_ravelab_list(
                 f"Whale-CEX >= {_fmt_compact_number(effective_whale_flow_floor)} | "
                 f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
             ),
-            "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
+            "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
             (
                 f"Matches: {len(selected)} | {core_label}: {core_count} | Triggered: {triggered_count} | "
                 f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | Breakout highs: {breakout_count}"
@@ -4909,7 +4922,7 @@ def _load_ravelab_list(
     lines.extend([
         gate_summary,
         (
-            f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract holder-source snapshot | "
+            f"Holder evidence rows: {holder_evidence_rows} with {RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL} chain+contract explorer holder-source snapshot | "
             f"contract rows {holder_contract_rows} | pct-only rows {holder_pct_only_rows}"
         ),
         (
@@ -6641,7 +6654,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and explorer holder-source snapshot evidence for the holder gate.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence. Disable for raw CEX-flow sweep.",
     )
     async def cexflow(
@@ -6686,7 +6699,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         min_tokens="Minimum token amount per transfer, for example 1000.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and explorer holder-source snapshot evidence for the holder gate.",
         require_venue_gate="Show how many raw CEX-flow rows survive the Binance+Bitget thesis venue gate.",
         symbol_limit="How many attempted symbols to list.",
     )
@@ -6729,7 +6742,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
-        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and holder-source snapshot evidence for the holder gate.",
+        require_holder_evidence="Require ETH/BNB/ARB chain, contract, and explorer holder-source snapshot evidence for the holder gate.",
         require_venue_gate="Require Binance perp plus Bitget trading evidence. Disable for raw early-flow sweep.",
     )
     async def earlyflow(
