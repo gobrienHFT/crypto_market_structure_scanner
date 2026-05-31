@@ -1327,6 +1327,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "low_float_score": 82.0,
                 "fdv_to_market_cap": 8.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "range_24h_pct": 8.0,
                 "day_return_pct": 2.0,
                 "history_days": 180,
@@ -1357,6 +1358,7 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "low_float_score": 80.0,
                 "fdv_to_market_cap": 7.5,
                 "short_account_pct": 61.0,
+                "short_account_build_score": 52.0,
                 "range_24h_pct": 55.0,
                 "day_return_pct": 42.0,
                 "history_days": 180,
@@ -1434,15 +1436,63 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
     assert "Float gate: low-float/FDV evidence required" in output
     assert "Holder evidence required: True" in output
     assert "Whale-origin flow required: True" in output
+    assert "Short+fuel gate: shorts >= 50.0% plus squeeze fuel >= 40" in output
     assert "/SETUPUSDT | RESEARCH: whale-origin dormant candidate" in output
     assert "2 tx into Bitget | total 22.00M, max 12.00M" in output
     assert "top10 91.0%, top100 99.0% | holderEv Y | whaleOrigin Y 1 top-holder sender tx" in output
-    assert "whale-origin 12.00M | r1 91.0% 0x1111...1111 | float 82/100 | noPump60 Y | shorts 63.0%" in output
+    assert "whale-origin 12.00M | r1 91.0% 0x1111...1111 | float 82/100 | noPump60 Y | shorts 63.0% fuel 52/100" in output
     assert "VOLUSDT" not in output
     assert "NOSHORTUSDT" not in output
     assert "SMALLUSDT" not in output
     assert "COINBASEUSDT" not in output
     assert "not a trade instruction" in output
+
+
+def test_load_seth_flow_playbook_requires_squeeze_fuel_not_short_pct_alone(monkeypatch) -> None:
+    base = {
+        "cex_deposit_flow_score": 88,
+        "cex_deposit_flow_flag": True,
+        "cex_deposit_24h_count": 2,
+        "cex_deposit_24h_token_amount": 22_000_000,
+        "cex_deposit_24h_max_amount": 12_000_000,
+        "cex_deposit_24h_whale_sender_count": 1,
+        "cex_deposit_24h_whale_sender_token_amount": 12_000_000,
+        "cex_deposit_24h_top_sender_rank": 1,
+        "cex_deposit_24h_top_sender_pct": 91.0,
+        "cex_deposit_24h_top_sender_address": "0x1111111111111111111111111111111111111111",
+        "cex_deposit_24h_target_exchanges": "Bitget",
+        **_holder_evidence(),
+        "top10_holder_pct": 91.0,
+        "top100_holder_pct": 99.0,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "short_account_pct": 72.0,
+        "short_dominance_score": 80.0,
+        "range_24h_pct": 8.0,
+        "day_return_pct": 2.0,
+        "dormant_short_fuse_score": 78.0,
+        "pre_pump_precision_score": 72.0,
+        "binance_volume_share_pct": 3.0,
+        "bitget_volume_share_pct": 1.0,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "now",
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "SHORTONLYUSDT"},
+            {**base, "symbol": "FUELUSDT", "short_account_build_score": 52.0},
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000)
+    output = "\n".join(chunks)
+
+    assert title == "Seth flow checklist"
+    assert "Confirmed target-CEX flow rows: 2 | Whale-origin rows: 2 | Full checklist pass: 1" in output
+    assert "/FUELUSDT | RESEARCH: whale-origin dormant candidate" in output
+    assert "shorts 72.0% fuel 52/100" in output
+    assert "/SHORTONLYUSDT" not in output
 
 
 def test_load_seth_flow_playbook_ignores_relaxed_dormant_toggle(monkeypatch) -> None:
@@ -1469,6 +1519,7 @@ def test_load_seth_flow_playbook_ignores_relaxed_dormant_toggle(monkeypatch) -> 
                 "low_float_score": 80.0,
                 "fdv_to_market_cap": 7.5,
                 "short_account_pct": 61.0,
+                "short_account_build_score": 52.0,
                 "range_24h_pct": 55.0,
                 "day_return_pct": 42.0,
                 "history_days": 180,
@@ -1516,6 +1567,7 @@ def test_load_seth_flow_playbook_requires_low_float_gate(monkeypatch) -> None:
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "range_24h_pct": 8.0,
                 "day_return_pct": 2.0,
                 "history_days": 180,
@@ -1562,6 +1614,7 @@ def test_load_seth_flow_playbook_requires_whale_origin_by_default(monkeypatch) -
                 "low_float_score": 82.0,
                 "fdv_to_market_cap": 8.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "range_24h_pct": 8.0,
                 "day_return_pct": 2.0,
                 "history_days": 180,
@@ -1800,6 +1853,39 @@ def test_goal_score_requires_squeeze_fuel_not_short_pct_alone() -> None:
     assert not bool(scored.loc["SHORTONLYUSDT", "_goal_core_setup_pass"])
     assert bool(scored.loc["FUELUSDT", "_goal_short_pass"])
     assert bool(scored.loc["FUELUSDT", "_goal_core_setup_pass"])
+
+
+def test_goal_score_does_not_treat_cached_squeeze_composite_as_fuel() -> None:
+    base = {
+        **_holder_evidence(),
+        "top10_holder_pct": 92.0,
+        "top100_holder_pct": 99.0,
+        "short_account_pct": 72.0,
+        "short_dominance_score": 80.0,
+        "early_pump_short_squeeze_score": 95.0,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "dormant_short_fuse_score": 80.0,
+        "pre_pump_precision_score": 75.0,
+        "binance_volume_share_pct": 2.0,
+        "bitget_volume_share_pct": 1.5,
+    }
+    scored = bot._goal_score_frame(
+        pd.DataFrame(
+            [
+                {**base, "symbol": "CACHEDCOMPOSITEUSDT"},
+                {**base, "symbol": "FUELCOLUMNUSDT", "early_pump_squeeze_fuel_score": 44.0},
+            ]
+        ),
+        min_transfer_tokens=20_000,
+    ).set_index("symbol")
+
+    assert float(scored.loc["CACHEDCOMPOSITEUSDT", "_goal_squeeze_fuel_component"]) < 40.0
+    assert not bool(scored.loc["CACHEDCOMPOSITEUSDT", "_goal_short_pass"])
+    assert not bool(scored.loc["CACHEDCOMPOSITEUSDT", "_goal_core_setup_pass"])
+    assert float(scored.loc["FUELCOLUMNUSDT", "_goal_squeeze_fuel_component"]) == 44.0
+    assert bool(scored.loc["FUELCOLUMNUSDT", "_goal_short_pass"])
+    assert bool(scored.loc["FUELCOLUMNUSDT", "_goal_core_setup_pass"])
 
 
 def test_goal_score_hard_floors_top10_whale_gate() -> None:

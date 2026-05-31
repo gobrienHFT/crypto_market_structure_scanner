@@ -2877,7 +2877,7 @@ def _load_seth_flow_playbook(
         "Seth flow checklist\n"
         f"Source: {source} | Confirmed target-CEX flow only | Min transfer: >= {_fmt_compact_number(effective_min_transfer)} tokens | "
         f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= {effective_min_whale_pct:.1f}% | "
-        f"Holder evidence required: {require_holder_evidence} | Short gate: >= {min_short_pct:.1f}% | "
+        f"Holder evidence required: {require_holder_evidence} | Short+fuel gate: shorts >= {min_short_pct:.1f}% plus squeeze fuel >= 40 | "
         "Float gate: low-float/FDV evidence required | "
         f"Whale-origin flow required: {require_whale_origin_flow} | "
         f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'} | "
@@ -2941,7 +2941,19 @@ def _load_seth_flow_playbook(
         & _num_series(rows, "cex_deposit_24h_whale_sender_count").gt(0.0)
         & _num_series(rows, "cex_deposit_24h_whale_sender_token_amount").ge(effective_min_transfer)
     )
-    rows["_seth_short_pass"] = shorts.ge(min_short_pct)
+    rows["_seth_squeeze_fuel_score"] = _squeeze_fuel_component_series(rows)
+    rows["_seth_short_crowd_score"] = pd.concat(
+        [
+            _score_linear_series(shorts.fillna(0.0), min_short_pct, 72.0),
+            _num_series(rows, "short_dominance_score"),
+            _num_series(rows, "short_crowding_score"),
+            _num_series(rows, "terminal_short_pressure_score"),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    rows["_seth_short_pass"] = (shorts.ge(min_short_pct) | rows["_seth_short_crowd_score"].ge(55.0)) & rows[
+        "_seth_squeeze_fuel_score"
+    ].ge(40.0)
     rows["_seth_no_recent_pump_pass"] = _no_recent_pump_proof_mask(rows)
     structure_states: list[str] = []
     structure_passes: list[bool] = []
@@ -2967,7 +2979,8 @@ def _load_seth_flow_playbook(
     rows["_seth_score"] = (
         rows["_seth_flow_score"] * 0.38
         + rows["_seth_structure_score"] * 0.20
-        + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.16
+        + ((rows["_seth_short_pct"] - min_short_pct) * 3.0).clip(lower=0.0, upper=100.0) * 0.10
+        + rows["_seth_squeeze_fuel_score"] * 0.06
         + rows["_seth_whale_pct"].fillna(0.0).clip(upper=100.0) * 0.18
         + rows["_seth_float_score"] * 0.08
     )
@@ -2998,7 +3011,7 @@ def _load_seth_flow_playbook(
         header,
         f"Confirmed target-CEX flow rows: {len(raw_target_flow)} | Whale-origin rows: {whale_origin_count} | Full checklist pass: {pass_count}{empty_note}",
         "",
-        "Checklist: 1 massive target-CEX flow -> 2 top-holder sender -> 3 whale dominated -> 4 low-float/FDV -> 5 >50% short accounts -> 6 dormant/early, not already wild -> 7 research state.",
+        "Checklist: 1 massive target-CEX flow -> 2 top-holder sender -> 3 whale dominated -> 4 low-float/FDV -> 5 short crowd plus squeeze fuel -> 6 dormant/early, not already wild -> 7 research state.",
         "",
         "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in visible.get("symbol", pd.Series(dtype='object')).tolist()),
         "",
@@ -3010,6 +3023,7 @@ def _load_seth_flow_playbook(
         total_amount = _fmt_compact_number(row.get("cex_deposit_24h_token_amount"))
         max_transfer = _fmt_compact_number(row.get("cex_deposit_24h_max_amount"))
         short_pct = _safe_float(row.get("short_account_pct")) or 0.0
+        fuel_score = _safe_float(row.get("_seth_squeeze_fuel_score")) or 0.0
         row_top10 = _safe_float(row.get("top10_holder_pct"))
         row_top100 = _safe_float(row.get("top100_holder_pct"))
         row_float = _safe_float(row.get("_seth_float_score")) or 0.0
@@ -3033,7 +3047,7 @@ def _load_seth_flow_playbook(
         elif not _boolish_scalar(row.get("_seth_float_pass")):
             action = "WAIT: low-float/FDV gate failed"
         elif not bool(row.get("_seth_short_pass")):
-            action = "WAIT: short-account gate failed"
+            action = "WAIT: short crowd + squeeze fuel gate failed"
         elif not _boolish_scalar(row.get("_seth_no_recent_pump_pass")):
             action = "WAIT: 60D no-pump proof missing"
         elif state == "volatile/late":
@@ -3052,7 +3066,7 @@ def _load_seth_flow_playbook(
             f"/{symbol} | {action} | flow {flow_score:.0f}/100 | {cex_count} tx into {targets_text} | "
             f"total {total_amount}, max {max_transfer} | top10 {top10_text}, top100 {top100_text} | "
             f"holderEv {holder_ev} | whaleOrigin {whale_origin_flag}{f' {whale_origin_text}' if whale_origin_text else ''} | "
-            f"float {row_float:.0f}/100 | noPump60 {no_pump} | shorts {short_pct:.1f}% | structure {state}"
+            f"float {row_float:.0f}/100 | noPump60 {no_pump} | shorts {short_pct:.1f}% fuel {fuel_score:.0f}/100 | structure {state}"
         )
         lines.append(
             f"  chart gate: range {range_text}, 24h {day_text}, {_clip_text(row.get('_seth_structure_reason', ''), 80)} | "
@@ -3079,6 +3093,26 @@ def _score_linear_series(series: pd.Series, low: float, high: float, *, invert: 
         return pd.Series(0.0, index=series.index, dtype="float64")
     scored = ((series.astype("float64") - low) / (high - low) * 100.0).clip(lower=0.0, upper=100.0)
     return 100.0 - scored if invert else scored
+
+
+def _squeeze_fuel_component_series(frame: pd.DataFrame) -> pd.Series:
+    index = frame.index
+    return pd.concat(
+        [
+            _num_series(frame, "early_pump_squeeze_fuel_score"),
+            _num_series(frame, "short_account_build_score"),
+            _num_series(frame, "silent_oi_accumulation_score"),
+            _num_series(frame, "short_liquidation_fuel_score"),
+            _num_series(frame, "short_squeeze_score"),
+            _num_series(frame, "funding_flip_score"),
+            _boolish_series(frame.get("fresh_flip_flag"), index=index).astype(float) * 100.0,
+            _num_series(frame, "forced_buying_setup_score"),
+            _num_series(frame, "perp_squeeze_confluence_score"),
+            _score_linear_series(_num_series(frame, "oi_delta_pct"), 0.5, 7.5),
+            _score_linear_series(_num_series(frame, "oi_to_24h_volume_pct"), 2.0, 18.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
 
 
 def _first_row_float(row: pd.Series, *columns: str) -> float | None:
@@ -3172,21 +3206,7 @@ def _goal_score_frame(
         ],
         axis=1,
     ).max(axis=1)
-    squeeze_fuel_component = pd.concat(
-        [
-            _num_series(output, "short_account_build_score"),
-            _num_series(output, "silent_oi_accumulation_score"),
-            _num_series(output, "short_liquidation_fuel_score"),
-            _num_series(output, "short_squeeze_score"),
-            _num_series(output, "early_pump_short_squeeze_score"),
-            _num_series(output, "funding_flip_score"),
-            _num_series(output, "forced_buying_setup_score"),
-            _num_series(output, "perp_squeeze_confluence_score"),
-            _score_linear_series(_num_series(output, "oi_delta_pct"), 0.5, 7.5),
-            _score_linear_series(_num_series(output, "oi_to_24h_volume_pct"), 2.0, 18.0),
-        ],
-        axis=1,
-    ).max(axis=1).fillna(0.0)
+    squeeze_fuel_component = _squeeze_fuel_component_series(output)
     structure_component = pd.concat(
         [
             _num_series(output, "terminal_pre_ignition_quality_score"),
@@ -3983,21 +4003,7 @@ def _score_ravelab_early_frame(
         ],
         axis=1,
     ).max(axis=1).fillna(0.0)
-    squeeze_fuel = pd.concat(
-        [
-            _num_series(scored, "short_account_build_score"),
-            _num_series(scored, "silent_oi_accumulation_score"),
-            _num_series(scored, "short_liquidation_fuel_score"),
-            _num_series(scored, "short_squeeze_score"),
-            _num_series(scored, "funding_flip_score"),
-            _boolish_series(scored.get("fresh_flip_flag"), index=index).astype(float) * 100.0,
-            _num_series(scored, "forced_buying_setup_score"),
-            _num_series(scored, "perp_squeeze_confluence_score"),
-            _score_linear_series(_num_series(scored, "oi_to_24h_volume_pct"), 2.0, 18.0),
-            _score_linear_series(_num_series(scored, "oi_delta_pct"), 0.5, 7.5),
-        ],
-        axis=1,
-    ).max(axis=1).fillna(0.0)
+    squeeze_fuel = _squeeze_fuel_component_series(scored)
     squeeze = pd.concat(
         [
             _num_series(scored, "early_pump_short_squeeze_score") * 0.55 + squeeze_fuel * 0.45,
