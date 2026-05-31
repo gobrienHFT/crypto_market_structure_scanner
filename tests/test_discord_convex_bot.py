@@ -1287,7 +1287,7 @@ def test_load_flow_stress_list_ranks_inventory_stress(monkeypatch) -> None:
 
     assert title == "CEX inventory-stress monitor"
     assert "Stress rows: /STRESSUSDT" in output
-    assert "/STRESSUSDT | stress 91/100 | flow 72/100 | Bitget | notional 900.00K | deposits/ask 310.0% | baseThesis N | source token_transfer_api" in output
+    assert "/STRESSUSDT | stress 91/100 | flow 72/100 | Bitget | notional 900.00K | deposits/ask 310.0% | baseThesis N blockers holder,noPump60 | source token_transfer_api" in output
     assert "QUIETUSDT" not in output
 
 
@@ -4415,7 +4415,7 @@ def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None
     assert title == "Target CEX transfer board"
     assert "Bitget 1" in output
     assert "Transfer rows: /BITGETUSDT" in output
-    assert "baseThesis N | noPump60 N" in output
+    assert "baseThesis N blockers holder,BnBg,noPump60 | noPump60 N" in output
     assert "/BITGETUSDT | Bitget | flow 90/100 | 2 tx | total 50.00K | max 30.00K | top tx 0xbitget" in output
     assert "KRAKENUSDT" not in output
 
