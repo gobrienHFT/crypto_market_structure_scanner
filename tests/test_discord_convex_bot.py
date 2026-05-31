@@ -846,6 +846,26 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
                 "scanned_at_utc": "now",
             },
             {
+                "symbol": "TOP100ONLYUSDT",
+                "cex_deposit_flow_score": 79,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 750_000,
+                "cex_deposit_24h_max_amount": 750_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "cex_deposit_concentration_gate": "top10 55.0% / top100 99.0%",
+                "token_platform": "ethereum",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 5_000,
+                "top10_holder_pct": 55.0,
+                "top100_holder_pct": 99.0,
+                "binance_volume_share_pct": 3.0,
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            },
+            {
                 "symbol": "LOWUSDT",
                 "cex_deposit_flow_score": 0,
                 "cex_deposit_flow_flag": False,
@@ -869,9 +889,10 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert title == "Wallet-to-CEX flow monitor"
     assert "Wallet-to-CEX flow monitor" in output
     assert "Min transfer: 20.00K tokens" in output
-    assert "Holder gate: observed holder >= 90.0%" in output
+    assert "Holder gate: observed top10 holder >= 90.0%" in output
     assert "Holder evidence required: True" in output
-    assert "Flow rows before holder gate: 2 | After holder gate: 2 | After venue gate: 1" in output
+    assert "Flow rows before holder gate: 3 | After holder gate: 2 | After venue gate: 1" in output
+    assert "observed top10 >= 90.0% rows 2" in output
     assert "Candidates: /PLAYUSDT" in output
     assert "Source: fresh Deep scan" in output
     assert "PLAYUSDT" in output
@@ -880,6 +901,7 @@ def test_load_cex_flow_list_prefers_fresh_concentration_gated_rows(tmp_path, mon
     assert "Next check:" in output
     assert "Bitget" in output
     assert "GATEONLYUSDT" not in output
+    assert "TOP100ONLYUSDT" not in output
     assert "LOWUSDT" not in output
     assert "OLDUSDT" not in output
     assert captured["cex_min_transfer_tokens"] == 20_000
@@ -927,6 +949,42 @@ def test_load_early_flow_uses_low_default_threshold(monkeypatch) -> None:
     assert "Min transfer: 20.00K tokens" in output
     assert "Candidates: /EARLYUSDT" in output
     assert captured["cex_min_transfer_tokens"] == 20_000
+
+
+def test_cex_flow_holder_floor_stays_top10_90_when_user_passes_lower_floor(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "TOP100ONLYUSDT",
+                "cex_deposit_flow_score": 80,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_token_amount": 50_000,
+                "cex_deposit_24h_max_amount": 50_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "token_platform": "ethereum",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 3_000,
+                "top10_holder_pct": 70.0,
+                "top100_holder_pct": 99.0,
+                "binance_volume_share_pct": 3.0,
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    _, chunks = bot._load_cex_flow_list(10, min_tokens=20_000, min_whale_pct=50, require_venue_gate=False)
+    output = "\n".join(chunks)
+
+    assert "Holder gate: observed top10 holder >= 90.0%" in output
+    assert "Flow rows before holder gate: 1 | After holder gate: 0 | After venue gate: 0" in output
+    assert "observed top10 >= 90.0% rows 0" in output
+    assert "/TOP100ONLYUSDT | holder gate not met" in output
+    assert "/TOP100ONLYUSDT | FLOW" not in output
 
 
 def test_load_cex_flow_list_can_disable_venue_gate(monkeypatch) -> None:
@@ -1002,7 +1060,7 @@ def test_load_cex_flow_list_explains_zero_raw_flow(monkeypatch) -> None:
     assert title == "Wallet-to-CEX flow monitor"
     assert "Flow rows before holder gate: 0 | After holder gate: 0 | After venue gate: 0" in output
     assert "Coverage: scan rows 2 | contract hints 1" in output
-    assert "precomputed concentration rows 1 | observed >= 90.0% rows 1" in output
+    assert "precomputed concentration rows 1 | observed top10 >= 90.0% rows 1" in output
     assert "holder evidence rows 1 | strict holder gate pass 1" in output
     assert "CEX-flow attempts 1" in output
     assert "errors 1 | raw flow 0" in output
@@ -1048,7 +1106,7 @@ def test_load_cex_flow_diagnostics_reports_bottlenecks(monkeypatch) -> None:
     assert "Min transfer: 1.00K tokens | Lookback: 48h" in description
     assert "Venue gate: disabled for this command" in description
     assert "Coverage: scan rows 1 | contract hints 1" in description
-    assert "observed >= 90.0% rows 1" in description
+    assert "observed top10 >= 90.0% rows 1" in description
     assert "holder evidence rows 1 | strict holder gate pass 1" in description
     assert "no-transfer rows 1" in description
     assert "Attempted symbols (not confirmed transfers unless status starts FLOW):" in description
