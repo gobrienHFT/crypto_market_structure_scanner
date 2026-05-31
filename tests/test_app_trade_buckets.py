@@ -188,6 +188,31 @@ def test_discord_convex_candidates_reject_stale_convex_long_without_current_core
     assert selected.empty
 
 
+def test_dashboard_discord_candidate_line_prints_gate_proof(monkeypatch) -> None:
+    monkeypatch.setattr(app, "_discord_holder_composition_text", lambda row: "")
+    row = pd.Series(
+        {
+            "symbol": "PROOFUSDT",
+            "trade_bucket_score": 88,
+            "thesis_core_gate": True,
+            "thesis_holder_gate": True,
+            "thesis_venue_gate": True,
+            "thesis_no_pump_gate": True,
+            "top10_holder_pct": 94.0,
+            "short_account_pct": 63.0,
+            "low_float_score": 82.0,
+            "cex_deposit_flow_score": 0,
+        }
+    )
+
+    output = app._discord_candidate_line(row)
+
+    assert output.startswith(
+        "Dashboard gate: coreThesis Y | holder Y top10 94.0% | BnBg Y | noPump60 Y | shorts 63.0%"
+    )
+    assert "/PROOFUSDT" in output
+
+
 def test_cex_flow_dashboard_promotes_whale_sender_provenance() -> None:
     whale_sender_columns = set(app.CEX_FLOW_WHALE_SENDER_COLUMNS)
     whale_sender_index = app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_whale_sender_count")

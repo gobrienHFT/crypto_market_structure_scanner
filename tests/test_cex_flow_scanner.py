@@ -574,6 +574,19 @@ def test_token_transfer_api_key_accepts_arbscan_alias(monkeypatch) -> None:
     assert env_name == "ARBSCAN_API_KEY"
 
 
+def test_token_transfer_api_key_uses_shared_etherscan_v2_key_for_supported_chains(monkeypatch) -> None:
+    env_names = {"ETHERSCAN_V2_API_KEY", "ETHERSCAN_API_KEY", "BSCSCAN_API_KEY", "ARBISCAN_API_KEY", "ARBSCAN_API_KEY"}
+    for env_name in env_names:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("ETHERSCAN_V2_API_KEY", "shared-v2-key")
+
+    for chain in ("ethereum", "bsc", "arbitrum"):
+        api_key, env_name = cex._token_transfer_api_key(chain)
+
+        assert api_key == "shared-v2-key"
+        assert env_name == "ETHERSCAN_V2_API_KEY"
+
+
 def test_scan_cex_deposit_flow_reports_unlabelled_api_transfer_hits(monkeypatch) -> None:
     now_ts = int(datetime.now(timezone.utc).timestamp())
     payload = {

@@ -46,6 +46,7 @@ from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_
 from timing_engine import TIMING_SCORE_COLUMNS, apply_timing_model, build_timing_card
 from venue_gate import (
     binance_bitget_venue_mask,
+    effective_top10_holder_pct,
     holder_concentration_mask,
     holder_evidence_mask,
     no_recent_pump_proof_mask,
@@ -3430,6 +3431,60 @@ def _metric_value(row: pd.Series, columns: tuple[str, ...]) -> float | None:
     return None
 
 
+def _truthy_value(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _single_row_gate_mask(row: pd.Series, fn: Any) -> bool:
+    frame = pd.DataFrame([row.to_dict()]).loc[:, lambda data: ~data.columns.duplicated()].copy()
+    try:
+        mask = fn(frame)
+    except Exception:
+        return False
+    if not isinstance(mask, pd.Series) or mask.empty:
+        return False
+    return _truthy_value(mask.iloc[0])
+
+
+def _dashboard_alert_gate_line(row: pd.Series) -> str:
+    core = _truthy_value(row.get("thesis_core_gate"))
+    holder = _truthy_value(row.get("thesis_holder_gate")) or _single_row_gate_mask(
+        row,
+        lambda frame: holder_concentration_mask(frame, min_whale_pct=90.0, require_holder_evidence=True),
+    )
+    venue = _truthy_value(row.get("thesis_venue_gate")) or _single_row_gate_mask(
+        row,
+        lambda frame: binance_bitget_venue_mask(frame, allow_cex_flow_targets=False),
+    )
+    no_pump = _truthy_value(row.get("thesis_no_pump_gate")) or _single_row_gate_mask(row, no_recent_pump_proof_mask)
+    top10 = _metric_value(row, ("filtered_top_10_manipulable_pct", "adjusted_top_10_pct", "top10_holder_pct", "raw_top_10_pct"))
+    if top10 is None:
+        try:
+            top10_values = effective_top10_holder_pct(pd.DataFrame([row.to_dict()]))
+            if not top10_values.empty:
+                parsed_top10 = float(top10_values.iloc[0])
+                top10 = parsed_top10 if math.isfinite(parsed_top10) else None
+        except Exception:
+            top10 = None
+    short_pct = _metric_value(row, ("short_account_pct",))
+    top10_text = f"{top10:.1f}%" if top10 is not None else "n/a"
+    short_text = f"{short_pct:.1f}%" if short_pct is not None else "n/a"
+    yes_no = lambda value: "Y" if bool(value) else "N"
+    return (
+        f"Dashboard gate: coreThesis {yes_no(core)} | holder {yes_no(holder)} top10 {top10_text} | "
+        f"BnBg {yes_no(venue)} | noPump60 {yes_no(no_pump)} | shorts {short_text}"
+    )
+
+
 def _metric_fragment(
     row: pd.Series,
     label: str,
@@ -3636,7 +3691,7 @@ def _discord_holder_composition_text(row: pd.Series) -> str:
 
 def _discord_candidate_line(row: pd.Series) -> str:
     holder_text = _discord_holder_composition_text(row)
-    return build_discord_flag_card(row, holder_text=holder_text)
+    return f"{_dashboard_alert_gate_line(row)}\n{build_discord_flag_card(row, holder_text=holder_text)}"
 
 
 def _post_discord_convex_alert(candidates: pd.DataFrame, *, scan_mode: str) -> None:
