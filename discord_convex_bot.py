@@ -4863,6 +4863,7 @@ def _load_ravelab_list(
     require_binance_bitget = True
     require_dormant_2m = True
     require_holder_evidence = True
+    require_quiet = True
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
         min_tokens=min_tokens,
         lookback_hours=lookback_hours,
@@ -6349,7 +6350,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
         style="Show both, RAVE-like, or LAB-like structures.",
-        require_quiet="Require early/no-chase heat gate.",
+        require_quiet="Legacy option; early/no-chase is pinned on for this thesis screen.",
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears whale_flow_min_tokens.",

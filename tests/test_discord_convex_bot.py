@@ -3811,6 +3811,50 @@ def test_ravelab_exhaustion_blocks_core_prime() -> None:
     assert "avoid chase/late risk" in bot._ravelab_next_check(scored.loc["EXHAUSTUSDT"])
 
 
+def test_ravelab_pins_quiet_gate_when_legacy_toggle_is_false(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+                "symbol": "EXHAUSTUSDT",
+                "top10_holder_pct": 92.0,
+                "centralized_ownership_score": 88.0,
+                "terminal_control_plane_score": 86.0,
+                "low_float_score": 84.0,
+                "float_trap_score": 80.0,
+                "fdv_to_market_cap": 9.0,
+                "locked_supply_pct": 65.0,
+                "short_account_pct": 58.0,
+                "short_dominance_score": 62.0,
+                "short_account_build_score": 58.0,
+                "silent_oi_accumulation_score": 56.0,
+                "oi_delta_pct": 4.0,
+                "binance_volume_share_pct": 9.0,
+                "bitget_volume_share_pct": 2.0,
+                "pre_pump_precision_score": 40.0,
+                "low_volatility_coil_score": 80.0,
+                "hour_return_pct": 0.3,
+                "day_return_pct": 1.0,
+                "price_change_24h_pct": 1.0,
+                "range_24h_pct": 3.5,
+                "crime_exhaustion_score": 82.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_ravelab_list(10, min_score=0, min_archetype=0, min_tokens=20_000, require_quiet=False)
+    output = "\n".join(chunks)
+
+    assert title == "RAVE/LAB early radar"
+    assert "Quiet required: True" in output
+    assert "No rows passed the requested strict filters." in output
+    assert "/EXHAUSTUSDT |" in output
+    assert "blockers early/no-chase" in output
+
+
 def test_ravelab_requires_explicit_binance_trading_evidence(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "1")
     base = {

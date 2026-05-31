@@ -264,7 +264,7 @@ Supported commands include:
 ```
 
 Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/radar` as the primary hard-gated queue, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
-The legacy `require_dormant_60d` option may still appear on `/precrime` and `/pumpwatch` for slash-command compatibility, but the loaders pin 60D no-pump/dormancy proof on; passing `false` cannot weaken those candidate screens.
+Legacy options may still appear for slash-command compatibility, but the candidate loaders pin their thesis gates on: `require_dormant_60d:false` cannot weaken `/precrime` or `/pumpwatch`, and `require_quiet:false` cannot weaken `/ravelab`.
 
 The bot can retrieve:
 
