@@ -287,7 +287,7 @@ The bot can retrieve:
 - lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt
 - symbol-specific wallet-to-CEX flow checks with a custom transfer floor
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
-- Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with blocked/error rows when labelled CEX destinations still cannot be verified
+- Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with unlabelled-transfer diagnostics that surface destination addresses needing CEX wallet labels before rows count as verified flow
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`
 - top-10-first whale-dominance rankings, with top100 retained as diagnostic context

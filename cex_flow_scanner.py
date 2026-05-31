@@ -46,6 +46,10 @@ CEX_DEPOSIT_FLOW_COLUMNS = [
     "cex_deposit_24h_target_exchanges",
     "cex_deposit_24h_top_tx",
     "cex_deposit_24h_source_url",
+    "cex_deposit_24h_unlabelled_transfer_count",
+    "cex_deposit_24h_unlabelled_max_amount",
+    "cex_deposit_24h_unlabelled_top_to_address",
+    "cex_deposit_24h_unlabelled_destinations",
     "cex_deposit_flow_source",
     "cex_deposit_concentration_gate",
     "cex_deposit_flow_note",
@@ -124,6 +128,10 @@ def _default_result(note: str = "", error: str = "") -> dict[str, Any]:
         "cex_deposit_24h_target_exchanges": "",
         "cex_deposit_24h_top_tx": "",
         "cex_deposit_24h_source_url": "",
+        "cex_deposit_24h_unlabelled_transfer_count": 0,
+        "cex_deposit_24h_unlabelled_max_amount": 0.0,
+        "cex_deposit_24h_unlabelled_top_to_address": "",
+        "cex_deposit_24h_unlabelled_destinations": "",
         "cex_deposit_flow_source": "",
         "cex_deposit_concentration_gate": "",
         "cex_deposit_flow_note": note,
@@ -512,21 +520,22 @@ def _read_token_transfer_api_rows(
     lookback_hours: int,
     min_transfer_tokens: float,
     now: datetime | None = None,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str, list[dict[str, Any]]]:
     result = payload.get("result", [])
     status = str(payload.get("status", "")).strip()
     message = _clean_text(payload.get("message", ""))
     if isinstance(result, str):
         lowered = result.lower()
         if "no transactions" in lowered or "no records" in lowered:
-            return [], ""
-        return [], result[:180]
+            return [], "", []
+        return [], result[:180], []
     if not isinstance(result, list):
         if status == "0" and message and "no transactions" not in message.lower():
-            return [], message[:180]
-        return [], ""
+            return [], message[:180], []
+        return [], "", []
 
     parsed: list[dict[str, Any]] = []
+    transfer_candidates: list[dict[str, Any]] = []
     for item in result:
         if not isinstance(item, Mapping):
             continue
@@ -546,10 +555,23 @@ def _read_token_transfer_api_rows(
             label_by_address.get(from_address, "")
             or _row_label(item, "fromName", "fromLabel", "from_label", "from_address_label", "fromContractName")
         )
+        if _exchange_label(from_label):
+            continue
+        transfer_candidates.append(
+            {
+                "tx": _clean_text(item.get("hash") or item.get("transactionHash") or item.get("tx_hash")),
+                "age_hours": age_hours,
+                "from": from_label or from_address,
+                "from_address": from_address,
+                "from_label": from_label,
+                "to": to_label or to_address,
+                "to_address": to_address,
+                "to_label": to_label,
+                "amount": amount,
+            }
+        )
         exchange = _exchange_label(to_label)
         if not exchange:
-            continue
-        if _exchange_label(from_label):
             continue
         parsed.append(
             {
@@ -563,7 +585,61 @@ def _read_token_transfer_api_rows(
             }
         )
     parsed.sort(key=lambda item: (-float(item["amount"]), float(item["age_hours"])))
-    return parsed, ""
+    transfer_candidates.sort(key=lambda item: (-float(item["amount"]), float(item["age_hours"])))
+    return parsed, "", transfer_candidates
+
+
+def _unlabelled_transfer_diagnostics(transfer_candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    unlabelled: list[dict[str, Any]] = []
+    for item in transfer_candidates:
+        if _exchange_label(item.get("to_label")):
+            continue
+        to_address = _extract_address(item.get("to_address")) or _extract_address(item.get("to"))
+        if not to_address:
+            continue
+        unlabelled.append({**item, "to_address": to_address})
+    if not unlabelled:
+        return {
+            "cex_deposit_24h_unlabelled_transfer_count": 0,
+            "cex_deposit_24h_unlabelled_max_amount": 0.0,
+            "cex_deposit_24h_unlabelled_top_to_address": "",
+            "cex_deposit_24h_unlabelled_destinations": "",
+        }
+
+    by_destination: dict[str, dict[str, Any]] = {}
+    for item in unlabelled:
+        address = str(item["to_address"]).lower()
+        amount = float(item["amount"])
+        bucket = by_destination.setdefault(address, {"count": 0, "total": 0.0, "max": 0.0})
+        bucket["count"] = int(bucket["count"]) + 1
+        bucket["total"] = float(bucket["total"]) + amount
+        bucket["max"] = max(float(bucket["max"]), amount)
+
+    ranked = sorted(by_destination.items(), key=lambda item: (-float(item[1]["max"]), -float(item[1]["total"]), item[0]))
+    top_address, top_stats = ranked[0]
+    destinations = "; ".join(
+        f"{_short_address(address)} max {_fmt_amount(stats['max'])} x{int(stats['count'])}"
+        for address, stats in ranked[:3]
+    )
+    return {
+        "cex_deposit_24h_unlabelled_transfer_count": len(unlabelled),
+        "cex_deposit_24h_unlabelled_max_amount": float(top_stats["max"]),
+        "cex_deposit_24h_unlabelled_top_to_address": top_address,
+        "cex_deposit_24h_unlabelled_destinations": destinations,
+    }
+
+
+def _unlabelled_transfer_error_text(diagnostics: Mapping[str, Any]) -> str:
+    count = int(_safe_float(diagnostics.get("cex_deposit_24h_unlabelled_transfer_count", 0)) or 0)
+    if count <= 0:
+        return ""
+    destinations = _clean_text(diagnostics.get("cex_deposit_24h_unlabelled_destinations", ""))
+    max_amount = _fmt_amount(diagnostics.get("cex_deposit_24h_unlabelled_max_amount", 0.0))
+    detail = f"; top destinations: {destinations}" if destinations else f"; max {max_amount}"
+    return (
+        f"token-transfer API found {count} unlabelled transfer(s) above floor{detail}. "
+        "Verify destination ownership, then add exchange wallets to CEX_ADDRESS_LABELS or CEX_ADDRESS_BOOK_FILE."
+    )
 
 
 def _fetch_token_transfer_api_rows(
@@ -574,39 +650,44 @@ def _fetch_token_transfer_api_rows(
     timeout: int,
     lookback_hours: int,
     min_transfer_tokens: float,
-) -> tuple[list[dict[str, Any]], str, str]:
+) -> tuple[list[dict[str, Any]], str, str, dict[str, Any]]:
     chain_key = normalize_chain(chain)
     config = TOKEN_TRANSFER_API_CONFIGS.get(chain_key)
+    empty_diagnostics = _unlabelled_transfer_diagnostics([])
     if config is None:
-        return [], "", f"token-transfer API unsupported for {chain_key}"
+        return [], "", f"token-transfer API unsupported for {chain_key}", empty_diagnostics
     api_key, _api_key_env = _token_transfer_api_key(chain_key)
     request_url = build_token_transfer_api_url(chain_key, contract, api_key=api_key)
     source_url = build_token_transfer_api_url(chain_key, contract)
     if not request_url:
-        return [], source_url, f"token-transfer API unsupported for {chain_key}"
+        return [], source_url, f"token-transfer API unsupported for {chain_key}", empty_diagnostics
     try:
         response = requests.get(request_url, timeout=timeout)
     except Exception as exc:
-        return [], source_url, f"token-transfer API failed: {exc}"
+        return [], source_url, f"token-transfer API failed: {exc}", empty_diagnostics
     if response.status_code != 200:
-        return [], source_url, f"token-transfer API HTTP {response.status_code}"
+        return [], source_url, f"token-transfer API HTTP {response.status_code}", empty_diagnostics
     try:
         payload = response.json()
     except Exception:
-        return [], source_url, "token-transfer API returned non-JSON response"
-    rows, parse_error = _read_token_transfer_api_rows(
+        return [], source_url, "token-transfer API returned non-JSON response", empty_diagnostics
+    rows, parse_error, transfer_candidates = _read_token_transfer_api_rows(
         payload,
         label_by_address=label_by_address,
         lookback_hours=lookback_hours,
         min_transfer_tokens=min_transfer_tokens,
     )
+    diagnostics = _unlabelled_transfer_diagnostics(transfer_candidates)
     if parse_error:
-        return [], source_url, f"token-transfer API parse error: {parse_error}"
+        return [], source_url, f"token-transfer API parse error: {parse_error}", diagnostics
     if rows:
-        return rows, source_url, ""
+        return rows, source_url, "", diagnostics
+    unlabelled_error = _unlabelled_transfer_error_text(diagnostics)
+    if unlabelled_error:
+        return [], source_url, unlabelled_error, diagnostics
     if not label_by_address:
-        return [], source_url, "token-transfer API fallback found transfers but no known CEX address labels are configured"
-    return [], source_url, "token-transfer API fallback found no labelled CEX destination matches"
+        return [], source_url, "token-transfer API fallback found no transfers above floor and no known CEX address labels are configured", diagnostics
+    return [], source_url, "token-transfer API fallback found no labelled CEX destination matches", diagnostics
 
 
 def _composition_top_pct(composition: HolderComposition, n: int) -> float | None:
@@ -1123,7 +1204,7 @@ def scan_cex_deposit_flow(
     api_error = ""
     if not rows:
         label_lookup = _cex_label_lookup(chain, composition)
-        api_rows, api_source_url, api_error = _fetch_token_transfer_api_rows(
+        api_rows, api_source_url, api_error, api_diagnostics = _fetch_token_transfer_api_rows(
             chain,
             hint.contract_address,
             label_by_address=label_lookup,
@@ -1131,6 +1212,7 @@ def scan_cex_deposit_flow(
             lookback_hours=lookback_hours,
             min_transfer_tokens=min_transfer_tokens,
         )
+        result.update(api_diagnostics)
         if api_source_url:
             result["cex_deposit_24h_source_url"] = api_source_url
         if api_rows:
@@ -1162,7 +1244,7 @@ def scan_cex_deposit_flow(
 
     if not rows:
         result["cex_deposit_flow_source"] = "advanced_filter_api_fallback" if api_error else "advanced_filter"
-        if "no known CEX address labels are configured" in api_error:
+        if "no known CEX address labels are configured" in api_error or "unlabelled transfer(s) above floor" in api_error:
             result["cex_deposit_flow_error"] = api_error
         result["cex_deposit_flow_note"] = (
             f"concentration gate met ({gate_text}); no large labelled CEX deposits found in last {lookback_hours}h"

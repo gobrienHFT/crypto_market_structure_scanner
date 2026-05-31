@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 
 import cex_flow_scanner as cex
@@ -51,6 +53,11 @@ class _ApiResponse:
 
     def json(self):
         return self._payload
+
+
+class _BlockedResponse:
+    status_code = 403
+    text = "403 forbidden"
 
 
 def test_qualified_whale_sender_requires_top10_or_one_pct_holder() -> None:
@@ -546,6 +553,48 @@ def test_token_transfer_api_key_accepts_arbscan_alias(monkeypatch) -> None:
 
     assert api_key == "arbscan-alias-key"
     assert env_name == "ARBSCAN_API_KEY"
+
+
+def test_scan_cex_deposit_flow_reports_unlabelled_api_transfer_hits(monkeypatch) -> None:
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    payload = {
+        "status": "1",
+        "message": "OK",
+        "result": [
+            {
+                "hash": "0xunlabelled",
+                "timeStamp": str(now_ts),
+                "from": "0x3333333333333333333333333333333333333333",
+                "to": "0x4444444444444444444444444444444444444444",
+                "tokenValue": "25000",
+            }
+        ],
+    }
+
+    def fake_get(url, **_kwargs):
+        if "advanced-filter" in str(url):
+            return _BlockedResponse()
+        return _ApiResponse(payload)
+
+    monkeypatch.setattr(cex, "fetch_holder_composition", lambda *args, **kwargs: _composition())
+    monkeypatch.setattr(cex.requests, "get", fake_get)
+
+    result = cex.scan_cex_deposit_flow(
+        {
+            "symbol": "PLAYUSDT",
+            "token_platform": "base",
+            "token_contract": "0x853a7c99227499dba9db8c3a02aa691afdebf841",
+        },
+        min_transfer_tokens=20_000,
+    )
+
+    assert result["cex_deposit_flow_flag"] is False
+    assert result["cex_deposit_24h_unlabelled_transfer_count"] == 1
+    assert result["cex_deposit_24h_unlabelled_max_amount"] == 25_000
+    assert result["cex_deposit_24h_unlabelled_top_to_address"] == "0x4444444444444444444444444444444444444444"
+    assert "0x4444...4444 max 25.00K x1" in result["cex_deposit_24h_unlabelled_destinations"]
+    assert "unlabelled transfer(s) above floor" in result["cex_deposit_flow_error"]
+    assert "CEX_ADDRESS_LABELS" in result["cex_deposit_flow_error"]
 
 
 def test_enrich_cex_deposit_flows_with_zero_limit_scans_all_contract_rows(monkeypatch) -> None:

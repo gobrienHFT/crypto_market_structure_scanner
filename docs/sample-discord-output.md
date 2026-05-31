@@ -264,18 +264,18 @@ Flow rows before holder gate: 0 | After holder gate: 0 | After venue gate: 0
 Coverage: scan rows 168 | contract hints 42 | precomputed concentration rows 31 | observed top10 >= 90.0% rows 12 | holder evidence rows 10 | strict holder gate pass 9
 CEX-flow attempts 12 | no-transfer rows 9 | gate-not-met rows 0 | errors 3 | raw flow 0
 Status: explorer blocked 2 CEX-flow attempts with HTTP 403; API fallback/label coverage decides whether zero raw flow is conclusive.
-Top CEX-flow errors: advanced filter HTTP 403; token-transfer API fallback found no labelled CEX destination matches x2; holder composition failed: timeout x1
+Top CEX-flow errors: token-transfer API saw unlabelled transfers above floor x1; token-transfer API found no labelled CEX destination matches x1; holder composition failed: timeout x1
 CEX-flow source paths: advanced_filter_blocked_api_fallback x2; holder_gate x9
 
 No verified labelled CEX token-transfer rows were produced because explorer requests were blocked and API fallback could not label the destinations. Attempted-symbol rows are query attempts at the requested transfer floor, not confirmed transfers.
 
 Attempted symbols (not confirmed transfers unless status starts FLOW):
-/FLOWUSDT | blocked/error: advanced filter HTTP 403; token-transfer API fallback found no labelled CEX destination matches | API fallback reached token transfers; no labelled CEX destination matched | top10 91.0% / top100 99.0% | query URL available
+/FLOWUSDT | blocked/error: advanced filter HTTP 403; token-transfer API found 2 unlabelled transf... | unlabelled API transfers 2 | max 42.00K | to 0x4444...4444 max 42.00K x2 | floor >= 1.00K | top10 91.0% / top100 99.0% | query URL available
 /MICROUSDT | FLOW 67/100 -> Bitget | 2 tx | total 75.00K tokens | max 50.00K | top10 92.0% / top100 96.0% | query URL available
 /SLOWUSDT | checked: no labelled CEX transfer met threshold/lookback | top10 88.0% / top100 94.0% | query URL available
 
 Read: zero raw flow means no verified labelled CEX-transfer rows were produced.
-When HTTP 403 dominates, the scanner tries Etherscan V2 token-transfer APIs; label coverage then becomes the next bottleneck.
+When HTTP 403 dominates, the scanner tries Etherscan V2 token-transfer APIs; label coverage then becomes the next bottleneck. Unlabelled API transfers are research leads, not verified CEX deposits.
 Blocked attempted-symbol rows are query attempts at the requested transfer floor, not confirmed transfers.
 Use `/flowcoin symbol:<symbol>` for single-coin detail/query URL and `/flowhealth` for API-key/address-label coverage.
 ```

@@ -427,6 +427,18 @@ def _holder_composition_text(row: pd.Series) -> str:
     )
 
 
+def _cex_error_summary_label(value: Any) -> str:
+    text = _clean_scalar_text(value)
+    lowered = text.lower()
+    if "unlabelled transfer(s) above floor" in lowered:
+        return "token-transfer API saw unlabelled transfers above floor"
+    if "no labelled cex destination matches" in lowered:
+        return "token-transfer API found no labelled CEX destination matches"
+    if "no known cex address labels are configured" in lowered:
+        return "token-transfer API has no configured CEX address labels"
+    return text[:80]
+
+
 def _cex_flow_scan_diagnostic_lines(
     frame: pd.DataFrame,
     *,
@@ -508,7 +520,7 @@ def _cex_flow_scan_diagnostic_lines(
     elif raw_flow_count > 0:
         lines.append("Status: verified labelled CEX-flow rows exist; venue gate decides whether they appear in `/cexflow`.")
 
-    error_counts = error_text[error_text.ne("")].value_counts().head(3)
+    error_counts = error_text[error_text.ne("")].map(_cex_error_summary_label).value_counts().head(3)
     if not error_counts.empty:
         summary = "; ".join(f"{str(error)[:80]} x{int(count)}" for error, count in error_counts.items())
         lines.append(f"Top CEX-flow errors: {summary}")
@@ -538,6 +550,19 @@ def _cex_attempt_amount_text(row: pd.Series, *, min_transfer_tokens: float | Non
             parts.append(f"{total_pct:.2f}% supply")
         if whale_sender:
             parts.append(whale_sender)
+        return " | ".join(parts)
+
+    unlabelled_count = int(_safe_float(row.get("cex_deposit_24h_unlabelled_transfer_count")) or 0)
+    if unlabelled_count > 0:
+        parts = [f"unlabelled API transfers {unlabelled_count}"]
+        unlabelled_max = _safe_float(row.get("cex_deposit_24h_unlabelled_max_amount"))
+        if unlabelled_max is not None and unlabelled_max > 0:
+            parts.append(f"max {_fmt_compact_number(unlabelled_max)}")
+        destinations = _clip_text(row.get("cex_deposit_24h_unlabelled_destinations", ""), 70)
+        if destinations:
+            parts.append(f"to {destinations}")
+        if min_transfer_tokens is not None:
+            parts.append(f"floor >= {_fmt_compact_number(min_transfer_tokens)}")
         return " | ".join(parts)
 
     error = _clean_scalar_text(row.get("cex_deposit_flow_error", ""))
@@ -5124,6 +5149,16 @@ def _load_flow_proof(symbol_query: str, *, min_tokens: float | None = None, look
         f"Flow source: {_clip_text(row.get('cex_deposit_flow_source', ''), 80) or 'n/a'}",
         f"Concentration gate: {_clip_text(row.get('cex_deposit_concentration_gate', ''), 120) or 'n/a'}",
     ]
+    unlabelled_count = int(_safe_float(row.get("cex_deposit_24h_unlabelled_transfer_count")) or 0)
+    if unlabelled_count > 0:
+        lines.extend(
+            [
+                f"Unlabelled API transfers above floor: {unlabelled_count}",
+                f"Unlabelled max transfer: {_fmt_compact_number(row.get('cex_deposit_24h_unlabelled_max_amount'))}",
+                f"Unlabelled destinations: {_clip_text(row.get('cex_deposit_24h_unlabelled_destinations', ''), 180) or 'n/a'}",
+                "Read: these are transfer hits, not verified CEX deposits until the destination is labelled.",
+            ]
+        )
     error = _clip_text(row.get("cex_deposit_flow_error", ""), 220)
     note = _clip_text(row.get("cex_deposit_flow_note", ""), 240)
     if error:

@@ -3546,6 +3546,30 @@ def test_clip_text_treats_pandas_na_as_empty_text() -> None:
     assert bot._clip_text(pd.NA, 12) == ""
 
 
+def test_cex_attempt_amount_text_surfaces_unlabelled_api_transfers() -> None:
+    row = pd.Series(
+        {
+            "cex_deposit_24h_count": 0,
+            "cex_deposit_24h_token_amount": 0,
+            "cex_deposit_24h_unlabelled_transfer_count": 2,
+            "cex_deposit_24h_unlabelled_max_amount": 42_000,
+            "cex_deposit_24h_unlabelled_destinations": "0x4444...4444 max 42.00K x2",
+        }
+    )
+
+    output = bot._cex_attempt_amount_text(row, min_transfer_tokens=20_000)
+
+    assert output == "unlabelled API transfers 2 | max 42.00K | to 0x4444...4444 max 42.00K x2 | floor >= 20.00K"
+
+
+def test_cex_error_summary_buckets_unlabelled_api_hits() -> None:
+    label = bot._cex_error_summary_label(
+        "advanced filter HTTP 403; token-transfer API found 2 unlabelled transfer(s) above floor; top destinations: 0x4444...4444"
+    )
+
+    assert label == "token-transfer API saw unlabelled transfers above floor"
+
+
 def test_ravelab_line_prints_forced_flow_mechanics_and_exhaustion() -> None:
     row = pd.Series(
         {
