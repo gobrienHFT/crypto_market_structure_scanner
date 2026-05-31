@@ -112,26 +112,25 @@ Matches: 3 | Base thesis gate: 1
 20D high breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_high_20d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 1
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure | Thesis-only/core: True | Core-thesis breakout matches: 1
 
-Matches: 2 | Strict thesis matches: 1
+Matches: 1 | Strict core-thesis matches: 1
 
-/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | thesis Y
-/SLOWUSDT | broke 20D high | 24h +2.1% | breaks H1/L0 | thesis N
+/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | coreThesis Y | baseThesis Y
 ```
 
-## `/low days:90D`
+## `/low days:90D thesis_only:false`
 
 ```text
 90D low breakout screen
 Source: fresh Deep scan at 2026-05-27 10:15:00 UTC | Scan mode: Deep | Updated: 2026-05-27 10:15:00 UTC
 Filter: `broke_low_90d` is true | Windows: any 1D-1499D window; common dashboard columns: 5D, 20D, 90D, 180D
-Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Thesis-only: False | Thesis breakout matches: 0
+Thesis gate: observed top10 holder >= 90.0% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | 60D no-pump/dormancy proof required | Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure | Thesis-only/core: False | Core-thesis breakout matches: 0
 
-Matches: 2 | Strict thesis matches: 0
+Matches: 2 | Strict core-thesis matches: 0
 
-/LOWERUSDT | broke 90D low | 24h -9.5% | breaks H0/L2 | thesis N
-/BOUNCEUSDT | broke 90D low | 24h -2.0% | breaks H0/L1 | thesis N
+/LOWERUSDT | broke 90D low | 24h -9.5% | breaks H0/L2 | coreThesis N | baseThesis N blockers holder,BnBg,noPump60
+/BOUNCEUSDT | broke 90D low | 24h -2.0% | breaks H0/L1 | coreThesis N | baseThesis N blockers holder,BnBg,noPump60
 ```
 
 ## `/funding side:both limit:3`

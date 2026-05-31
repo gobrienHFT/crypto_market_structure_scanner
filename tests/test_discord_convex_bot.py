@@ -564,7 +564,7 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
 
-    title, chunks = bot._load_breakout_list("high", days="20D")
+    title, chunks = bot._load_breakout_list("high", days="20D", thesis_only=False)
     output = "\n".join(chunks)
 
     assert title == "HIGH breakout screen"
@@ -572,17 +572,18 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     assert "Filter: `broke_high_20d` is true" in output
     assert "60D no-pump/dormancy proof required" in output
     assert "Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure" in output
-    assert "Thesis breakout matches: 1" in output
+    assert "Thesis-only/core: False" in output
+    assert "Core-thesis breakout matches: 1" in output
     assert "Matches: 2" in output
-    assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | thesis Y" in output
-    assert "/SLOWUSDT | broke 20D high | 24h +2.1% | breaks H1/L0 | thesis N" in output
+    assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | coreThesis Y | baseThesis Y" in output
+    assert "/SLOWUSDT | broke 20D high | 24h +2.1% | breaks H1/L0 | coreThesis N | baseThesis N blockers holder,BnBg,noPump60" in output
     assert output.index("/FASTUSDT") < output.index("/SLOWUSDT")
     assert "/LOWUSDT" not in output
 
-    _, thesis_chunks = bot._load_breakout_list("high", days="20D", thesis_only=True)
+    _, thesis_chunks = bot._load_breakout_list("high", days="20D")
     thesis_output = "\n".join(thesis_chunks)
-    assert "Thesis-only: True" in thesis_output
-    assert "Matches: 1 | Strict thesis matches: 1" in thesis_output
+    assert "Thesis-only/core: True" in thesis_output
+    assert "Matches: 1 | Strict core-thesis matches: 1" in thesis_output
     assert "/FASTUSDT" in thesis_output
     assert "/SLOWUSDT" not in thesis_output
 
@@ -622,7 +623,7 @@ def test_load_low_breakout_list_uses_numeric_days(monkeypatch) -> None:
     )
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
 
-    title, chunks = bot._load_breakout_list("low", days="90")
+    title, chunks = bot._load_breakout_list("low", days="90", thesis_only=False)
     output = "\n".join(chunks)
 
     assert title == "LOW breakout screen"
@@ -685,7 +686,7 @@ def test_load_breakout_list_computes_arbitrary_high_window(monkeypatch) -> None:
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
     monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
 
-    title, chunks = bot._load_breakout_list("high", days="13D")
+    title, chunks = bot._load_breakout_list("high", days="13D", thesis_only=False)
     output = "\n".join(chunks)
 
     assert title == "HIGH breakout screen"
@@ -735,7 +736,7 @@ def test_load_breakout_list_computes_arbitrary_low_window(monkeypatch) -> None:
     monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
     monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeBinance)
 
-    title, chunks = bot._load_breakout_list("low", days="13")
+    title, chunks = bot._load_breakout_list("low", days="13", thesis_only=False)
     output = "\n".join(chunks)
 
     assert title == "LOW breakout screen"

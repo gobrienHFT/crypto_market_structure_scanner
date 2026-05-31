@@ -1068,7 +1068,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/whales - holder concentration board; diagnostic unless top10 + holder evidence are present.",
         "",
         "Market context:",
-        "/high <days> and /low <days> - breakout highs/lows for any 1D-1499D window; use thesis_only:true for hard-gated rows.",
+        "/high <days> and /low <days> - hard-gated breakout highs/lows for any 1D-1499D window; set thesis_only:false for raw market context.",
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
         "/shorts - weak-context short-majority board with baseThesis Y/N/? overlay.",
         "/funding - Binance funding/carry board.",
@@ -1512,7 +1512,7 @@ def _apply_ravelab_recent_pump_window(
     return out, stats
 
 
-def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_only: bool = False) -> tuple[str, list[str]]:
+def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_only: bool = True) -> tuple[str, list[str]]:
     direction = "high" if str(side).lower().startswith("h") else "low"
     parsed_days = _parse_breakout_days(days)
     title = f"{direction.upper()} breakout screen"
@@ -1549,18 +1549,23 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_
     selected = frame[mask].copy()
     if not selected.empty:
         selected = _goal_score_frame(selected)
-        selected["_discord_thesis_gate"] = _boolish_series(selected.get("_goal_core_setup_pass"), index=selected.index)
-    thesis_match_count = int(_boolish_series(selected.get("_discord_thesis_gate"), index=selected.index).sum()) if not selected.empty else 0
+        selected["_discord_base_thesis_gate"] = _boolish_series(selected.get("_goal_base_thesis_pass"), index=selected.index)
+        selected["_discord_holder_gate"] = _boolish_series(selected.get("_goal_whale_pass"), index=selected.index)
+        selected["_discord_venue_gate"] = _boolish_series(selected.get("_goal_venue_pass"), index=selected.index)
+        selected["_discord_no_pump_gate"] = _boolish_series(selected.get("_goal_no_recent_pump_pass"), index=selected.index)
+        selected["_discord_core_thesis_gate"] = _boolish_series(selected.get("_goal_core_setup_pass"), index=selected.index)
+        selected["_discord_thesis_gate"] = selected["_discord_core_thesis_gate"]
+    thesis_match_count = int(_boolish_series(selected.get("_discord_core_thesis_gate"), index=selected.index).sum()) if not selected.empty else 0
     if thesis_only and not selected.empty:
-        selected = selected[_boolish_series(selected.get("_discord_thesis_gate"), index=selected.index)].copy()
+        selected = selected[_boolish_series(selected.get("_discord_core_thesis_gate"), index=selected.index)].copy()
     header = (
         f"{parsed_days}D {direction} breakout screen\n"
         f"{_cache_age_header(frame, source)}\n"
         f"{filter_text}\n"
-        f"{_thesis_candidate_header(core=True)} | Thesis-only: {bool(thesis_only)} | Thesis breakout matches: {thesis_match_count}"
+        f"{_thesis_candidate_header(core=True)} | Thesis-only/core: {bool(thesis_only)} | Core-thesis breakout matches: {thesis_match_count}"
     )
     if selected.empty:
-        qualifier = " and passed the strict thesis gate" if thesis_only else ""
+        qualifier = " and passed the strict core-thesis gate" if thesis_only else ""
         return title, [header + f"\n\nNo symbols currently broke their {parsed_days}D {direction}{qualifier}."]
 
     price_change = pd.to_numeric(
@@ -1571,7 +1576,7 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_
     score = pd.to_numeric(selected.get("range_breakout_score", pd.Series(0.0, index=selected.index)), errors="coerce").fillna(0.0)
     selected["_discord_breakout_score"] = score
     selected = selected.sort_values(
-        ["_discord_thesis_gate", "_discord_breakout_24h", "_discord_breakout_score", "symbol"],
+        ["_discord_core_thesis_gate", "_discord_breakout_24h", "_discord_breakout_score", "symbol"],
         ascending=[False, direction != "high", False, True],
     )
 
@@ -1582,7 +1587,7 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_
     lines = [
         header,
         "",
-        f"Matches: {len(selected)} | Strict thesis matches: {thesis_match_count}" + (f" | Showing: {len(visible)}" if hidden_count else ""),
+        f"Matches: {len(selected)} | Strict core-thesis matches: {thesis_match_count}" + (f" | Showing: {len(visible)}" if hidden_count else ""),
         "",
     ]
     for _, row in visible.iterrows():
@@ -1612,8 +1617,8 @@ def _load_breakout_list(side: str, *, days: Any = "20D", limit: int = 0, thesis_
         short_pct = _safe_float(row.get("short_account_pct"))
         if short_pct is not None:
             line += f" | shorts {short_pct:.1f}%"
-        thesis_gate = "Y" if _boolish_scalar(row.get("_discord_thesis_gate")) else "N"
-        line += f" | thesis {thesis_gate}"
+        thesis_gate = "Y" if _boolish_scalar(row.get("_discord_core_thesis_gate")) else "N"
+        line += f" | coreThesis {thesis_gate} | {_base_thesis_status_text(row)}"
         lines.append(line)
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")
@@ -6201,9 +6206,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
-        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget, 60D no-pump, float, short, and not-late gates.",
+        thesis_only="Default true. Only show rows passing top10 holder evidence, Binance+Bitget, 60D no-pump, float, short, and not-late gates.",
     )
-    async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
+    async def high(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = True) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
@@ -6232,9 +6237,9 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
     @app_commands.describe(
         days=f"Breakout window, for example 7D, 20D, or 365D. Supports 1D-{MAX_DYNAMIC_BREAKOUT_DAYS}D.",
         limit="Maximum rows to return. Use 0 for all matching rows.",
-        thesis_only="Only show rows passing top10 holder evidence, Binance+Bitget, 60D no-pump, float, short, and not-late gates.",
+        thesis_only="Default true. Only show rows passing top10 holder evidence, Binance+Bitget, 60D no-pump, float, short, and not-late gates.",
     )
-    async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = False) -> None:
+    async def low(interaction: discord.Interaction, days: str = "20D", limit: int = 0, thesis_only: bool = True) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
             return
@@ -7610,7 +7615,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
                 await channel.send(
                     "Convex bot online. Start with `/radar`, use `/coincheck symbol:PLAYUSDT` for one name, "
                     "and use `/help` or `/commands` for the full operator map. Diagnostics: `/cexdiag min_tokens:1000`, "
-                    "`/flowhealth`, `/whales min_pct:90`, `/high days:20D thesis_only:true`, `/low days:20D thesis_only:true`."
+                    "`/flowhealth`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`."
                 )
             except Exception as exc:
                 print(f"Bot is online but could not post to allowed channel {allowed_channel_id}: {exc}")

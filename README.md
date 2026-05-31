@@ -202,7 +202,7 @@ DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 ```
 
-Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high thesis_only:true`, and `/low thesis_only:true` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
+Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
 
 Per-symbol cooldown state is stored locally in:
 
@@ -292,7 +292,7 @@ The bot can retrieve:
 - CEX-flow health checks covering API keys and local address-label coverage
 - a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`
 - top-10-first whale-dominance rankings, with top100 retained as diagnostic context
-- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short crowd plus squeeze fuel, and not-late structure
+- hard-gated high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; default `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short crowd plus squeeze fuel, and not-late structure, while `thesis_only:false` shows raw breakout context with base-gate blockers
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries
