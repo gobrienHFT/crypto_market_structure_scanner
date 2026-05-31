@@ -58,6 +58,7 @@ def test_pre_activity_radar_prioritizes_quiet_controlled_cex_setup() -> None:
     assert bool(row["pre_activity_holder_evidence_gate"]) is True
     assert bool(row["pre_activity_whale_gate"]) is True
     assert bool(row["pre_activity_binance_bitget_gate"]) is True
+    assert bool(row["pre_activity_float_gate"]) is True
     assert bool(row["pre_activity_no_recent_pump_gate"]) is True
     assert bool(row["pre_activity_alert_flag"]) is True
     assert bool(row["pre_activity_confirmed_target_flow"]) is True
@@ -220,11 +221,12 @@ def test_pre_activity_radar_does_not_alert_on_top100_only_control() -> None:
     row = apply_pre_activity_radar(frame).iloc[0]
 
     assert bool(row["pre_activity_whale_gate"]) is False
+    assert bool(row["pre_activity_float_gate"]) is True
     assert bool(row["pre_activity_structure_gate"]) is False
     assert bool(row["pre_activity_alert_flag"]) is False
 
 
-def test_pre_activity_state_names_missing_holder_structure_gate() -> None:
+def test_pre_activity_state_names_missing_holder_gate() -> None:
     frame = pd.DataFrame(
         [
             {
@@ -261,8 +263,69 @@ def test_pre_activity_state_names_missing_holder_structure_gate() -> None:
     row = apply_pre_activity_radar(frame).iloc[0]
 
     assert bool(row["pre_activity_whale_gate"]) is False
-    assert row["pre_activity_state"] == "Holder/float gate unproven"
+    assert row["pre_activity_state"] == "Holder gate unproven"
     assert bool(row["pre_activity_alert_flag"]) is False
+
+
+def test_pre_activity_radar_does_not_let_thin_book_replace_float_structure() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "THINONLYUSDT",
+                "binance_perp_universe": True,
+                "token_platform": "arbitrum",
+                "token_contract": "0x4444444444444444444444444444444444444444",
+                "holder_source": "Arbiscan holder endpoint",
+                "top10_holder_pct": 92,
+                "top100_holder_pct": 99,
+                "holder_count": 7_500,
+                "low_float_score": 5,
+                "float_trap_score": 8,
+                "terminal_hidden_float_reflexivity_score": 6,
+                "fdv_to_market_cap": 1.1,
+                "locked_supply_pct": 2,
+                "circulating_supply_pct": 88,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_flow_score": 92,
+                "cex_deposit_inventory_stress_score": 78,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_max_amount": 250_000,
+                "cex_deposit_24h_target_exchanges": "Binance, Bitget",
+                "inventory_transfer_risk_score": 74,
+                "short_account_pct": 64,
+                "short_account_change_max_pp": 1.8,
+                "oi_to_24h_volume_pct": 9,
+                "binance_bitget_gate_share_pct": 56,
+                "bitget_volume_share_pct": 2.0,
+                "ask_depth_1pct_usdt": 5_000,
+                "ask_depth_to_24h_volume_pct": 0.01,
+                "coinbase_depth_to_perp_volume_pct": 0.01,
+                "day_return_pct": 0.9,
+                "price_change_24h_pct": 0.9,
+                "hour_return_pct": 0.2,
+                "range_24h_pct": 3.2,
+                "daily_quote_volume_multiple": 1.05,
+                "hour_volume_multiple": 0.95,
+                "hour_trade_count_multiple": 1.0,
+                "low_volatility_coil_score": 82,
+                "pre_pump_precision_score": 78,
+            }
+        ]
+    )
+
+    row = apply_pre_activity_radar(frame).iloc[0]
+
+    assert row["pre_activity_thin_book_score"] >= 55
+    assert bool(row["pre_activity_whale_gate"]) is True
+    assert bool(row["pre_activity_float_gate"]) is False
+    assert bool(row["pre_activity_structure_gate"]) is False
+    assert bool(row["pre_activity_alert_flag"]) is False
+    assert row["pre_activity_state"] == "Float/FDV gate unproven"
+    assert "low-float/FDV structure" in row["pre_activity_next_check"]
 
 
 def test_pre_activity_state_names_missing_binance_bitget_gate() -> None:

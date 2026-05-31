@@ -26,6 +26,7 @@ PRE_ACTIVITY_RADAR_COLUMNS = [
     "pre_activity_holder_evidence_gate",
     "pre_activity_whale_gate",
     "pre_activity_binance_bitget_gate",
+    "pre_activity_float_gate",
     "pre_activity_structure_gate",
     "pre_activity_behavior_gate",
     "pre_activity_quiet_gate",
@@ -186,6 +187,8 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
     heat = _row_float(row, "pre_activity_heat_score") or 0.0
     quiet = _row_bool(row, "pre_activity_quiet_gate")
     behavior = _row_bool(row, "pre_activity_behavior_gate")
+    whale = _row_bool(row, "pre_activity_whale_gate")
+    float_gate = _row_bool(row, "pre_activity_float_gate")
     structure = _row_bool(row, "pre_activity_structure_gate")
     flow = _row_bool(row, "pre_activity_confirmed_target_flow")
     venue = _row_bool(row, "pre_activity_binance_bitget_gate")
@@ -193,8 +196,12 @@ def _state(row: Mapping[str, Any] | pd.Series) -> str:
         return "Dormancy unproven"
     if heat >= 70.0 or not quiet:
         return "Already active / chase risk"
+    if not whale:
+        return "Holder gate unproven"
+    if not float_gate:
+        return "Float/FDV gate unproven"
     if not structure:
-        return "Holder/float gate unproven"
+        return "Structure gate unproven"
     if not venue:
         return "Venue gate unproven"
     if not behavior:
@@ -218,7 +225,7 @@ def _next_check(row: Mapping[str, Any] | pd.Series) -> str:
         missing.append("top10 whale-control evidence")
     if not _row_bool(row, "pre_activity_binance_bitget_gate"):
         missing.append("Binance+Bitget trading evidence")
-    if not _row_bool(row, "pre_activity_structure_gate"):
+    if not _row_bool(row, "pre_activity_float_gate"):
         missing.append("low-float/FDV structure")
     if not _row_bool(row, "pre_activity_behavior_gate"):
         missing.append("target CEX flow or venue-inventory tell")
@@ -432,7 +439,8 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     holder_evidence_gate = holder_evidence_mask(output)
     whale_gate = holder_concentration_mask(output, min_whale_pct=90.0, require_holder_evidence=True)
     venue_pair_gate = binance_bitget_venue_mask(output, allow_cex_flow_targets=False)
-    structure_gate = whale_gate & ((float_score >= 45.0) | (thin_book_score >= 55.0))
+    float_gate = float_score.ge(45.0)
+    structure_gate = whale_gate & float_gate
     behavior_gate = target_flow | behavior_score.ge(58.0) | ((venue_score >= 55.0) & (short_fuse_score >= 52.0))
     quiet_gate = quiet_score.ge(50.0) & activity_heat.lt(62.0)
     no_recent_pump_gate = _no_recent_pump_gate(output)
@@ -468,6 +476,7 @@ def apply_pre_activity_radar(frame: pd.DataFrame, *, min_transfer_tokens: float 
     output["pre_activity_holder_evidence_gate"] = holder_evidence_gate
     output["pre_activity_whale_gate"] = whale_gate
     output["pre_activity_binance_bitget_gate"] = venue_pair_gate
+    output["pre_activity_float_gate"] = float_gate & (~major_excluded)
     output["pre_activity_structure_gate"] = structure_gate & (~major_excluded)
     output["pre_activity_behavior_gate"] = behavior_gate & (~major_excluded)
     output["pre_activity_quiet_gate"] = quiet_gate & (~major_excluded)

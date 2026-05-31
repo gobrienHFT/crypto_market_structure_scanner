@@ -25,8 +25,8 @@ RAVEUSDT | brief 74.1 | terminal 81 | timing 58 | CEX 36 | shorts 68.5% | Coilin
 
 ```text
 Pre-activity crime-pump radar
-Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Quiet required: True | Behaviour gate required: True | 60D no-pump required: True
-Gate rows: strict holder 9 | Binance+Bitget 5 | 60D no-pump 3 | Shown after latent filters 1
+Source: fresh Deep scan at 2026-05-28 09:20:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Min latent score: 58 | Holder gate: top10 >= 90.0% | Holder evidence required: True | Binance+Bitget required: True | Target flow required: False | Float/FDV structure required: True | Quiet required: True | Behaviour gate required: True | 60D no-pump required: True
+Gate rows: strict holder 9 | Binance+Bitget 5 | 60D no-pump 3 | Float/FDV structure 2 | Shown after latent filters 1
 Matches: 1 | Target-flow rows: 1 | Quiet-gated rows: 1 | Read: structural-risk evidence, not trade instruction.
 
 Candidates: /SLEEPUSDT

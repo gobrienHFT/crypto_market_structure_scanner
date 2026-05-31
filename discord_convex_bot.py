@@ -3551,6 +3551,7 @@ def _load_precrime_list(
         f"Min latent score: {float(min_score):.0f} | Holder gate: top10 >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Binance+Bitget required: {require_binance_bitget} | "
         f"Target flow required: {require_target_flow} | "
+        "Float/FDV structure required: True | "
         f"Quiet required: {require_quiet} | Behaviour gate required: {require_behavior_gate} | "
         f"60D no-pump required: {require_dormant_60d}"
     )
@@ -3587,6 +3588,16 @@ def _load_precrime_list(
             header
             + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
             + f"60D no-pump proof rows: {dormant_count}. No rows had enough 60D no-pump/dormancy proof."
+        ]
+    structure_gate = _boolish_series(scored.get("pre_activity_structure_gate", pd.Series(False, index=scored.index)), index=scored.index)
+    structure_count = int(structure_gate.sum())
+    scored = scored[structure_gate].copy()
+    if scored.empty:
+        return "Pre-activity radar", [
+            header
+            + f"\n\nRows after strict holder gate: {holder_count} | After Binance+Bitget gate: {venue_pair_count} | "
+            + f"60D no-pump proof rows: {dormant_count} | Float/FDV structure rows: {structure_count}. "
+            + "No rows had enough low-float/high-FDV structure evidence."
         ]
 
     score = _num_series(scored, "pre_activity_pump_score")
@@ -3637,7 +3648,7 @@ def _load_precrime_list(
     symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected.get("symbol", pd.Series(dtype='object')).tolist())
     lines = [
         header,
-        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Shown after latent filters {len(selected)}",
+        f"Gate rows: strict holder {holder_count} | Binance+Bitget {venue_pair_count} | 60D no-pump {dormant_count} | Float/FDV structure {structure_count} | Shown after latent filters {len(selected)}",
         f"Matches: {len(selected)} | Target-flow rows: {target_count} | Quiet-gated rows: {quiet_count} | Read: structural-risk evidence, not trade instruction.",
         "",
         f"Candidates: {symbols}" if symbols else "Candidates: none",
