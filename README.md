@@ -267,7 +267,7 @@ Use `/help` or `/commands` inside Discord when you want the operator map. It lab
 
 The bot can retrieve:
 
-- a strict core-thesis alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short majority, and not-late gates
+- a strict core-thesis alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short crowd plus squeeze fuel, and not-late gates
 - latest cached scanner rankings
 - full cached list of symbols where more than 50% of accounts are short
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
@@ -276,7 +276,7 @@ The bot can retrieve:
 - `/crimepump` as a legacy blunt-name alias and `/prime` as a short alias for the same compact hard-gated queue
 - a dedicated `/ravelab` strict early-structure microscope requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects `whale_flow_min_tokens` while generic target-CEX flow still respects `min_tokens`, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same default 90%+ explorer holder-source snapshot, Binance+Bitget, 60D no-pump/dormancy, low-float/high-FDV, squeeze-fuel, and not-late gates
-- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowding, and not-late structure
+- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowd plus squeeze fuel, and not-late structure
 - symbol-level `/flowproof`, `/coincheck`, `/coin`, and `/dossier` views that separate base thesis, core setup, and CEX-flow triggers; transfer labels cannot masquerade as venue proof, and a clean core structure no longer looks rejected merely because the CEX-flow trigger has not appeared yet
 - low-float/high-FDV, squeeze-ready, and Binance/Gate/Bitget target-transfer diagnostic boards that label raw rows separately from `baseThesis Y` rows
 - top terminal market-structure evidence rows
@@ -289,9 +289,9 @@ The bot can retrieve:
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
 - Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with blocked/error rows when labelled CEX destinations still cannot be verified
 - CEX-flow health checks covering API keys and local address-label coverage
-- a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
+- a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
-- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short majority, and not-late structure
+- high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short crowd plus squeeze fuel, and not-late structure
 - symbol-level market structure metrics
 - live scan context
 - holder composition summaries

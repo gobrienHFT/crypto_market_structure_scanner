@@ -44,11 +44,33 @@ def _max_series(frame: pd.DataFrame, *columns: str, default: float = 0.0) -> pd.
     return pd.concat(parts, axis=1).max(axis=1).fillna(default).astype("float64")
 
 
-def apply_core_setup_gate(frame: pd.DataFrame, *, min_short_pct: float = 50.0) -> pd.DataFrame:
+def apply_core_setup_gate(
+    frame: pd.DataFrame,
+    *,
+    min_short_pct: float = 50.0,
+    min_squeeze_fuel_score: float = 40.0,
+) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
     output = frame.loc[:, ~frame.columns.duplicated()].copy()
     short_pct = _num_series(output, "short_account_pct")
+    short_crowd = short_pct.ge(float(min_short_pct or 0.0)) | _num_series(output, "short_dominance_score").ge(60.0)
+    squeeze_fuel = pd.concat(
+        [
+            _num_series(output, "short_account_build_score"),
+            _num_series(output, "silent_oi_accumulation_score"),
+            _num_series(output, "short_liquidation_fuel_score"),
+            _num_series(output, "short_squeeze_score"),
+            _num_series(output, "early_pump_short_squeeze_score"),
+            _num_series(output, "funding_flip_score"),
+            _num_series(output, "forced_buying_setup_score"),
+            _num_series(output, "perp_squeeze_confluence_score"),
+            _score_linear(_num_series(output, "oi_delta_pct"), 0.5, 7.5),
+            _score_linear(_num_series(output, "oi_to_24h_volume_pct"), 2.0, 18.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    squeeze_pass = short_crowd & squeeze_fuel.ge(float(min_squeeze_fuel_score or 0.0))
     float_component = pd.concat(
         [
             _num_series(output, "low_float_score"),
@@ -80,7 +102,9 @@ def apply_core_setup_gate(frame: pd.DataFrame, *, min_short_pct: float = 50.0) -
     ).max(axis=1)
     not_late = (100.0 - late_risk).clip(lower=0.0, upper=100.0)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
-    core_mask = short_pct.ge(float(min_short_pct or 0.0)) & float_pass & structure_component.ge(35.0) & not_late.ge(45.0)
+    output["_core_squeeze_fuel_score"] = squeeze_fuel
+    output["_core_squeeze_pass"] = squeeze_pass
+    core_mask = squeeze_pass & float_pass & structure_component.ge(35.0) & not_late.ge(45.0)
     return output[core_mask.fillna(False)].copy()
 
 

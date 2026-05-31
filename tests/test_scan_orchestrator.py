@@ -5,7 +5,7 @@ import sys
 from types import SimpleNamespace
 
 from market_structure_scoring import apply_lifecycle_model as apply_market_structure_model
-from scan_orchestrator import run_scanner_scan, select_convex_long_candidates
+from scan_orchestrator import apply_core_setup_gate, run_scanner_scan, select_convex_long_candidates
 
 
 def test_select_convex_long_candidates_applies_score_holder_and_venue_gates(monkeypatch) -> None:
@@ -52,6 +52,7 @@ def test_select_convex_long_candidates_applies_score_holder_and_venue_gates(monk
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "pre_pump_precision_score": 76.0,
             },
             {
@@ -124,6 +125,7 @@ def test_run_scanner_scan_temporarily_overrides_cex_flow_threshold(monkeypatch) 
                     "float_trap_score": 78.0,
                     "fdv_to_market_cap": 8.0,
                     "short_account_pct": 63.0,
+                    "short_account_build_score": 52.0,
                     "pre_pump_precision_score": 76.0,
                 }
             ]
@@ -144,3 +146,32 @@ def test_run_scanner_scan_temporarily_overrides_cex_flow_threshold(monkeypatch) 
     assert "CEX min transfer 20000 tokens" in result.source
     assert fake_app.CEX_DEPOSIT_FLOW_MIN_TRANSFER_TOKENS == 500_000.0
     assert fake_app.CEX_DEPOSIT_FLOW_LOOKBACK_HOURS == 24
+
+
+def test_core_setup_gate_rejects_high_short_without_squeeze_fuel() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "SHORTONLYUSDT",
+                "short_account_pct": 72.0,
+                "low_float_score": 84.0,
+                "float_trap_score": 80.0,
+                "fdv_to_market_cap": 9.0,
+                "pre_pump_precision_score": 76.0,
+            },
+            {
+                "symbol": "FUELUSDT",
+                "short_account_pct": 58.0,
+                "short_account_build_score": 46.0,
+                "low_float_score": 84.0,
+                "float_trap_score": 80.0,
+                "fdv_to_market_cap": 9.0,
+                "pre_pump_precision_score": 76.0,
+            },
+        ]
+    )
+
+    selected = apply_core_setup_gate(frame)
+
+    assert selected["symbol"].tolist() == ["FUELUSDT"]
+    assert float(selected.iloc[0]["_core_squeeze_fuel_score"]) == 46.0

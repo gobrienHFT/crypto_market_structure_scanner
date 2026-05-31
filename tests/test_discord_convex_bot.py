@@ -467,6 +467,7 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
                     "range_high_break_count": 2,
                 "range_low_break_count": 0,
                 "short_account_pct": 61.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 82.0,
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
@@ -506,7 +507,7 @@ def test_load_high_breakout_list_uses_requested_window(monkeypatch) -> None:
     assert "20D high breakout screen" in output
     assert "Filter: `broke_high_20d` is true" in output
     assert "60D no-pump/dormancy proof required" in output
-    assert "Core setup also requires short majority, low-float/high-FDV, and not-late structure" in output
+    assert "Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure" in output
     assert "Thesis breakout matches: 1" in output
     assert "Matches: 2" in output
     assert "/FASTUSDT | broke 20D high | 24h +8.2% | price 0.12 | breaks H2/L0 | shorts 61.0% | thesis Y" in output
@@ -1593,6 +1594,7 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
                 "short_account_pct": 64.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 82.0,
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
@@ -1674,7 +1676,8 @@ def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:
     assert "/PRIMEUSDT | PASS | score" in output
     assert "whale 91.0% | holderEv Y | venueBnBg Y" in output
     assert "flow 92 Bitget, GateIO 3tx max 12.00M" in output
-    assert "shorts 64.0%" in output
+    assert "shorts+fuel 64.0%" in output
+    assert "fuel 53" in output
     assert "GATEONLYUSDT" not in output
     assert "KRAKENUSDT" not in output
 
@@ -1690,6 +1693,7 @@ def test_goal_score_requires_explicit_binance_bitget_evidence(monkeypatch) -> No
         **_holder_evidence(),
         "top10_holder_pct": 92.0,
         "short_account_pct": 64.0,
+        "short_account_build_score": 52.0,
         "low_float_score": 82.0,
         "fdv_to_market_cap": 8.0,
         "dormant_short_fuse_score": 80.0,
@@ -1724,6 +1728,7 @@ def test_goal_score_separates_core_setup_from_flow_trigger() -> None:
                 "top10_holder_pct": 92.0,
                 "top100_holder_pct": 99.0,
                 "short_account_pct": 64.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 82.0,
                 "fdv_to_market_cap": 8.0,
                 "dormant_short_fuse_score": 80.0,
@@ -1748,6 +1753,36 @@ def test_goal_score_separates_core_setup_from_flow_trigger() -> None:
     assert "baseThesis Y | coreSetup Y | flowSetup N | targetFlow N" in bot._goal_thesis_gates_line(scored)
 
 
+def test_goal_score_requires_squeeze_fuel_not_short_pct_alone() -> None:
+    base = {
+        **_holder_evidence(),
+        "top10_holder_pct": 92.0,
+        "top100_holder_pct": 99.0,
+        "short_account_pct": 64.0,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "dormant_short_fuse_score": 80.0,
+        "pre_pump_precision_score": 75.0,
+        "binance_volume_share_pct": 2.0,
+        "bitget_volume_share_pct": 1.5,
+    }
+    scored = bot._goal_score_frame(
+        pd.DataFrame(
+            [
+                {**base, "symbol": "SHORTONLYUSDT"},
+                {**base, "symbol": "FUELUSDT", "short_account_build_score": 52.0},
+            ]
+        ),
+        min_transfer_tokens=20_000,
+    ).set_index("symbol")
+
+    assert bool(scored.loc["SHORTONLYUSDT", "_goal_base_thesis_pass"])
+    assert not bool(scored.loc["SHORTONLYUSDT", "_goal_short_pass"])
+    assert not bool(scored.loc["SHORTONLYUSDT", "_goal_core_setup_pass"])
+    assert bool(scored.loc["FUELUSDT", "_goal_short_pass"])
+    assert bool(scored.loc["FUELUSDT", "_goal_core_setup_pass"])
+
+
 def test_goal_score_hard_floors_top10_whale_gate() -> None:
     base = {
         "cex_deposit_flow_score": 92,
@@ -1757,6 +1792,7 @@ def test_goal_score_hard_floors_top10_whale_gate() -> None:
         "cex_deposit_24h_target_exchanges": "Binance",
         **_holder_evidence(),
         "short_account_pct": 64.0,
+        "short_account_build_score": 52.0,
         "low_float_score": 82.0,
         "fdv_to_market_cap": 8.0,
         "dormant_short_fuse_score": 80.0,
@@ -1791,6 +1827,7 @@ def test_goal_score_requires_60d_no_pump_proof() -> None:
         **_holder_evidence(),
         "top10_holder_pct": 92.0,
         "short_account_pct": 64.0,
+        "short_account_build_score": 52.0,
         "low_float_score": 82.0,
         "fdv_to_market_cap": 8.0,
         "dormant_short_fuse_score": 80.0,
@@ -3625,6 +3662,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 80.0,
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
@@ -3653,6 +3691,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 80.0,
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
@@ -3680,6 +3719,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "top10_holder_pct": 91.0,
                 "top100_holder_pct": 99.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 80.0,
                 "float_trap_score": 76.0,
                 "fdv_to_market_cap": 7.0,
@@ -3701,6 +3741,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
                 "top10_holder_pct": 92.0,
                 "top100_holder_pct": 99.1,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "low_float_score": 82.0,
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
@@ -3729,7 +3770,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Largest transfer: 12.00M" in proof
     assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
     assert "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate." in proof
-    assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts Y | noPump60 Y | whaleOrigin Y" in proof
+    assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin Y" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
@@ -3759,7 +3800,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
 
     assert target_title == "TARGETONLYUSDT flow proof"
     assert "Verdict: VERIFIED target-CEX transfer evidence" in target_proof
-    assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow Y | holder Y | venueBnBg N | float Y | shorts Y | noPump60 Y | whaleOrigin N" in target_proof
+    assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow Y | holder Y | venueBnBg N | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin N" in target_proof
 
 
 def test_load_cex_targets_list_only_counts_target_exchanges(monkeypatch) -> None:
@@ -3945,7 +3986,7 @@ def test_load_alpha_brief_blends_structure_timing_and_cex_flow(monkeypatch) -> N
     assert title == "Alpha brief"
     assert "Alpha brief - strict thesis-gated convex watchlist" in output
     assert "Thesis gate: observed top10 holder >= 90.0%" in output
-    assert "Core setup also requires short majority, low-float/high-FDV, and not-late structure" in output
+    assert "Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure" in output
     assert "FLOWUSDT | brief" in output
     assert "evidence:" in output
     assert "next:" in output
@@ -3979,6 +4020,7 @@ def test_load_candidates_prefers_fresh_scan_and_ignores_old_cache(tmp_path, monk
                     "float_trap_score": 78.0,
                     "fdv_to_market_cap": 8.0,
                     "short_account_pct": 63.0,
+                    "short_account_build_score": 52.0,
                     "pre_pump_precision_score": 76.0,
                     **_holder_evidence("bsc", "0x4444444444444444444444444444444444444444"),
                     "scan_mode": "Deep",
@@ -4151,6 +4193,7 @@ def test_convex_candidates_require_binance_bitget_by_default(monkeypatch) -> Non
                     "float_trap_score": 78.0,
                     "fdv_to_market_cap": 8.0,
                     "short_account_pct": 63.0,
+                    "short_account_build_score": 52.0,
                     "pre_pump_precision_score": 76.0,
                     **_holder_evidence("ethereum", "0x6666666666666666666666666666666666666666"),
                 },
@@ -4303,6 +4346,7 @@ def test_thesis_candidate_gate_ignores_disabled_venue_env(monkeypatch) -> None:
                 "float_trap_score": 78.0,
                 "fdv_to_market_cap": 8.0,
                 "short_account_pct": 63.0,
+                "short_account_build_score": 52.0,
                 "pre_pump_precision_score": 76.0,
                 **_holder_evidence("bsc", "0x9999999999999999999999999999999999999999"),
             },

@@ -15,6 +15,7 @@ CORE_SETUP = {
     "low_float_score": 82.0,
     "float_trap_score": 78.0,
     "fdv_to_market_cap": 8.0,
+    "short_account_build_score": 52.0,
     "pre_pump_precision_score": 76.0,
 }
 

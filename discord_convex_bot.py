@@ -2733,7 +2733,7 @@ def _thesis_candidate_header(*, min_whale_pct: float = 90.0, core: bool = False)
         f"{_thesis_venue_header()} | 60D no-pump/dormancy proof required"
     )
     if core:
-        text += " | Core setup also requires short majority, low-float/high-FDV, and not-late structure"
+        text += " | Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure"
     return text
 
 
@@ -3147,6 +3147,21 @@ def _goal_score_frame(
         ],
         axis=1,
     ).max(axis=1)
+    squeeze_fuel_component = pd.concat(
+        [
+            _num_series(output, "short_account_build_score"),
+            _num_series(output, "silent_oi_accumulation_score"),
+            _num_series(output, "short_liquidation_fuel_score"),
+            _num_series(output, "short_squeeze_score"),
+            _num_series(output, "early_pump_short_squeeze_score"),
+            _num_series(output, "funding_flip_score"),
+            _num_series(output, "forced_buying_setup_score"),
+            _num_series(output, "perp_squeeze_confluence_score"),
+            _score_linear_series(_num_series(output, "oi_delta_pct"), 0.5, 7.5),
+            _score_linear_series(_num_series(output, "oi_to_24h_volume_pct"), 2.0, 18.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
     structure_component = pd.concat(
         [
             _num_series(output, "terminal_pre_ignition_quality_score"),
@@ -3176,7 +3191,7 @@ def _goal_score_frame(
     whale_pass = whale_concentration_pass & (holder_evidence_mask if require_holder_evidence else True)
     venue_pass = _explicit_binance_bitget_trading_gate_mask(output)
     no_recent_pump_pass = _no_recent_pump_proof_mask(output)
-    short_pass = short_pct.ge(min_short_pct)
+    short_pass = (short_pct.ge(min_short_pct) | _num_series(output, "short_dominance_score").ge(60.0)) & squeeze_fuel_component.ge(40.0)
     float_pass = float_component.ge(55.0) | _num_series(output, "fdv_to_market_cap").ge(4.0) | _num_series(output, "locked_supply_pct").ge(45.0)
     structure_pass = structure_component.ge(35.0) & not_late_component.ge(45.0) & no_recent_pump_pass
     base_thesis_pass = whale_pass & venue_pass & no_recent_pump_pass
@@ -3213,6 +3228,8 @@ def _goal_score_frame(
     output["_goal_base_thesis_pass"] = base_thesis_pass
     output["_goal_float_component"] = float_component
     output["_goal_short_component"] = short_component
+    output["_goal_squeeze_fuel_component"] = squeeze_fuel_component
+    output["_goal_squeeze_fuel_pass"] = squeeze_fuel_component.ge(40.0)
     output["_goal_structure_component"] = structure_component
     output["_goal_not_late_component"] = not_late_component
     output["_goal_whale_pass"] = whale_pass
@@ -3235,7 +3252,7 @@ def _goal_thesis_gates_line(row: pd.Series) -> str:
         f"holder {yes_no(row.get('_goal_whale_pass'))} | "
         f"venueBnBg {yes_no(row.get('_goal_venue_pass'))} | "
         f"float {yes_no(row.get('_goal_float_pass'))} | "
-        f"shorts {yes_no(row.get('_goal_short_pass'))} | "
+        f"shorts+fuel {yes_no(row.get('_goal_short_pass'))} | "
         f"noPump60 {yes_no(row.get('_goal_no_recent_pump_pass'))} | "
         f"whaleOrigin {'Y' if _whale_sender_text(row, include_amount=False) else 'N'}"
     )
@@ -3309,7 +3326,8 @@ def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
         f"noPump60 {no_pump}",
         f"whale t10 {top10:.1f}%" if top10 is not None else "whale t10 n/a",
         f"t100 {top100:.1f}%" if top100 is not None else "t100 n/a",
-        f"shorts {short_pct:.1f}%" if short_pct is not None else "shorts n/a",
+        f"shorts+fuel {short_pct:.1f}%" if short_pct is not None else "shorts+fuel n/a",
+        f"fuel {(_safe_float(row.get('_goal_squeeze_fuel_component')) or 0.0):.0f}",
         f"float {float_score:.0f}",
     ]
     if fdv_ratio is not None and fdv_ratio > 0:
@@ -5186,7 +5204,15 @@ def _load_coin_check(
                 else f"holder {holder_evidence}"
             ),
         ),
-        gate_line("short dominance", _boolish_scalar(scored_row.get("_goal_short_pass")), f"short accounts {short_pct:.1f}%" if short_pct is not None else "short accounts n/a"),
+        gate_line(
+            "short squeeze fuel",
+            _boolish_scalar(scored_row.get("_goal_short_pass")),
+            (
+                f"short accounts {short_pct:.1f}% | fuel {(_safe_float(scored_row.get('_goal_squeeze_fuel_component')) or 0.0):.0f}/100"
+                if short_pct is not None
+                else f"short accounts n/a | fuel {(_safe_float(scored_row.get('_goal_squeeze_fuel_component')) or 0.0):.0f}/100"
+            ),
+        ),
         gate_line("low-float/high-FDV", _boolish_scalar(scored_row.get("_goal_float_pass")), f"float {float_score:.0f}/100 | FDV/MC {_fmt_compact_number(scored_row.get('fdv_to_market_cap'))}x | locked {_fmt_compact_number(scored_row.get('locked_supply_pct'))}%"),
         gate_line(
             "60D no-pump/dormancy",
