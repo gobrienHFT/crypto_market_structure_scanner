@@ -250,7 +250,7 @@ Supported commands include:
 /flowstress [min_tokens] [limit] [lookback_hours] [require_venue_gate]
 /flowblocked [min_tokens] [limit] [lookback_hours]
 /flowhealth [min_tokens] [lookback_hours] [symbol_limit]
-/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct]
+/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [require_whale_origin_flow]
 /dossier <symbol>
 /coin <symbol>
 /startbot [mode] [scan_mode]
@@ -289,7 +289,7 @@ The bot can retrieve:
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
 - blocked/error rows when explorer HTML or API fallback cannot verify labelled CEX destinations
 - CEX-flow health checks covering API keys and local address-label coverage
-- a full CEX-flow -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
+- a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd -> dormant-structure checklist via `/sethflow`
 - whale-dominance rankings such as top100 holders controlling 90%+ of observed contract supply
 - high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short majority, and not-late structure
 - symbol-level market structure metrics

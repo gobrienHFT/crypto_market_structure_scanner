@@ -1292,6 +1292,11 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
                 "cex_deposit_24h_count": 2,
                 "cex_deposit_24h_token_amount": 22_000_000,
                 "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 12_000_000,
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
+                "cex_deposit_24h_top_sender_address": "0x1111111111111111111111111111111111111111",
                 "cex_deposit_24h_target_exchanges": "Bitget",
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
@@ -1404,13 +1409,15 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
     output = "\n".join(chunks)
 
     assert title == "Seth flow checklist"
-    assert "Confirmed target-CEX flow rows: 2 | Whale+float+short+dormant pass: 1" in output
+    assert "Confirmed target-CEX flow rows: 2 | Whale-origin rows: 1 | Full checklist pass: 1" in output
     assert "Whale gate: top10 holder >= 90.0%" in output
     assert "Float gate: low-float/FDV evidence required" in output
     assert "Holder evidence required: True" in output
-    assert "/SETUPUSDT | RESEARCH: dormant candidate" in output
+    assert "Whale-origin flow required: True" in output
+    assert "/SETUPUSDT | RESEARCH: whale-origin dormant candidate" in output
     assert "2 tx into Bitget | total 22.00M, max 12.00M" in output
-    assert "top10 91.0%, top100 99.0% | holderEv Y | float 82/100 | noPump60 Y | shorts 63.0%" in output
+    assert "top10 91.0%, top100 99.0% | holderEv Y | whaleOrigin Y 1 top-holder sender tx" in output
+    assert "whale-origin 12.00M | r1 91.0% 0x1111...1111 | float 82/100 | noPump60 Y | shorts 63.0%" in output
     assert "VOLUSDT" not in output
     assert "NOSHORTUSDT" not in output
     assert "SMALLUSDT" not in output
@@ -1428,6 +1435,10 @@ def test_load_seth_flow_playbook_ignores_relaxed_dormant_toggle(monkeypatch) -> 
                 "cex_deposit_24h_count": 1,
                 "cex_deposit_24h_token_amount": 15_000_000,
                 "cex_deposit_24h_max_amount": 15_000_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 15_000_000,
+                "cex_deposit_24h_top_sender_rank": 2,
+                "cex_deposit_24h_top_sender_pct": 16.0,
                 "cex_deposit_24h_target_exchanges": "Binance",
                 "token_platform": "ethereum",
                 "token_contract": "0x4444444444444444444444444444444444444444",
@@ -1473,6 +1484,10 @@ def test_load_seth_flow_playbook_requires_low_float_gate(monkeypatch) -> None:
                 "cex_deposit_24h_count": 2,
                 "cex_deposit_24h_token_amount": 22_000_000,
                 "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 12_000_000,
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
                 "cex_deposit_24h_target_exchanges": "Bitget",
                 "token_platform": "ethereum",
                 "token_contract": "0x1111111111111111111111111111111111111111",
@@ -1501,10 +1516,63 @@ def test_load_seth_flow_playbook_requires_low_float_gate(monkeypatch) -> None:
     _, chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000)
     output = "\n".join(chunks)
 
-    assert "Whale+float+short+dormant pass: 0" in output
+    assert "Full checklist pass: 0" in output
     assert "No rows passed every gate" in output
     assert "/NOFLOATUSDT | WAIT: low-float/FDV gate failed" in output
     assert "float 10/100" in output
+
+
+def test_load_seth_flow_playbook_requires_whale_origin_by_default(monkeypatch) -> None:
+    fresh = pd.DataFrame(
+        [
+            {
+                "symbol": "TARGETONLYUSDT",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 22_000_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "Bitget",
+                "token_platform": "ethereum",
+                "token_contract": "0x1111111111111111111111111111111111111111",
+                "holder_source": "Etherscan holder endpoint",
+                "holder_count": 6_000,
+                "top10_holder_pct": 91.0,
+                "top100_holder_pct": 99.0,
+                "low_float_score": 82.0,
+                "fdv_to_market_cap": 8.0,
+                "short_account_pct": 63.0,
+                "range_24h_pct": 8.0,
+                "day_return_pct": 2.0,
+                "history_days": 180,
+                "recent_max_pump_60d_pct": 6.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": True,
+                "dormant_short_fuse_score": 78.0,
+                "pre_pump_precision_score": 72.0,
+                "binance_volume_share_pct": 3.0,
+                "bitget_volume_share_pct": 1.0,
+                "scan_mode": "Deep",
+                "scanned_at_utc": "now",
+            }
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    _, strict_chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000)
+    strict_output = "\n".join(strict_chunks)
+
+    assert "Whale-origin flow required: True" in strict_output
+    assert "Whale-origin rows: 0 | Full checklist pass: 0" in strict_output
+    assert "/TARGETONLYUSDT | WAIT: whale-origin sender not verified" in strict_output
+    assert "whaleOrigin N" in strict_output
+
+    _, diagnostic_chunks = bot._load_seth_flow_playbook(10, min_tokens=10_000_000, require_whale_origin_flow=False)
+    diagnostic_output = "\n".join(diagnostic_chunks)
+
+    assert "Whale-origin flow required: False" in diagnostic_output
+    assert "Full checklist pass: 1" in diagnostic_output
+    assert "/TARGETONLYUSDT | RESEARCH: target-CEX dormant candidate; whale-origin relaxed" in diagnostic_output
 
 
 def test_load_setup_score_list_ranks_full_goal_stack(monkeypatch) -> None:

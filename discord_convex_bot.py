@@ -997,7 +997,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/flowstress - CEX deposit inventory stress versus visible liquidity.",
         "/flowblocked - symbols blocked by explorer/API source errors.",
         "/flowhealth - API key, chain fallback, and CEX label coverage.",
-        "/sethflow - compact full checklist across CEX flow, whale control, shorts, float, and dormant structure.",
+        "/sethflow - compact full checklist across massive whale-origin CEX flow, whale control, shorts, float, and dormant structure.",
         "/whales - holder concentration board; diagnostic unless top10 + holder evidence are present.",
         "",
         "Market context:",
@@ -2833,6 +2833,7 @@ def _load_seth_flow_playbook(
     lookback_hours: int | None = None,
     min_short_pct: float = 50.0,
     min_whale_pct: float = 90.0,
+    require_whale_origin_flow: bool = True,
     require_dormant: bool = True,
     require_venue_gate: bool = True,
     require_holder_evidence: bool = True,
@@ -2853,6 +2854,7 @@ def _load_seth_flow_playbook(
         f"Lookback: {effective_lookback}h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= {effective_min_whale_pct:.1f}% | "
         f"Holder evidence required: {require_holder_evidence} | Short gate: >= {min_short_pct:.1f}% | "
         "Float gate: low-float/FDV evidence required | "
+        f"Whale-origin flow required: {require_whale_origin_flow} | "
         f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'} | "
         f"Structure gate: {'dormant/early only' if require_dormant else 'show volatile too'}"
     )
@@ -2909,6 +2911,11 @@ def _load_seth_flow_playbook(
     rows["_seth_whale_pass"] = rows["_seth_whale_concentration_pass"] & (
         rows["_seth_holder_evidence_pass"] if require_holder_evidence else True
     )
+    rows["_seth_whale_origin_flow"] = (
+        rows.apply(_whale_sender_qualifies, axis=1).astype(bool)
+        & _num_series(rows, "cex_deposit_24h_whale_sender_count").gt(0.0)
+        & _num_series(rows, "cex_deposit_24h_whale_sender_token_amount").ge(effective_min_transfer)
+    )
     rows["_seth_short_pass"] = shorts.ge(min_short_pct)
     rows["_seth_no_recent_pump_pass"] = _no_recent_pump_proof_mask(rows)
     structure_states: list[str] = []
@@ -2941,6 +2948,7 @@ def _load_seth_flow_playbook(
     )
     rows["_seth_all_pass"] = (
         rows["_seth_whale_pass"]
+        & (rows["_seth_whale_origin_flow"] if require_whale_origin_flow else True)
         & rows["_seth_float_pass"]
         & rows["_seth_short_pass"]
         & rows["_seth_structure_pass"]
@@ -2954,16 +2962,18 @@ def _load_seth_flow_playbook(
         empty_note = "\nNo rows passed every gate; showing nearest confirmed target-CEX flow rows for diagnosis."
     else:
         empty_note = ""
-    visible = visible.sort_values(["_seth_all_pass", "_seth_score", "_seth_flow_score", "symbol"], ascending=[False, False, False, True]).head(
-        min(max(int(limit), 1), 100)
-    )
+    visible = visible.sort_values(
+        ["_seth_all_pass", "_seth_whale_origin_flow", "_seth_score", "_seth_flow_score", "symbol"],
+        ascending=[False, False, False, False, True],
+    ).head(min(max(int(limit), 1), 100))
 
     pass_count = int(rows["_seth_all_pass"].sum())
+    whale_origin_count = int(rows["_seth_whale_origin_flow"].sum())
     lines = [
         header,
-        f"Confirmed target-CEX flow rows: {len(raw_target_flow)} | Whale+float+short+dormant pass: {pass_count}{empty_note}",
+        f"Confirmed target-CEX flow rows: {len(raw_target_flow)} | Whale-origin rows: {whale_origin_count} | Full checklist pass: {pass_count}{empty_note}",
         "",
-        "Checklist: 1 flow -> 2 whale dominated -> 3 low-float/FDV -> 4 >50% short accounts -> 5 dormant/early, not already wild -> 6 research state.",
+        "Checklist: 1 massive target-CEX flow -> 2 top-holder sender -> 3 whale dominated -> 4 low-float/FDV -> 5 >50% short accounts -> 6 dormant/early, not already wild -> 7 research state.",
         "",
         "Candidates: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in visible.get("symbol", pd.Series(dtype='object')).tolist()),
         "",
@@ -2984,11 +2994,17 @@ def _load_seth_flow_playbook(
             day_move = _safe_float(row.get("price_change_24h_pct"))
         targets_text = _target_cex_text(row) or "target CEX"
         state = str(row.get("_seth_structure_state", "structure unclear"))
-        action = "RESEARCH: dormant candidate; wait for absorption/reclaim evidence"
+        action = (
+            "RESEARCH: whale-origin dormant candidate; wait for absorption/reclaim evidence"
+            if require_whale_origin_flow or _boolish_scalar(row.get("_seth_whale_origin_flow"))
+            else "RESEARCH: target-CEX dormant candidate; whale-origin relaxed"
+        )
         if not _boolish_scalar(row.get("_seth_whale_concentration_pass")):
             action = "WAIT: whale concentration below floor"
         elif require_holder_evidence and not _boolish_scalar(row.get("_seth_holder_evidence_pass")):
             action = "WAIT: holder evidence missing"
+        elif require_whale_origin_flow and not _boolish_scalar(row.get("_seth_whale_origin_flow")):
+            action = "WAIT: whale-origin sender not verified"
         elif not _boolish_scalar(row.get("_seth_float_pass")):
             action = "WAIT: low-float/FDV gate failed"
         elif not bool(row.get("_seth_short_pass")):
@@ -3004,11 +3020,14 @@ def _load_seth_flow_playbook(
         top10_text = f"{row_top10:.1f}%" if row_top10 is not None else "n/a"
         top100_text = f"{row_top100:.1f}%" if row_top100 is not None else "n/a"
         holder_ev = "Y" if _boolish_scalar(row.get("_seth_holder_evidence_pass")) else "N"
+        whale_origin_text = _whale_sender_text(row, include_amount=True)
+        whale_origin_flag = "Y" if _boolish_scalar(row.get("_seth_whale_origin_flow")) else "N"
         no_pump = "Y" if _boolish_scalar(row.get("_seth_no_recent_pump_pass")) else "N"
         lines.append(
             f"/{symbol} | {action} | flow {flow_score:.0f}/100 | {cex_count} tx into {targets_text} | "
             f"total {total_amount}, max {max_transfer} | top10 {top10_text}, top100 {top100_text} | "
-            f"holderEv {holder_ev} | float {row_float:.0f}/100 | noPump60 {no_pump} | shorts {short_pct:.1f}% | structure {state}"
+            f"holderEv {holder_ev} | whaleOrigin {whale_origin_flag}{f' {whale_origin_text}' if whale_origin_text else ''} | "
+            f"float {row_float:.0f}/100 | noPump60 {no_pump} | shorts {short_pct:.1f}% | structure {state}"
         )
         lines.append(
             f"  chart gate: range {range_text}, 24h {day_text}, {_clip_text(row.get('_seth_structure_reason', ''), 80)} | "
@@ -6917,7 +6936,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
 
-    sethflow_kwargs = {"name": "sethflow", "description": "Run the CEX-flow, whale, shorts, and dormant-structure checklist."}
+    sethflow_kwargs = {"name": "sethflow", "description": "Run the whale-origin CEX-flow, whale, shorts, and dormant-structure checklist."}
     if guild is not None:
         sethflow_kwargs["guild"] = guild
 
@@ -6928,6 +6947,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage, default 50.",
         min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
+        require_whale_origin_flow="Require the confirmed transfer sender to match a scanned top-holder wallet.",
     )
     async def sethflow(
         interaction: discord.Interaction,
@@ -6936,6 +6956,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         lookback_hours: int = 24,
         min_short_pct: float = 50.0,
         min_whale_pct: float = 90.0,
+        require_whale_origin_flow: bool = True,
     ) -> None:
         if not _channel_allowed(interaction):
             await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
@@ -6951,6 +6972,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
             lookback_hours=lookback_hours if lookback_hours > 0 else None,
             min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
             min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+            require_whale_origin_flow=require_whale_origin_flow,
         )
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x14B8A6)
         embed.set_footer(text=DISCORD_FOOTER)

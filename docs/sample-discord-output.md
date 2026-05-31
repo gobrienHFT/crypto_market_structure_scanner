@@ -349,18 +349,18 @@ API fallback readiness:
 - Configure CEX_ADDRESS_LABELS or CEX_ADDRESS_BOOK_FILE to classify API token-transfer destinations without scraping explorer labels.
 ```
 
-## `/sethflow min_tokens:10000000`
+## `/sethflow min_tokens:10000000 require_whale_origin_flow:true`
 
 ```text
 Seth flow checklist
-Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Float gate: low-float/FDV evidence required | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | Structure gate: dormant/early only
-Confirmed target-CEX flow rows: 2 | Whale+float+short+dormant pass: 1
+Source: fresh Deep scan at 2026-05-16 15:50:00 UTC | Confirmed target-CEX flow only | Min transfer: >= 10.00M tokens | Lookback: 24h | Target CEX: Binance, Gate.io, Bitget | Whale gate: top10 holder >= 90.0% | Holder evidence required: True | Short gate: >= 50.0% | Float gate: low-float/FDV evidence required | Whale-origin flow required: True | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only | Structure gate: dormant/early only
+Confirmed target-CEX flow rows: 2 | Whale-origin rows: 1 | Full checklist pass: 1
 
-Checklist: 1 flow -> 2 whale dominated -> 3 low-float/FDV -> 4 >50% short accounts -> 5 dormant/early, not already wild -> 6 research state.
+Checklist: 1 massive target-CEX flow -> 2 top-holder sender -> 3 whale dominated -> 4 low-float/FDV -> 5 >50% short accounts -> 6 dormant/early, not already wild -> 7 research state.
 
 Candidates: /FLOWUSDT
 
-/FLOWUSDT | RESEARCH: dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | holderEv Y | float 82/100 | noPump60 Y | shorts 63.0% | structure dormant candidate
+/FLOWUSDT | RESEARCH: whale-origin dormant candidate; wait for absorption/reclaim evidence | flow 88/100 | 2 tx into Bitget | total 22.00M, max 12.00M | top10 91.0%, top100 99.0% | holderEv Y | whaleOrigin Y 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111 | float 82/100 | noPump60 Y | shorts 63.0% | structure dormant candidate
   chart gate: range 8.0%, 24h 2.0%, setup 78 | not a trade instruction; validate OI/volume and price absorption.
 ```
 
