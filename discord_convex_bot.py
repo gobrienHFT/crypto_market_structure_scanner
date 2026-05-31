@@ -1913,7 +1913,7 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
     selected["_discord_corr_to_btc"] = corr.loc[selected.index]
     selected["_discord_corr_window_days"] = window.loc[selected.index]
     if not selected.empty:
-        selected["_discord_base_thesis_gate"] = _thesis_candidate_gate_mask(selected)
+        selected = _add_base_thesis_context(selected)
     base_thesis_count = int(_boolish_series(selected.get("_discord_base_thesis_gate"), index=selected.index).sum()) if not selected.empty else 0
     selected = selected.sort_values(["_discord_base_thesis_gate", "_discord_corr_to_btc", "symbol"], ascending=[False, True, True])
 
@@ -1958,8 +1958,7 @@ def _load_corr_list(*, threshold: float = 0.0, limit: int = 0) -> tuple[str, lis
         market_type = _clean_scalar_text(row.get("market_type", "")).strip()
         if market_type:
             line += f" | {market_type}"
-        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N"
-        line += f" | baseThesis {base_thesis}"
+        line += f" | {_base_thesis_status_text(row)}"
         lines.append(line)
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")

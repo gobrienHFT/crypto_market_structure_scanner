@@ -110,7 +110,7 @@ Use `/high days:20D` and `/low days:20D` to list all symbols that broke above/be
 
 Use `/terminal` for slower structural evidence and `/timing` for current trigger quality. A symbol that appears on both lists is usually more interesting than a symbol that appears on only one.
 
-Use `/corr threshold:0.5` to surface symbols whose BTC correlation is at or below `+0.50`; every negative-correlation symbol is included, and the threshold only cuts off highly BTC-correlated names. The dashboard caps the BTC-correlation target window at 180 days; younger symbols use their available overlap and the Discord row prints that actual day count. Rows also print `baseThesis Y/N`, so low BTC correlation stays context unless the strict top10 holder-evidence, Binance+Bitget, and 60D no-pump gate also passed.
+Use `/corr threshold:0.5` to surface symbols whose BTC correlation is at or below `+0.50`; every negative-correlation symbol is included, and the threshold only cuts off highly BTC-correlated names. The dashboard caps the BTC-correlation target window at 180 days; younger symbols use their available overlap and the Discord row prints that actual day count. Rows also print `baseThesis Y/N` with blockers, so low BTC correlation stays context unless the strict top10 holder-evidence, Binance+Bitget, and 60D no-pump gate also passed.
 
 Use `/coin` for a fast symbol card and `/dossier` when the setup needs a more complete review trail.
 

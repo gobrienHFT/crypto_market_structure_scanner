@@ -282,7 +282,7 @@ The bot can retrieve:
 - holder-concentration, low-float/high-FDV, squeeze-ready, inventory-stress, and Binance/Gate/Bitget target-transfer diagnostic boards that label raw rows separately from `baseThesis Y` rows and show base-gate blockers when the strict holder, Binance+Bitget, or 60D no-pump gates fail
 - top terminal market-structure evidence rows
 - top timing-quality rows
-- BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N`
+- BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N` blockers
 - concentration-gated wallet-to-CEX flow rows
 - CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, empty explorer HTML parses, venue-gate filtering, and attempted-symbol review
 - lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt

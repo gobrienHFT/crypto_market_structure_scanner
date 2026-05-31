@@ -815,9 +815,9 @@ def test_load_corr_list_filters_high_btc_correlation(monkeypatch) -> None:
     assert "Matches: 4" in output
     assert "Base thesis gate: 1" in output
     assert "/YOUNGUSDT | corr -0.820 | used 37d (max available) | shorts 61.2% | 24h 4.5% | baseThesis Y" in output
-    assert "/INVERSEUSDT | corr -0.610 | used 180d | shorts 54.0% | 24h -2.1% | baseThesis N" in output
-    assert "/WEAKUSDT | corr -0.210 | used 180d | baseThesis N" in output
-    assert "/POSUSDT | corr 0.420 | used 180d | 24h 1.1% | baseThesis N" in output
+    assert "/INVERSEUSDT | corr -0.610 | used 180d | shorts 54.0% | 24h -2.1% | baseThesis N blockers holder,BnBg,noPump60" in output
+    assert "/WEAKUSDT | corr -0.210 | used 180d | baseThesis N blockers holder,BnBg,noPump60" in output
+    assert "/POSUSDT | corr 0.420 | used 180d | 24h 1.1% | baseThesis N blockers holder,BnBg,noPump60" in output
     assert "shorts 61.2%" in output
     assert "24h 4.5%" in output
     assert "HIGHUSDT" not in output
@@ -837,7 +837,7 @@ def test_load_corr_list_without_threshold_shows_all_negative_rows(monkeypatch) -
 
     assert "Threshold: corr < 0.00" in output
     assert "Base thesis gate: 0" in output
-    assert "/NEGUSDT | corr -0.010 | used 12d (max available) | baseThesis N" in output
+    assert "/NEGUSDT | corr -0.010 | used 12d (max available) | baseThesis N blockers holder,BnBg,noPump60" in output
     assert "POSUSDT" not in output
 
 
