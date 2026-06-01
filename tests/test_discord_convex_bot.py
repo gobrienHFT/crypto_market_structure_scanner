@@ -49,8 +49,9 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert title == "Discord command guide"
     assert "/commands - this operator map" in output
     assert "/help - same operator map" in output
-    assert "Use /hunt first" in output
+    assert "Use /hunt or /thesis first" in output
     assert "/hunt [min_tokens]" in output
+    assert "/thesis - plain-name alias for /hunt" in output
     assert "/radar - technical alias for /hunt." in output
     assert "/ravelab - diagnostic microscope" in output
     assert "/crimepump - legacy blunt-name alias for /hunt." in output
@@ -59,7 +60,9 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert "/convex_status, /convex_scoreboard, /convex_archive" in output
     assert "/cexdiag" in output
     assert "/flowhealth" in output
-    assert "Rule of thumb: /hunt for candidates" in output
+    for command_name in bot.STATIC_SLASH_COMMAND_NAMES:
+        assert f"/{command_name}" in output
+    assert "Rule of thumb: /hunt or /thesis for candidates" in output
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:

@@ -103,6 +103,7 @@ STATIC_SLASH_COMMAND_NAMES = (
     "startbot",
     "stopbot",
     "sync_commands",
+    "thesis",
     "terminal",
     "timing",
     "tradebot_status",
@@ -397,6 +398,7 @@ def _feature_required_tier(feature: str) -> str:
         "flowhealth": "paid",
         "sethflow": "paid",
         "alpha": "paid",
+        "thesis": "paid",
         "sync_commands": "pro",
         "startbot": "pro",
         "stopbot": "pro",
@@ -1066,12 +1068,13 @@ def _load_candidates(limit: int) -> tuple[str, str]:
 def _load_command_guide() -> tuple[str, list[str]]:
     lines = [
         "Discord operator command guide",
-        "Use /hunt first. It is the clean hard-gated queue for the thesis: explorer-backed top10 whale control, Binance+Bitget trading evidence, low-float/FDV structure, 60D no-pump/dormancy, squeeze fuel, and early/no-chase tape.",
+        "Use /hunt or /thesis first. They are the clean hard-gated queues for the thesis: explorer-backed top10 whale control, Binance+Bitget trading evidence, low-float/FDV structure, 60D no-pump/dormancy, squeeze fuel, and early/no-chase tape.",
         "",
         "Primary queue:",
         "/commands - this operator map.",
         "/help - same operator map, easier to remember.",
         "/hunt [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - primary operator queue; trigger can show all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
+        "/thesis - plain-name alias for /hunt when you want the hard-gated core thesis queue without the RAVE/LAB microscope.",
         "/radar - technical alias for /hunt.",
         "/prime - terse alias for /hunt.",
         "/crimepump - legacy blunt-name alias for /hunt.",
@@ -1111,7 +1114,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/convex_status, /convex_scoreboard, /convex_archive - cache status, proof scoreboard, and archive export.",
         "/sync_commands - refresh slash-command schema after deploy.",
         "",
-        "Rule of thumb: /hunt for candidates, /coincheck for one name, /cexdiag or /flowhealth for data problems, /ravelab detail:true for the full evidence stack.",
+        "Rule of thumb: /hunt or /thesis for candidates, /coincheck for one name, /cexdiag or /flowhealth for data problems, /ravelab detail:true for the full evidence stack.",
     ]
     return "Discord command guide", _chunk_text_lines(lines)
 
@@ -5392,6 +5395,27 @@ def _load_hunt_list(
     return "Alpha hunt", chunks
 
 
+def _load_thesis_list(
+    limit: int,
+    *,
+    min_tokens: float | None = None,
+    whale_flow_min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    trigger: str = "all",
+    breakout_windows: str = "1D,2D,3D,4D,5D,20D",
+) -> tuple[str, list[str]]:
+    _title, chunks = _load_crimepump_list(
+        limit,
+        min_tokens=min_tokens,
+        whale_flow_min_tokens=whale_flow_min_tokens,
+        lookback_hours=lookback_hours,
+        trigger=trigger,
+        breakout_windows=breakout_windows,
+        compact_title="Core thesis queue",
+    )
+    return "Core thesis queue", chunks
+
+
 def _load_radar_list(
     limit: int,
     *,
@@ -6753,6 +6777,62 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         await interaction.response.defer(thinking=True)
         title, chunks = await asyncio.to_thread(
             _load_hunt_list,
+            min(max(int(limit), 1), 50),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            whale_flow_min_tokens=whale_flow_min_tokens if whale_flow_min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            trigger=trigger,
+            breakout_windows=breakout_windows,
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    thesis_kwargs = {"name": "thesis", "description": "Plain-name alias for the hard-gated core thesis queue."}
+    if guild is not None:
+        thesis_kwargs["guild"] = guild
+
+    @tree.command(**thesis_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount per confirmed transfer.",
+        whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
+        limit="Maximum rows to return.",
+        lookback_hours="Transfer lookback window in hours.",
+        trigger="Filter to all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
+        breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
+    )
+    @app_commands.choices(
+        trigger=[
+            app_commands.Choice(name="all hard-gated rows", value="all"),
+            app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="massive whale-CEX flow", value="massive_flow"),
+            app_commands.Choice(name="whale-CEX flow", value="flow"),
+            app_commands.Choice(name="target-CEX flow", value="target_flow"),
+            app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
+            app_commands.Choice(name="breakout highs", value="breakout"),
+            app_commands.Choice(name="core watch only", value="core"),
+        ]
+    )
+    async def thesis(
+        interaction: discord.Interaction,
+        min_tokens: float = 20_000.0,
+        whale_flow_min_tokens: float = 0.0,
+        limit: int = 12,
+        lookback_hours: int = 24,
+        trigger: str = "all",
+        breakout_windows: str = "1D,2D,3D,4D,5D,20D",
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("thesis")):
+            await interaction.response.send_message(_access_denied_message("thesis"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_thesis_list,
             min(max(int(limit), 1), 50),
             min_tokens=min_tokens if min_tokens > 0 else None,
             whale_flow_min_tokens=whale_flow_min_tokens if whale_flow_min_tokens > 0 else None,
