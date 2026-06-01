@@ -7817,7 +7817,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if announce_online:
             try:
                 await channel.send(
-                    "Convex bot online. Start with `/radar`, use `/coincheck symbol:PLAYUSDT` for one name, "
+                    "Convex bot online. Start with `/hunt`, use `/coincheck symbol:PLAYUSDT` for one name, "
                     "and use `/help` or `/commands` for the full operator map. Diagnostics: `/cexdiag min_tokens:1000`, "
                     "`/flowhealth`, `/whales min_pct:90`, `/high days:20D`, `/low days:20D`."
                 )
