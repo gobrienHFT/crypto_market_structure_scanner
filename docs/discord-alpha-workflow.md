@@ -146,12 +146,11 @@ DISCORD_WATCHER_SCAN_MODE=Deep
 DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
 DISCORD_WATCHER_TOP_N=25
 DISCORD_WATCHER_REALERT_HOURS=12
-DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
 
-Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Symbol text alone cannot satisfy Binance evidence, even if the deprecated `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS` variable is present. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Symbol text alone cannot satisfy Binance evidence, even if the deprecated `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS` variable is present. The old `DISCORD_REQUIRE_BITGET_OR_GATE` flag is also ignored by thesis gates; Binance+Bitget trading evidence is pinned on, with Gate only supporting context. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
 
 For a dedicated transfer monitor:
 

@@ -135,7 +135,7 @@ def _boolish_column(frame: pd.DataFrame, column: str) -> pd.Series:
 
 
 def binance_bitget_venue_gate_enabled() -> bool:
-    return _env_bool("DISCORD_REQUIRE_BITGET_OR_GATE", True)
+    return True
 
 
 def assume_symbol_universe_is_binance_perp() -> bool:

@@ -45,6 +45,23 @@ def test_binance_bitget_venue_gate_ignores_deprecated_binance_assumption_env(mon
     assert selected["symbol"].tolist() == ["MARKEDUSDT", "SHAREUSDT"]
 
 
+def test_binance_bitget_venue_gate_ignores_disabled_legacy_venue_env(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_REQUIRE_BITGET_OR_GATE", "0")
+    frame = pd.DataFrame(
+        [
+            {"symbol": "GATEONLYUSDT", "binance_perp_universe": True, "gate_volume_share_pct": 4.0},
+            {"symbol": "BITGETUSDT", "binance_perp_universe": True, "bitget_volume_share_pct": 0.5},
+        ]
+    )
+
+    selected = apply_binance_bitget_venue_gate(frame, allow_cex_flow_targets=True)
+    header = binance_bitget_venue_header()
+
+    assert selected["symbol"].tolist() == ["BITGETUSDT"]
+    assert "Venue gate: disabled" not in header
+    assert "Binance perp + Bitget trading evidence required" in header
+
+
 def test_binance_bitget_venue_header_treats_gate_as_optional(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
 

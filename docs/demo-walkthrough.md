@@ -41,7 +41,6 @@ Minimum webhook watcher fields:
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 DISCORD_WATCHER_SCAN_MODE=Deep
 DISCORD_WATCHER_ALERT_SOURCE=terminal_timing
-DISCORD_REQUIRE_BITGET_OR_GATE=1
 ```
 
 Minimum bot fields:
