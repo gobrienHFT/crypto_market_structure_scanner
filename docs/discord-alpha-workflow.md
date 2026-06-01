@@ -39,6 +39,7 @@ Recommended live workflow:
 /ravelab min_tokens:20000
 /pumpwatch min_tokens:20000
 /setupscore min_tokens:20000
+/gates
 /flowproof symbol:PLAYUSDT min_tokens:20000
 /coincheck symbol:PLAYUSDT min_tokens:20000
 /cextargets min_tokens:20000
@@ -81,6 +82,8 @@ Use `/pumpwatch` as the fastest catch board after the same hard gates: observed 
 Use `/setupscore` as the strict full-thesis ranking. It requires confirmed recent transfer evidence into Binance, Gate.io, or Bitget, observed top-10 holder concentration at or above 90%, ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget trading evidence, short crowd plus squeeze fuel, low-float/high-FDV evidence, and a not-late/dormant structure. Nearest misses are still printed when nothing passes, but the hard gates are no longer slash-command toggles.
 
 Use `/flowproof` when a transfer claim needs audit detail. It prints the verdict, transfer count, total and largest token amount, top-holder sender evidence when the sender matches a scanned holder wallet, top tx/hash, target CEX labels, source path, concentration gate, data error, and query URL. A row is only called verified when the active scan has count > 0, largest transfer above the floor, and a labelled destination. It also prints compact thesis gates (`baseThesis`, `coreSetup`, `flowSetup`, `targetFlow`, holder, `venueBnBg`, float, `shorts+fuel`, `noPump60`, and `whaleOrigin`), because a labelled Binance/Bitget/Gate transfer proves flow only and does not prove the Binance+Bitget trading-venue gate by itself.
+
+Use `/gates` when `/thesis` or `/hunt` is empty or confusing. It prints the current scan count through the hard funnel: top10 holder concentration with explorer evidence, Binance+Bitget, 60D no-pump proof, low-float/FDV, short crowd plus squeeze fuel, not-late structure, core thesis, target flow, and whale-origin flow. The top blocker line tells you whether the next data job is holder contracts, Bitget venue coverage, daily pump history, squeeze fuel, float evidence, or CEX-flow labels.
 
 Use `/coincheck` for one-symbol pass/fail triage across the full checklist: Binance+Bitget trading evidence, 90%+ holder dominance plus holder evidence, short crowd plus squeeze fuel, low-float/high-FDV, and dormant/not-late structure. It now separates `baseThesis`, `coreSetup`, `flowSetup`, `targetFlow`, and `whaleOrigin`, so a clean core structure can pass before a CEX-flow trigger appears, while verified CEX flow remains explicit trigger/risk evidence rather than venue proof.
 

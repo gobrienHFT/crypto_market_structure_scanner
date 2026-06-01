@@ -55,6 +55,7 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert "/radar - technical alias for /hunt." in output
     assert "/ravelab - diagnostic microscope" in output
     assert "/crimepump - legacy blunt-name alias for /hunt." in output
+    assert "/gates - explains the current scan funnel" in output
     assert "/sethflow [min_tokens] - compact full checklist" in output
     assert "/startbot, /stopbot, /tradebot_status" in output
     assert "/convex_status, /convex_scoreboard, /convex_archive" in output
@@ -2081,6 +2082,67 @@ def test_goal_score_ignores_relaxed_holder_and_venue_flags() -> None:
     assert not bool(scored["_goal_whale_pass"])
     assert not bool(scored["_goal_venue_pass"])
     assert not bool(scored["_goal_all_pass"])
+
+
+def test_load_gate_diagnostics_explains_core_funnel(monkeypatch) -> None:
+    base = {
+        **_holder_evidence(),
+        "binance_volume_share_pct": 2.0,
+        "bitget_volume_share_pct": 1.5,
+        "low_float_score": 82.0,
+        "fdv_to_market_cap": 8.0,
+        "short_account_pct": 64.0,
+        "short_account_build_score": 52.0,
+        "dormant_short_fuse_score": 80.0,
+        "pre_pump_precision_score": 75.0,
+    }
+    fresh = pd.DataFrame(
+        [
+            {**base, "symbol": "COREUSDT"},
+            {
+                **base,
+                "symbol": "FLOWUSDT",
+                "cex_deposit_flow_score": 88,
+                "cex_deposit_flow_flag": True,
+                "cex_deposit_24h_count": 2,
+                "cex_deposit_24h_token_amount": 20_500_000,
+                "cex_deposit_24h_max_amount": 12_000_000,
+                "cex_deposit_24h_target_exchanges": "Binance",
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 12_000_000,
+                "cex_deposit_24h_top_sender_address": "0x1111111111111111111111111111111111111111",
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
+            },
+            {**base, "symbol": "SHORTONLYUSDT", "short_account_build_score": 0.0},
+            {**base, "symbol": "TOP100ONLYUSDT", "top10_holder_pct": 55.0, "top100_holder_pct": 99.0},
+            {**base, "symbol": "NOBITGETUSDT", "binance_volume_share_pct": 2.0, "bitget_volume_share_pct": 0.0},
+            {
+                **base,
+                "symbol": "PUMPEDUSDT",
+                "recent_max_pump_60d_pct": 82.0,
+                "recent_pump_60d_days": 60,
+                "no_large_pump_60d_flag": False,
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at now"))
+
+    title, chunks = bot._load_gate_diagnostics(10, min_tokens=20_000)
+    output = "\n".join(chunks)
+
+    assert title == "Core thesis gate diagnostics"
+    assert "Read: diagnostic funnel only. /thesis and /hunt show rows after all hard gates" in output
+    assert "Sequential funnel: scan 6 -> holder90+src 5 -> Bn+Bg 4 -> noPump60 3 -> float 3 -> shorts+fuel 2 -> notLate 2 -> core 2 -> targetFlow 1" in output
+    assert "Independent rows: holder90+src 5 | Bn+Bg 5 | noPump60 5 | baseThesis 3 | float 6 | shorts+fuel 5 | notLate 5 | coreThesis 2 | targetFlow 1 | flowSetup 1 | whaleOrigin 1" in output
+    assert "Core queue symbols: /COREUSDT /FLOWUSDT" in output
+    assert "Top core blockers:" in output
+    assert "shortsFuel 1" in output
+    assert "venueBnBg 1" in output
+    assert "/FLOWUSDT | score" in output
+    assert "baseThesis Y | coreThesis Y | top10 91.0% | shorts 64.0% | fuel 52 | targetFlow Y | whaleOrigin 1 top-holder sender tx | whale-origin 12.00M" in output
+    assert "/SHORTONLYUSDT" in output
+    assert "missing shortsFuel" in output
 
 
 def test_pumpwatch_holder_gate_requires_top10_even_when_min_whale_lowered(monkeypatch) -> None:

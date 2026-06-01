@@ -87,6 +87,7 @@ STATIC_SLASH_COMMAND_NAMES = (
     "flowproof",
     "flowstress",
     "funding",
+    "gates",
     "help",
     "high",
     "hunt",
@@ -396,6 +397,7 @@ def _feature_required_tier(feature: str) -> str:
         "flowstress": "paid",
         "flowblocked": "paid",
         "flowhealth": "paid",
+        "gates": "paid",
         "sethflow": "paid",
         "alpha": "paid",
         "thesis": "paid",
@@ -1083,6 +1085,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "",
         "Thesis drilldown:",
         "/coincheck <symbol> - one-symbol pass/fail checklist across holder, venue, squeeze, dormant/not-late, float, and CEX flow.",
+        "/gates - explains the current scan funnel through holder, Binance+Bitget, no-pump, float, shorts+fuel, not-late, and flow trigger gates.",
         "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /hunt, not before it.",
         "/precrime - quiet pre-activity board after hard holder, Binance+Bitget, and 60D no-pump gates.",
         "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, 60D no-pump, float, squeeze, and not-late gates.",
@@ -3563,6 +3566,169 @@ def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
     if missing:
         return f"BLOCKED:{','.join(missing[:3])}"
     return "WATCH:score"
+
+
+def _goal_base_status_text(row: pd.Series) -> str:
+    if _boolish_scalar(row.get("_goal_base_thesis_pass")):
+        return "baseThesis Y"
+    blockers: list[str] = []
+    if not _boolish_scalar(row.get("_goal_whale_pass")):
+        blockers.append("holder")
+    if not _boolish_scalar(row.get("_goal_venue_pass")):
+        blockers.append("BnBg")
+    if not _boolish_scalar(row.get("_goal_no_recent_pump_pass")):
+        blockers.append("noPump60")
+    return "baseThesis N" + (f" blockers {','.join(blockers)}" if blockers else "")
+
+
+def _goal_core_status_text(row: pd.Series) -> str:
+    if _boolish_scalar(row.get("_goal_core_setup_pass")):
+        return "coreThesis Y"
+    blockers: list[str] = []
+    if not _boolish_scalar(row.get("_goal_base_thesis_pass")):
+        blockers.append("base")
+    if not _boolish_scalar(row.get("_goal_float_pass")):
+        blockers.append("float")
+    if not _boolish_scalar(row.get("_goal_short_pass")):
+        blockers.append("shorts+fuel")
+    if not _boolish_scalar(row.get("_goal_structure_pass")):
+        blockers.append("notLate")
+    return "coreThesis N" + (f" blockers {','.join(blockers)}" if blockers else "")
+
+
+def _thesis_gate_diag_line(row: pd.Series) -> str:
+    symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+    score = _safe_float(row.get("_goal_setup_score")) or 0.0
+    top10 = _safe_float(row.get("_goal_whale_pct"))
+    short_pct = _safe_pct(row.get("short_account_pct"))
+    fuel = _safe_float(row.get("_goal_squeeze_fuel_component")) or 0.0
+    target_flow = "Y" if _boolish_scalar(row.get("_goal_target_flow")) else "N"
+    whale_origin = _whale_sender_text(row, include_amount=True)
+    parts = [
+        f"/{symbol}",
+        f"score {score:.0f}",
+        _goal_base_status_text(row),
+        _goal_core_status_text(row),
+    ]
+    if top10 is not None:
+        parts.append(f"top10 {top10:.1f}%")
+    if short_pct is not None:
+        parts.append(f"shorts {short_pct:.1f}%")
+    parts.append(f"fuel {fuel:.0f}")
+    parts.append(f"targetFlow {target_flow}")
+    parts.append(f"whaleOrigin {whale_origin or 'N'}")
+    missing = _goal_missing_gate_labels(row, include_target_flow=False)
+    if missing and not _boolish_scalar(row.get("_goal_core_setup_pass")):
+        parts.append(f"missing {','.join(missing[:4])}")
+    return " | ".join(parts)
+
+
+def _load_gate_diagnostics(
+    limit: int = 15,
+    *,
+    min_tokens: float | None = None,
+    lookback_hours: int | None = None,
+    min_short_pct: float = 50.0,
+    min_whale_pct: float = 90.0,
+) -> tuple[str, list[str]]:
+    frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
+        min_tokens=min_tokens,
+        lookback_hours=lookback_hours,
+    )
+    effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
+    header = (
+        "Core thesis gate diagnostics\n"
+        f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
+        f"Lookback: {effective_lookback}h | Top10 floor: {effective_min_whale_pct:.1f}% | "
+        f"Short crowd floor: {float(min_short_pct):.1f}%\n"
+        "Read: diagnostic funnel only. /thesis and /hunt show rows after all hard gates; /ravelab detail:true shows deeper blockers."
+    )
+    if frame.empty:
+        return "Core thesis gate diagnostics", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
+
+    scored = _goal_score_frame(
+        frame,
+        min_transfer_tokens=effective_min_transfer,
+        min_short_pct=min_short_pct,
+        min_whale_pct=effective_min_whale_pct,
+    )
+    index = scored.index
+    holder = _boolish_series(scored.get("_goal_whale_pass"), index=index)
+    venue = _boolish_series(scored.get("_goal_venue_pass"), index=index)
+    no_pump = _boolish_series(scored.get("_goal_no_recent_pump_pass"), index=index)
+    base = _boolish_series(scored.get("_goal_base_thesis_pass"), index=index)
+    float_gate = _boolish_series(scored.get("_goal_float_pass"), index=index)
+    short_gate = _boolish_series(scored.get("_goal_short_pass"), index=index)
+    structure_gate = _boolish_series(scored.get("_goal_structure_pass"), index=index)
+    core = _boolish_series(scored.get("_goal_core_setup_pass"), index=index)
+    target_flow = _boolish_series(scored.get("_goal_target_flow"), index=index)
+    flow_setup = _boolish_series(scored.get("_goal_flow_setup_pass"), index=index)
+    whale_origin = (
+        scored.apply(_whale_sender_qualifies, axis=1).astype(bool)
+        & _num_series(scored, "cex_deposit_24h_whale_sender_count").gt(0.0)
+        & _num_series(scored, "cex_deposit_24h_whale_sender_token_amount").ge(effective_min_transfer)
+    )
+
+    sequential = pd.Series(True, index=index, dtype=bool)
+    funnel_steps: list[tuple[str, int]] = [("scan", len(scored))]
+    for label, gate in (
+        ("holder90+src", holder),
+        ("Bn+Bg", venue),
+        ("noPump60", no_pump),
+        ("float", float_gate),
+        ("shorts+fuel", short_gate),
+        ("notLate", structure_gate),
+        ("core", core),
+        ("targetFlow", target_flow),
+    ):
+        sequential = sequential & gate.fillna(False).astype(bool)
+        funnel_steps.append((label, int(sequential.sum())))
+    funnel_line = "Sequential funnel: " + " -> ".join(f"{label} {count}" for label, count in funnel_steps)
+    independent_line = (
+        f"Independent rows: holder90+src {int(holder.sum())} | Bn+Bg {int(venue.sum())} | "
+        f"noPump60 {int(no_pump.sum())} | baseThesis {int(base.sum())} | float {int(float_gate.sum())} | "
+        f"shorts+fuel {int(short_gate.sum())} | notLate {int(structure_gate.sum())} | coreThesis {int(core.sum())} | "
+        f"targetFlow {int(target_flow.sum())} | flowSetup {int(flow_setup.sum())} | whaleOrigin {int(whale_origin.sum())}"
+    )
+
+    blocker_counts: dict[str, int] = {}
+    missing_counts: list[int] = []
+    for _, row in scored.iterrows():
+        missing = _goal_missing_gate_labels(row, include_target_flow=False)
+        if _boolish_scalar(row.get("_goal_core_setup_pass")):
+            missing = []
+        missing_counts.append(len(missing))
+        for label in missing:
+            blocker_counts[label] = blocker_counts.get(label, 0) + 1
+    blockers = sorted(blocker_counts.items(), key=lambda item: (-item[1], item[0]))
+    blocker_line = "Top core blockers: " + (", ".join(f"{label} {count}" for label, count in blockers[:8]) if blockers else "none")
+
+    ranked = scored.copy()
+    ranked["_goal_missing_count"] = missing_counts
+    nearest = ranked.sort_values(
+        [
+            "_goal_core_setup_pass",
+            "_goal_base_thesis_pass",
+            "_goal_target_flow",
+            "_goal_setup_score",
+            "_goal_missing_count",
+            "symbol",
+        ],
+        ascending=[False, False, False, False, True, True],
+    ).head(min(max(int(limit), 1), 50))
+    symbols = " ".join(f"/{str(symbol).upper().strip()}" for symbol in ranked.loc[core, "symbol"].head(30).tolist())
+    lines = [
+        header,
+        funnel_line,
+        independent_line,
+        blocker_line,
+        f"Core queue symbols: {symbols or 'none'}",
+        "",
+        "Nearest rows:",
+        "",
+        *[_thesis_gate_diag_line(row) for _, row in nearest.iterrows()],
+    ]
+    return "Core thesis gate diagnostics", _chunk_text_lines(lines)
 
 
 def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
@@ -7088,6 +7254,47 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         embed = discord.Embed(title=title, description=f"```text\n{description}\n```", color=0x22C55E)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
+
+    gates_kwargs = {"name": "gates", "description": "Explain current scan bottlenecks through the core thesis gates."}
+    if guild is not None:
+        gates_kwargs["guild"] = guild
+
+    @tree.command(**gates_kwargs)
+    @app_commands.describe(
+        min_tokens="Minimum token amount for target-flow and whale-origin diagnostics.",
+        lookback_hours="Transfer lookback window in hours.",
+        limit="Maximum nearest rows to show.",
+        min_short_pct="Minimum short-account percentage.",
+        min_whale_pct="Top10 holder concentration floor. Values below 90 are treated as 90.",
+    )
+    async def gates(
+        interaction: discord.Interaction,
+        min_tokens: float = 20_000.0,
+        lookback_hours: int = 24,
+        limit: int = 15,
+        min_short_pct: float = 50.0,
+        min_whale_pct: float = 90.0,
+    ) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("gates")):
+            await interaction.response.send_message(_access_denied_message("gates"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_gate_diagnostics,
+            min(max(int(limit), 1), 50),
+            min_tokens=min_tokens if min_tokens > 0 else None,
+            lookback_hours=lookback_hours if lookback_hours > 0 else None,
+            min_short_pct=max(0.0, min(float(min_short_pct), 100.0)),
+            min_whale_pct=max(0.0, min(float(min_whale_pct), 100.0)),
+        )
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0x38BDF8)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
 
     floattrap_kwargs = {"name": "floattrap", "description": "Diagnostic low-float/high-FDV context board."}
     if guild is not None:
