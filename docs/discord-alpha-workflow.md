@@ -31,6 +31,7 @@ Recommended live workflow:
 /alpha
 /commands
 /help
+/hunt
 /radar
 /prime
 /precrime min_tokens:20000
@@ -64,9 +65,9 @@ Recommended live workflow:
 
 Use `/alpha` as the triage queue. It first applies the strict core thesis gate, observed top-10 holder concentration at or above 90% with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget trading evidence, 60D no-pump proof, low-float/high-FDV structure, short crowd plus squeeze fuel, and not-late structure, then blends structure, timing, CEX-flow, scanner score, and short-account fuel into a compact watchlist.
 
-Use `/help` or `/commands` when the slash-command surface feels noisy. It gives the short operator map: `/radar` first, `/coincheck` for one symbol, `/ravelab` for detailed blockers and near misses, and `/cexdiag`/`/flowhealth` for data-source problems.
+Use `/help` or `/commands` when the slash-command surface feels noisy. It gives the short operator map: `/hunt` first, `/coincheck` for one symbol, `/ravelab` for detailed blockers and near misses, and `/cexdiag`/`/flowhealth` for data-source problems.
 
-Use `/radar` as the simplest hard-gated operator queue and the default place to start. It uses the strict `/ravelab` gates with near misses hidden by default, then prints only the live queue and concise evidence per symbol. The `trigger` choice accepts `all`, `triggered`, `flow`, `target_flow`, `forced_flow`, `breakout`, or `core`. Generic target-CEX tells use `min_tokens`; the higher-conviction `flow`/`whale-CEX` lane uses `whale_flow_min_tokens`, defaulting to `DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS` or 100k tokens. The `forced_flow` lane catches hard-gated rows where short crowd, OI/volume, and squeeze fuel are rising while exhaustion remains low. `/prime` is the short alias, `/crimepump` is the legacy blunt-name alias, and `/ravelab` is the diagnostic microscope for near misses, style filtering, blockers, and full evidence rows.
+Use `/hunt` as the simplest hard-gated operator queue and the default place to start. It uses the strict `/ravelab` gates with near misses hidden by default, then prints only the live queue and concise evidence per symbol. The `trigger` choice accepts `all`, `triggered`, `flow`, `target_flow`, `forced_flow`, `breakout`, or `core`. Generic target-CEX tells use `min_tokens`; the higher-conviction `flow`/`whale-CEX` lane uses `whale_flow_min_tokens`, defaulting to `DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS` or 100k tokens. The `forced_flow` lane catches hard-gated rows where short crowd, OI/volume, and squeeze fuel are rising while exhaustion remains low. `/radar` is the technical alias, `/prime` is the short alias, `/crimepump` is the legacy blunt-name alias, and `/ravelab` is the diagnostic microscope for near misses, style filtering, blockers, and full evidence rows.
 
 Use `/precrime` before `/pumpwatch` when you specifically want the quiet pre-activity version of the thesis. It applies the hard gates first: observed top-10 holder concentration at least `min_whale_pct` with a hard floor of 90%, ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget trading evidence, pinned 60D no-pump/dormancy proof, low-float/high-FDV structure evidence, and short crowd plus squeeze fuel. After that, it rewards holder/control concentration, Binance/Bitget/Gate inventory tells, short-fuse perp positioning, and thin visible books, but thin-book evidence is only an amplifier and never substitutes for the float/FDV gate, and high short-account percentage alone does not clear the quiet candidate gate without build/OI/liquidation/funding/forced-buying fuel. It also penalizes names that already have breakout, volume, CMC-mover, or high-return chase heat. Keep `require_quiet:true` when hunting before the crowd notices; the legacy `require_dormant_60d` slash option cannot disable the 60D gate. Use `require_target_flow:true` when you only want confirmed labelled CEX-transfer rows. Use `/cexdiag`, `/earlyflow`, or `/whales` for looser data-coverage diagnostics instead of weakening this queue.
 
@@ -150,7 +151,7 @@ DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
 
-Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so symbol text alone cannot satisfy Binance evidence; set it to `1` only for legacy Binance-only caches generated before that marker existed. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so symbol text alone cannot satisfy Binance evidence; set it to `1` only for legacy Binance-only caches generated before that marker existed. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
 
 For a dedicated transfer monitor:
 

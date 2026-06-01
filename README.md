@@ -202,7 +202,7 @@ DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 ```
 
-Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
+Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
 
 Per-symbol cooldown state is stored locally in:
 
@@ -225,6 +225,7 @@ Supported commands include:
 /convex [limit]
 /shorts
 /funding [side] [limit] [period] [min_abs_funding_pct]
+/hunt [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /radar [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_target_flow] [require_quiet] [require_behavior_gate] [require_dormant_60d]
 /crimepump [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
@@ -263,7 +264,7 @@ Supported commands include:
 /<configured-symbol-alias>
 ```
 
-Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/radar` as the primary hard-gated queue, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
+Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/hunt` as the primary hard-gated queue, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
 Legacy options may still appear for slash-command compatibility, but the candidate loaders pin their thesis gates on: `require_dormant_60d:false` cannot weaken `/precrime` or `/pumpwatch`, and `require_quiet:false` cannot weaken `/ravelab`.
 
 The bot can retrieve:
@@ -273,8 +274,8 @@ The bot can retrieve:
 - a `/shorts` diagnostic board for symbols where more than 50% of accounts are short; it now overlays `baseThesis Y/N/?` so high short-account percentage stays weak context unless the strict holder, Binance+Bitget, and 60D no-pump gates also pass
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups after the hard explorer holder-source snapshot, Binance+Bitget thesis gates, pinned 60D no-pump/dormancy proof, low-float/high-FDV structure proof, and short crowd plus squeeze fuel: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books as amplifiers, and no-chase low activity
-- a primary `/radar` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for massive top-holder-origin whale-CEX flow, generic target-CEX flow, forced-flow mechanics, breakout highs, triggered-only, or core-watch rows
-- `/crimepump` as a legacy blunt-name alias and `/prime` as a short alias for the same compact hard-gated queue
+- a primary `/hunt` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for massive top-holder-origin whale-CEX flow, generic target-CEX flow, forced-flow mechanics, breakout highs, triggered-only, or core-watch rows
+- `/radar` as a technical alias, `/crimepump` as a legacy blunt-name alias, and `/prime` as a short alias for the same compact hard-gated queue
 - a dedicated `/ravelab` strict early-structure microscope requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; when filtered/manipulable holder metrics are available it uses those adjusted top-10 values ahead of raw top-10, so CEX, treasury, vesting, bridge, wrapper, LP, burn, and protocol-storage concentration cannot pass as insider float control; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, adjusted holder-control context, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects `whale_flow_min_tokens` while generic target-CEX flow still respects `min_tokens`, a first-class `forced_flow` lane for hard-gated rows where short crowd, OI/volume, and fuel are rising without exhaustion, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
 - a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same pinned 90%+ explorer holder-source snapshot, Binance+Bitget, 60D no-pump/dormancy, low-float/high-FDV, squeeze-fuel, and not-late gates; high short-account percentage alone is context, not a pass, unless paired with build/OI/liquidation/funding/forced-buying fuel
 - a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowd plus squeeze fuel, and not-late structure

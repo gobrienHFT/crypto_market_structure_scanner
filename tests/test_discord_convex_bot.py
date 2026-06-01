@@ -49,15 +49,17 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert title == "Discord command guide"
     assert "/commands - this operator map" in output
     assert "/help - same operator map" in output
-    assert "Use /radar first" in output
+    assert "Use /hunt first" in output
+    assert "/hunt [min_tokens]" in output
+    assert "/radar - technical alias for /hunt." in output
     assert "/ravelab - diagnostic microscope" in output
-    assert "/crimepump - legacy blunt-name alias for /radar." in output
+    assert "/crimepump - legacy blunt-name alias for /hunt." in output
     assert "/sethflow - compact full checklist" in output
     assert "/startbot, /stopbot, /tradebot_status" in output
     assert "/convex_status, /convex_scoreboard, /convex_archive" in output
     assert "/cexdiag" in output
     assert "/flowhealth" in output
-    assert "Rule of thumb: /radar for candidates" in output
+    assert "Rule of thumb: /hunt for candidates" in output
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
@@ -3207,6 +3209,15 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K" in crime_output
     assert "Strict RAVE/LAB crime-pump early radar" not in crime_output
     assert "Near misses (blocked" not in crime_output
+
+    hunt_title, hunt_chunks = bot._load_hunt_list(10, min_tokens=20_000)
+    hunt_output = "\n".join(hunt_chunks)
+    assert hunt_title == "Alpha hunt"
+    assert "Alpha hunt" in hunt_output
+    assert "Crime-pump early queue" not in hunt_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in hunt_output
+    assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in hunt_output
+    assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in hunt_output
 
     radar_title, radar_chunks = bot._load_radar_list(10, min_tokens=20_000)
     radar_output = "\n".join(radar_chunks)
