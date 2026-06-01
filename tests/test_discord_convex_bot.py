@@ -54,7 +54,7 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert "/radar - technical alias for /hunt." in output
     assert "/ravelab - diagnostic microscope" in output
     assert "/crimepump - legacy blunt-name alias for /hunt." in output
-    assert "/sethflow - compact full checklist" in output
+    assert "/sethflow [min_tokens] - compact full checklist" in output
     assert "/startbot, /stopbot, /tradebot_status" in output
     assert "/convex_status, /convex_scoreboard, /convex_archive" in output
     assert "/cexdiag" in output
@@ -1497,6 +1497,24 @@ def test_load_seth_flow_playbook_runs_whale_short_dormant_checklist(monkeypatch)
     assert "SMALLUSDT" not in output
     assert "COINBASEUSDT" not in output
     assert "not a trade instruction" in output
+
+
+def test_load_seth_flow_playbook_defaults_to_massive_transfer_floor(monkeypatch) -> None:
+    calls: list[float] = []
+
+    def fake_fresh_frame(scan_mode=None, **kwargs):
+        calls.append(float(kwargs.get("cex_min_transfer_tokens") or 0.0))
+        return pd.DataFrame(), "fresh Deep scan at now"
+
+    monkeypatch.setenv("DISCORD_RAVELAB_MASSIVE_WHALE_FLOW_MIN_TOKENS", "10000000")
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", fake_fresh_frame)
+
+    _, default_chunks = bot._load_seth_flow_playbook(10)
+    _, override_chunks = bot._load_seth_flow_playbook(10, min_tokens=20_000)
+
+    assert calls == [10_000_000.0, 20_000.0]
+    assert "Min transfer: >= 10.00M tokens" in "\n".join(default_chunks)
+    assert "Min transfer: >= 20.00K tokens" in "\n".join(override_chunks)
 
 
 def test_load_seth_flow_playbook_requires_squeeze_fuel_not_short_pct_alone(monkeypatch) -> None:

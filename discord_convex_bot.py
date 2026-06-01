@@ -1094,7 +1094,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/flowstress - CEX deposit inventory stress versus visible liquidity.",
         "/flowblocked - symbols blocked by explorer/API source errors.",
         "/flowhealth - API key, chain fallback, and CEX label coverage.",
-        "/sethflow - compact full checklist across massive whale-origin CEX flow, whale control, shorts, float, and dormant structure.",
+        "/sethflow [min_tokens] - compact full checklist across massive whale-origin CEX flow, whale control, shorts, float, and dormant structure; defaults to the 10M massive-flow floor.",
         "/whales - holder concentration board; diagnostic unless top10 + holder evidence are present.",
         "",
         "Market context:",
@@ -3071,8 +3071,11 @@ def _load_seth_flow_playbook(
     require_venue_gate = True
     require_holder_evidence = True
     require_dormant = True
+    requested_min_tokens = min_tokens
+    if requested_min_tokens is None:
+        requested_min_tokens = _ravelab_massive_whale_flow_floor(0.0)
     frame, source, effective_min_transfer, effective_lookback = _cex_scan_frame_for_commands(
-        min_tokens=min_tokens,
+        min_tokens=requested_min_tokens,
         lookback_hours=lookback_hours,
     )
     effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
@@ -7476,7 +7479,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
 
     @tree.command(**sethflow_kwargs)
     @app_commands.describe(
-        min_tokens="Minimum token amount per transfer, for example 10000000.",
+        min_tokens="Minimum token amount per transfer. Default 10M massive-flow floor; lower only for diagnostics.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
         min_short_pct="Minimum short-account percentage, default 50.",

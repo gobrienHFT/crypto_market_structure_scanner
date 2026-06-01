@@ -292,7 +292,7 @@ The bot can retrieve:
 - CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
 - Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with unlabelled-transfer diagnostics that surface destination addresses needing CEX wallet labels before rows count as verified flow
 - CEX-flow health checks covering API keys and local address-label coverage
-- a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`
+- a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`, which defaults to the 10M massive-flow floor unless `min_tokens` is explicitly lowered for diagnostics
 - top-10-first whale-dominance rankings, with top100 retained as diagnostic context
 - hard-gated high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; default `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short crowd plus squeeze fuel, and not-late structure, while `thesis_only:false` shows raw breakout context with base-gate blockers
 - symbol-level market structure metrics
