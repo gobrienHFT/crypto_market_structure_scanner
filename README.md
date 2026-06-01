@@ -265,7 +265,7 @@ Supported commands include:
 /<configured-symbol-alias>
 ```
 
-Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/hunt` and `/thesis` as the primary hard-gated queues, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
+Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/hunt` and `/thesis` as the primary hard-gated queues, `/gates` as the empty-queue funnel diagnostic, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
 Legacy options may still appear for slash-command compatibility, but the candidate loaders pin their thesis gates on: `require_dormant_60d:false` cannot weaken `/precrime` or `/pumpwatch`, and `require_quiet:false` cannot weaken `/ravelab`.
 
 The bot can retrieve:

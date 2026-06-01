@@ -1086,7 +1086,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "Thesis drilldown:",
         "/coincheck <symbol> - one-symbol pass/fail checklist across holder, venue, squeeze, dormant/not-late, float, and CEX flow.",
         "/gates - explains the current scan funnel through holder, Binance+Bitget, no-pump, float, shorts+fuel, not-late, and flow trigger gates.",
-        "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /hunt, not before it.",
+        "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /gates when you need row-level proof.",
         "/precrime - quiet pre-activity board after hard holder, Binance+Bitget, and 60D no-pump gates.",
         "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, 60D no-pump, float, squeeze, and not-late gates.",
         "/setupscore - strict full-thesis ranking with transfer, holder, venue, 60D no-pump, short, float, and not-late checks.",
@@ -1117,7 +1117,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/convex_status, /convex_scoreboard, /convex_archive - cache status, proof scoreboard, and archive export.",
         "/sync_commands - refresh slash-command schema after deploy.",
         "",
-        "Rule of thumb: /hunt or /thesis for candidates, /coincheck for one name, /cexdiag or /flowhealth for data problems, /ravelab detail:true for the full evidence stack.",
+        "Rule of thumb: /hunt or /thesis for candidates, /gates when the queue is empty, /coincheck for one name, /cexdiag or /flowhealth for data problems, /ravelab detail:true for the full evidence stack.",
     ]
     return "Discord command guide", _chunk_text_lines(lines)
 
@@ -5336,7 +5336,7 @@ def _load_ravelab_list(
                 lane_counts_line,
                 "",
                 "No hard-gated early crime-pump candidates passed the current operator filters.",
-                "Use `/ravelab near_miss_limit:5 detail:true` for blockers and data-coverage diagnostics.",
+                "Run `/gates` for the hard-gate bottleneck; use `/ravelab near_miss_limit:5 detail:true` only when you need row-level blocker evidence.",
             ]
             return operator_title, _chunk_text_lines(lines)
         nearest = scored.sort_values(
@@ -5452,7 +5452,7 @@ def _load_ravelab_list(
         lines.extend(["", f"Candidates: {symbols}" if symbols else "Candidates: none", ""])
         for _, row in selected.iterrows():
             lines.append(_crime_pump_operator_line(row))
-        lines.extend(["", "Use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence."])
+        lines.extend(["", "Use `/gates` for funnel counts; use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence."])
         return operator_title, _chunk_text_lines(lines)
     lines = [
         header,

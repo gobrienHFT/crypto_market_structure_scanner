@@ -54,6 +54,7 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert "/thesis - plain-name alias for /hunt" in output
     assert "/radar - technical alias for /hunt." in output
     assert "/ravelab - diagnostic microscope" in output
+    assert "Use after /gates when you need row-level proof" in output
     assert "/crimepump - legacy blunt-name alias for /hunt." in output
     assert "/gates - explains the current scan funnel" in output
     assert "/sethflow [min_tokens] - compact full checklist" in output
@@ -63,7 +64,7 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     assert "/flowhealth" in output
     for command_name in bot.STATIC_SLASH_COMMAND_NAMES:
         assert f"/{command_name}" in output
-    assert "Rule of thumb: /hunt or /thesis for candidates" in output
+    assert "Rule of thumb: /hunt or /thesis for candidates, /gates when the queue is empty" in output
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
@@ -3294,6 +3295,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | floor >= 100.00K" in crime_output
     assert "Strict RAVE/LAB crime-pump early radar" not in crime_output
     assert "Near misses (blocked" not in crime_output
+    assert "Use `/gates` for funnel counts" in crime_output
 
     hunt_title, hunt_chunks = bot._load_hunt_list(10, min_tokens=20_000)
     hunt_output = "\n".join(hunt_chunks)
