@@ -1102,7 +1102,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
         "/shorts - weak-context short-majority board with baseThesis Y/N/? overlay.",
         "/funding - Binance funding/carry board.",
-        "/floattrap, /squeezeready, /cextargets - single-lens diagnostics; raw rows show baseThesis Y/N when available.",
+        "/floattrap, /squeezeready, /cextargets - single-lens diagnostics; raw rows show baseThesis and coreThesis blockers when available.",
         "/terminal, /timing - strict base-thesis-filtered structure/timing boards; shown rows print baseThesis Y.",
         "",
         "Runtime and records:",
@@ -2523,7 +2523,7 @@ def _load_flow_stress_list(
         f"Source: {source} | Min transfer: {_fmt_compact_number(effective_min_transfer)} tokens | "
         f"Lookback: {effective_lookback}h | "
         f"{_thesis_venue_header() if require_venue_gate else 'Venue gate: disabled for this command'}"
-        "\nRead: inventory-stress context rows; baseThesis Y means strict holder+venue+60D no-pump gate also passed."
+        "\nRead: inventory-stress context rows; baseThesis Y covers holder+venue+60D no-pump; coreThesis Y also requires float, shorts+fuel, and not-late structure."
     )
     if frame.empty:
         return "CEX inventory-stress monitor", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -2541,12 +2541,13 @@ def _load_flow_stress_list(
         return "CEX inventory-stress monitor", [header + "\n\nNo CEX inventory-stress rows found in the active scan coverage."]
     rows["_flow_stress"] = stress.loc[rows.index]
     rows["_flow_score"] = score.loc[rows.index]
-    rows = _add_base_thesis_context(rows)
+    rows = _add_core_thesis_context(rows, min_transfer_tokens=effective_min_transfer)
     rows = rows.sort_values(["_flow_stress", "_flow_score", "symbol"], ascending=[False, False, True]).head(min(max(int(limit), 1), 100))
     base_thesis_count = int(_boolish_series(rows.get("_discord_base_thesis_gate"), index=rows.index).sum())
+    core_thesis_count = int(_boolish_series(rows.get("_discord_core_thesis_gate"), index=rows.index).sum())
     lines = [
         header,
-        f"Stress rows: {len(rows)} | Base thesis gate: {base_thesis_count}",
+        f"Stress rows: {len(rows)} | Base thesis gate: {base_thesis_count} | Core thesis gate: {core_thesis_count}",
         "",
         "Stress rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()),
         "",
@@ -2562,9 +2563,10 @@ def _load_flow_stress_list(
         source_text = _clip_text(row.get("cex_deposit_flow_source", ""), 40)
         note = _clip_text(_first_nonempty_text(row.get("cex_deposit_inventory_stress_note", ""), row.get("cex_deposit_flow_note", "")), 160)
         base_thesis = _base_thesis_status_text(row)
+        core_thesis = _core_thesis_status_text(row)
         lines.append(
             f"/{symbol} | stress {stress_value:.0f}/100 | flow {flow_score:.0f}/100 | {targets} | "
-            f"notional {notional}{depth_text} | {base_thesis} | source {source_text or 'n/a'}"
+            f"notional {notional}{depth_text} | {base_thesis} | {core_thesis} | source {source_text or 'n/a'}"
         )
         if note:
             lines.append(f"  {note}")
@@ -2913,6 +2915,43 @@ def _add_base_thesis_context(frame: pd.DataFrame, *, min_whale_pct: float = 90.0
     return rows
 
 
+def _add_core_thesis_context(
+    frame: pd.DataFrame,
+    *,
+    min_whale_pct: float = 90.0,
+    min_short_pct: float = 50.0,
+    min_transfer_tokens: float = 0.0,
+) -> pd.DataFrame:
+    rows = _goal_score_frame(
+        frame,
+        min_transfer_tokens=min_transfer_tokens,
+        min_short_pct=min_short_pct,
+        min_whale_pct=min_whale_pct,
+    )
+    if rows.empty:
+        for column in (
+            "_discord_holder_gate",
+            "_discord_venue_gate",
+            "_discord_no_pump_gate",
+            "_discord_base_thesis_gate",
+            "_discord_float_gate",
+            "_discord_short_fuel_gate",
+            "_discord_structure_gate",
+            "_discord_core_thesis_gate",
+        ):
+            rows[column] = pd.Series(dtype=bool)
+        return rows
+    rows["_discord_holder_gate"] = _boolish_series(rows.get("_goal_whale_pass"), index=rows.index)
+    rows["_discord_venue_gate"] = _boolish_series(rows.get("_goal_venue_pass"), index=rows.index)
+    rows["_discord_no_pump_gate"] = _boolish_series(rows.get("_goal_no_recent_pump_pass"), index=rows.index)
+    rows["_discord_base_thesis_gate"] = _boolish_series(rows.get("_goal_base_thesis_pass"), index=rows.index)
+    rows["_discord_float_gate"] = _boolish_series(rows.get("_goal_float_pass"), index=rows.index)
+    rows["_discord_short_fuel_gate"] = _boolish_series(rows.get("_goal_short_pass"), index=rows.index)
+    rows["_discord_structure_gate"] = _boolish_series(rows.get("_goal_structure_pass"), index=rows.index)
+    rows["_discord_core_thesis_gate"] = _boolish_series(rows.get("_goal_core_setup_pass"), index=rows.index)
+    return rows
+
+
 def _base_thesis_status_text(row: pd.Series) -> str:
     if _boolish_scalar(row.get("_discord_base_thesis_gate")):
         return "baseThesis Y"
@@ -2924,6 +2963,21 @@ def _base_thesis_status_text(row: pd.Series) -> str:
     if not _boolish_scalar(row.get("_discord_no_pump_gate")):
         blockers.append("noPump60")
     return "baseThesis N" + (f" blockers {','.join(blockers)}" if blockers else "")
+
+
+def _core_thesis_status_text(row: pd.Series) -> str:
+    if _boolish_scalar(row.get("_discord_core_thesis_gate")):
+        return "coreThesis Y"
+    blockers: list[str] = []
+    if not _boolish_scalar(row.get("_discord_base_thesis_gate")):
+        blockers.append("base")
+    if not _boolish_scalar(row.get("_discord_float_gate")):
+        blockers.append("float")
+    if not _boolish_scalar(row.get("_discord_short_fuel_gate")):
+        blockers.append("shorts+fuel")
+    if not _boolish_scalar(row.get("_discord_structure_gate")):
+        blockers.append("notLate")
+    return "coreThesis N" + (f" blockers {','.join(blockers)}" if blockers else "")
 
 
 def _apply_thesis_candidate_gate(frame: pd.DataFrame, *, min_whale_pct: float = 90.0) -> pd.DataFrame:
@@ -5569,11 +5623,12 @@ def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, 
     selected = selected.sort_values(["_floattrap_rank_score", "_floattrap_fdv_ratio", "symbol"], ascending=[False, False, True]).head(
         min(max(int(limit), 1), 100)
     )
-    selected = _add_base_thesis_context(selected)
+    selected = _add_core_thesis_context(selected)
     base_thesis_count = int(_boolish_series(selected.get("_discord_base_thesis_gate"), index=selected.index).sum())
+    core_thesis_count = int(_boolish_series(selected.get("_discord_core_thesis_gate"), index=selected.index).sum())
     lines = [
         header,
-        f"Diagnostic rows: {len(selected)} | Base thesis gate: {base_thesis_count}",
+        f"Diagnostic rows: {len(selected)} | Base thesis gate: {base_thesis_count} | Core thesis gate: {core_thesis_count}",
         "",
         "Diagnostic rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()),
         "",
@@ -5581,13 +5636,14 @@ def _load_float_trap_list(limit: int, *, min_score: float = 60.0) -> tuple[str, 
     for _, row in selected.iterrows():
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         base_thesis = _base_thesis_status_text(row)
+        core_thesis = _core_thesis_status_text(row)
         lines.append(
             f"/{symbol} | float {(_safe_float(row.get('_floattrap_rank_score')) or 0.0):.0f}/100 | "
             f"low-float {(_safe_float(row.get('low_float_score')) or 0.0):.0f} | trap {(_safe_float(row.get('float_trap_score')) or 0.0):.0f} | "
             f"FDV {_fmt_compact_number(row.get('fdv_usd'))} | MC {_fmt_compact_number(row.get('market_cap_usd'))} | "
             f"FDV/MC {_fmt_compact_number(row.get('fdv_to_market_cap'))}x | circ {_fmt_compact_number(row.get('circulating_supply_pct'))}% | "
             f"locked {_fmt_compact_number(row.get('locked_supply_pct'))}% | top100 {_fmt_compact_number(row.get('top100_holder_pct'))}% | "
-            f"shorts {_fmt_compact_number(row.get('short_account_pct'))}% | {base_thesis}"
+            f"shorts {_fmt_compact_number(row.get('short_account_pct'))}% | {base_thesis} | {core_thesis}"
         )
     return "Low-float / high-FDV trap ranking", _chunk_text_lines(lines)
 
@@ -5642,11 +5698,12 @@ def _load_squeeze_ready_list(limit: int, *, min_short_pct: float = 50.0, min_sco
     selected = selected.sort_values(["_squeeze_ready_score", "short_account_pct", "symbol"], ascending=[False, False, True]).head(
         min(max(int(limit), 1), 100)
     )
-    selected = _add_base_thesis_context(selected)
+    selected = _add_core_thesis_context(selected, min_short_pct=min_short_pct)
     base_thesis_count = int(_boolish_series(selected.get("_discord_base_thesis_gate"), index=selected.index).sum())
+    core_thesis_count = int(_boolish_series(selected.get("_discord_core_thesis_gate"), index=selected.index).sum())
     lines = [
         header,
-        f"Diagnostic rows: {len(selected)} | Base thesis gate: {base_thesis_count}",
+        f"Diagnostic rows: {len(selected)} | Base thesis gate: {base_thesis_count} | Core thesis gate: {core_thesis_count}",
         "",
         "Diagnostic rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in selected["symbol"].tolist()),
         "",
@@ -5656,12 +5713,13 @@ def _load_squeeze_ready_list(limit: int, *, min_short_pct: float = 50.0, min_sco
         funding = _funding_pressure_value(row)
         target_flow = "target CEX flow" if bool(row.get("_goal_target_flow")) else "no target CEX flow"
         base_thesis = _base_thesis_status_text(row)
+        core_thesis = _core_thesis_status_text(row)
         lines.append(
             f"/{symbol} | squeeze {(_safe_float(row.get('_squeeze_ready_score')) or 0.0):.0f}/100 | "
             f"shorts {(_safe_pct(row.get('short_account_pct')) or 0.0):.1f}% | OI {_fmt_compact_number(row.get('oi_delta_pct'))}% | "
             f"funding {_format_signed_pct(funding, decimals=4) if funding is not None else 'n/a'} | "
             f"whale {(_safe_float(row.get('_goal_whale_component')) or 0.0):.0f} | float {(_safe_float(row.get('_goal_float_component')) or 0.0):.0f} | "
-            f"{target_flow} | {base_thesis}"
+            f"{target_flow} | {base_thesis} | {core_thesis}"
         )
     return "Squeeze-ready short-crowd ranking", _chunk_text_lines(lines)
 
@@ -5679,7 +5737,7 @@ def _load_cex_targets_list(
     header = (
         "Target CEX transfer board\n"
         f"Source: {source} | Target CEX: Binance, Gate.io, Bitget | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h\n"
-        "Read: raw confirmed transfer hits; baseThesis Y means strict holder+venue+60D no-pump gate also passed."
+        "Read: raw confirmed transfer hits; baseThesis Y covers holder+venue+60D no-pump; coreThesis Y also requires float, shorts+fuel, and not-late structure."
     )
     if frame.empty:
         return "Target CEX transfer board", [header + "\n\nNo live scan, scanner snapshot, or cache exists yet."]
@@ -5689,12 +5747,13 @@ def _load_cex_targets_list(
         return "Target CEX transfer board", [header + "\n\nNo confirmed Binance/Gate/Bitget transfer rows met the requested floor/lookback."]
     rows["_target_flow_score"] = pd.to_numeric(rows.get("cex_deposit_flow_score", pd.Series(0.0, index=rows.index)), errors="coerce").fillna(0.0)
     rows["_target_max_amount"] = pd.to_numeric(rows.get("cex_deposit_24h_max_amount", pd.Series(0.0, index=rows.index)), errors="coerce").fillna(0.0)
-    rows = _add_base_thesis_context(rows)
+    rows = _add_core_thesis_context(rows, min_transfer_tokens=effective_min_transfer)
     rows["_discord_no_pump_proof"] = _boolish_series(rows.get("_discord_no_pump_gate"), index=rows.index)
     rows = rows.sort_values(["_target_flow_score", "_target_max_amount", "symbol"], ascending=[False, False, True]).head(
         min(max(int(limit), 1), 100)
     )
     base_thesis_count = int(_boolish_series(rows.get("_discord_base_thesis_gate"), index=rows.index).sum())
+    core_thesis_count = int(_boolish_series(rows.get("_discord_core_thesis_gate"), index=rows.index).sum())
     exchange_counts: dict[str, int] = {"Binance": 0, "Bitget": 0, "Gate": 0}
     for target_text in rows.get("cex_deposit_24h_target_exchanges", pd.Series(dtype="object")).astype(str):
         lowered = target_text.lower()
@@ -5707,7 +5766,7 @@ def _load_cex_targets_list(
     counts = " | ".join(f"{exchange} {count}" for exchange, count in exchange_counts.items() if count)
     lines = [
         header,
-        f"Transfer rows: {len(rows)} | Base thesis gate: {base_thesis_count}" + (f" | {counts}" if counts else ""),
+        f"Transfer rows: {len(rows)} | Base thesis gate: {base_thesis_count} | Core thesis gate: {core_thesis_count}" + (f" | {counts}" if counts else ""),
         "",
         "Transfer rows: " + " ".join(f"/{str(symbol).upper().strip()}" for symbol in rows["symbol"].tolist()),
         "",
@@ -5716,12 +5775,13 @@ def _load_cex_targets_list(
         symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
         whale_sender = _whale_sender_text(row)
         base_thesis = _base_thesis_status_text(row)
+        core_thesis = _core_thesis_status_text(row)
         no_pump = "Y" if _boolish_scalar(row.get("_discord_no_pump_proof")) else "N"
         lines.append(
             f"/{symbol} | {_target_cex_text(row)} | flow {(_safe_float(row.get('cex_deposit_flow_score')) or 0.0):.0f}/100 | "
             f"{int(_safe_float(row.get('cex_deposit_24h_count')) or 0)} tx | total {_fmt_compact_number(row.get('cex_deposit_24h_token_amount'))} | "
             f"max {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))} | top tx {_clip_text(row.get('cex_deposit_24h_top_tx', ''), 48) or 'n/a'} | "
-            f"{base_thesis} | noPump60 {no_pump} | source {_clip_text(row.get('cex_deposit_flow_source', ''), 38) or 'n/a'}"
+            f"{base_thesis} | {core_thesis} | noPump60 {no_pump} | source {_clip_text(row.get('cex_deposit_flow_source', ''), 38) or 'n/a'}"
             f"{f' | {whale_sender}' if whale_sender else ''}"
         )
     return "Target CEX transfer board", _chunk_text_lines(lines)

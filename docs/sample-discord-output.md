@@ -304,13 +304,13 @@ Next check: Watch whether CEX balances keep rising, OI/volume expands, and price
 ```text
 CEX inventory-stress monitor
 Source: fresh Deep scan at 2026-05-16 15:47:00 UTC | Min transfer: 20.00K tokens | Lookback: 24h | Venue gate: explicit Binance perp marker/share/top venue + Bitget trading evidence required; Gate is optional evidence only
-Read: inventory-stress context rows; baseThesis Y means strict holder+venue+60D no-pump gate also passed.
+Read: inventory-stress context rows; baseThesis Y means strict holder+venue+60D no-pump gate passed, while coreThesis Y also requires float, shorts+fuel, and not-late structure.
 Inventory-stress rows before venue gate: 2 | After venue gate: 1
-Stress rows: 1 | Base thesis gate: 1
+Stress rows: 1 | Base thesis gate: 1 | Core thesis gate: 1
 
 Stress rows: /FLOWUSDT
 
-/FLOWUSDT | stress 72/100 | flow 88/100 | Bitget | notional 750.00K | deposits/ask 240.0% | baseThesis Y | source token_transfer_api
+/FLOWUSDT | stress 72/100 | flow 88/100 | Bitget | notional 750.00K | deposits/ask 240.0% | baseThesis Y | coreThesis Y | source token_transfer_api
   venue-inventory stress 72/100; total notional $750.00K; 240.0% of visible 1% ask depth
 ```
 
