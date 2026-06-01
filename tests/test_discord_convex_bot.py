@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -65,6 +68,24 @@ def test_load_command_guide_names_primary_and_diagnostic_paths() -> None:
     for command_name in bot.STATIC_SLASH_COMMAND_NAMES:
         assert f"/{command_name}" in output
     assert "Rule of thumb: /hunt or /thesis for candidates, /gates when the queue is empty" in output
+
+
+def test_static_slash_command_names_match_registered_main_commands() -> None:
+    source = Path(bot.__file__).read_text(encoding="utf-8")
+    registered = {
+        name
+        for variable, name in re.findall(r'^\s+(\w+_?kwargs) = \{"name": "([a-z_]+)"', source, flags=re.MULTILINE)
+        if variable != "alias_kwargs"
+    }
+
+    assert registered == set(bot.STATIC_SLASH_COMMAND_NAMES)
+
+
+def test_readme_supported_commands_lists_static_slash_commands() -> None:
+    readme = (Path(bot.__file__).resolve().parent / "README.md").read_text(encoding="utf-8")
+
+    for command_name in bot.STATIC_SLASH_COMMAND_NAMES:
+        assert f"/{command_name}" in readme
 
 
 def test_shortcut_detector_only_accepts_explicit_usdt_shortcuts() -> None:
