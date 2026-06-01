@@ -349,6 +349,7 @@ def test_cex_flow_watcher_webhook_header_keeps_binance_bitget_required(monkeypat
     watcher._post_webhook(frame, scan_mode="Deep", alert_source="cex_flow", dry_run=True)
     output = capsys.readouterr().out
 
+    assert "New core-thesis candidate (1)" in output
     assert "Binance perp + Bitget trading evidence required" in output
     assert "transfer targets are supporting evidence only" not in output
 

@@ -253,7 +253,7 @@ def _select_alert_candidates(all_df: pd.DataFrame, *, alert_source: str, top_n: 
         return all_df.copy()
     scored = _ensure_alert_scores(all_df)
     source = alert_source.strip().lower().replace("-", "_")
-    # Background alerts use the same non-negotiable thesis venue gate as /radar:
+    # Background alerts use the same non-negotiable thesis venue gate as /hunt:
     # labelled transfer targets are supporting evidence, not Bitget trading proof.
     scored = apply_thesis_alert_gate(scored, allow_cex_flow_targets=False)
     scored = apply_core_setup_gate(scored)
@@ -429,7 +429,7 @@ def _post_webhook(candidates: pd.DataFrame, *, scan_mode: str, alert_source: str
         "username": "Convex Scanner",
         "embeds": [
             {
-                "title": f"New market-structure candidate ({len(candidates)})",
+                "title": f"New core-thesis candidate ({len(candidates)})",
                 "description": description,
                 "color": 0x22C55E,
                 "fields": [
@@ -471,7 +471,7 @@ def run_once(*, scan_mode: str, top_n: int, realert_hours: float, dry_run: bool,
 
 def main() -> None:
     _load_local_env()
-    parser = argparse.ArgumentParser(description="Automatically scan market-structure candidates and post new names to Discord.")
+    parser = argparse.ArgumentParser(description="Automatically scan core-thesis candidates and post new names to Discord.")
     parser.add_argument("--once", action="store_true", help="Run one scan then exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print webhook payload without posting.")
     args = parser.parse_args()
@@ -491,7 +491,7 @@ def main() -> None:
     while True:
         try:
             total, alerted = run_once(scan_mode=scan_mode, top_n=top_n, realert_hours=realert_hours, dry_run=dry_run, alert_source=alert_source)
-            print(f"{_iso_now()} scan complete: {total} market-structure candidates, {alerted} new alerts.")
+            print(f"{_iso_now()} scan complete: {total} core-thesis candidates, {alerted} new alerts.")
         except Exception as exc:
             print(f"{_iso_now()} watcher error: {exc}. Retrying in {retry_seconds}s.")
             time.sleep(retry_seconds)
