@@ -3446,6 +3446,56 @@ def _truthy_value(value: Any) -> bool:
     return bool(value)
 
 
+def _dashboard_bool_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(False, index=frame.index)
+    return frame[column].astype("object").where(pd.notna(frame[column]), False).astype(str).str.strip().str.lower().isin(
+        {"1", "true", "yes", "y", "on"}
+    )
+
+
+def _dashboard_num_series(frame: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(default, index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[column], errors="coerce").fillna(default).astype("float64")
+
+
+def _early_pump_dashboard_watch_mask(frame: pd.DataFrame, *, min_score: float = 55.0) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    hard_gates = (
+        _dashboard_bool_series(frame, "early_pump_holder_evidence_gate")
+        & _dashboard_bool_series(frame, "early_pump_whale_gate")
+        & _dashboard_bool_series(frame, "early_pump_binance_bitget_gate")
+        & _dashboard_bool_series(frame, "early_pump_float_gate")
+        & _dashboard_bool_series(frame, "early_pump_short_gate")
+        & _dashboard_bool_series(frame, "early_pump_not_late_gate")
+        & _dashboard_bool_series(frame, "early_pump_no_recent_pump_gate")
+    )
+    score_watch = _dashboard_num_series(frame, "early_pump_radar_score").ge(float(min_score))
+    alert = _dashboard_bool_series(frame, "early_pump_alert_flag")
+    return ((alert | score_watch) & hard_gates).fillna(False)
+
+
+def _pre_activity_dashboard_watch_mask(frame: pd.DataFrame, *, min_score: float = 58.0) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    hard_gates = (
+        _dashboard_bool_series(frame, "pre_activity_holder_evidence_gate")
+        & _dashboard_bool_series(frame, "pre_activity_whale_gate")
+        & _dashboard_bool_series(frame, "pre_activity_binance_bitget_gate")
+        & _dashboard_bool_series(frame, "pre_activity_float_gate")
+        & _dashboard_bool_series(frame, "pre_activity_structure_gate")
+        & _dashboard_bool_series(frame, "pre_activity_short_gate")
+        & _dashboard_bool_series(frame, "pre_activity_behavior_gate")
+        & _dashboard_bool_series(frame, "pre_activity_quiet_gate")
+        & _dashboard_bool_series(frame, "pre_activity_no_recent_pump_gate")
+    )
+    score_watch = _dashboard_num_series(frame, "pre_activity_pump_score").ge(float(min_score))
+    alert = _dashboard_bool_series(frame, "pre_activity_alert_flag")
+    return ((alert | score_watch) & hard_gates).fillna(False)
+
+
 def _single_row_gate_mask(row: pd.Series, fn: Any) -> bool:
     frame = pd.DataFrame([row.to_dict()]).loc[:, lambda data: ~data.columns.duplicated()].copy()
     try:
@@ -8669,11 +8719,8 @@ def render_breakout_dashboard() -> None:
                     ascending=[False, False, False, False, False, True],
                 )
 
-            pump_dormant_gate = pump_df.get("early_pump_no_recent_pump_gate", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool)
-            watch_mask = pump_df.get("early_pump_alert_flag", pd.Series(False, index=pump_df.index)).fillna(False).astype(bool) | (
-                pd.to_numeric(pump_df.get("early_pump_radar_score", pd.Series(0.0, index=pump_df.index)), errors="coerce").fillna(0.0).ge(55.0)
-                & pump_dormant_gate
-            )
+            pump_dormant_gate = _dashboard_bool_series(pump_df, "early_pump_no_recent_pump_gate")
+            watch_mask = _early_pump_dashboard_watch_mask(pump_df)
             pump_watch_df = pump_df[watch_mask].copy()
             prime_count = int((pump_df.get("early_pump_state", pd.Series("", index=pump_df.index)).astype(str) == "Prime early squeeze").sum())
             dormant_count = int(pump_dormant_gate.sum())
@@ -8780,11 +8827,8 @@ def render_breakout_dashboard() -> None:
                     ],
                     ascending=[False, False, False, False, False, True],
                 )
-            pre_dormant_gate = pre_df.get("pre_activity_no_recent_pump_gate", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool)
-            pre_watch_mask = pre_df.get("pre_activity_alert_flag", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool) | (
-                pd.to_numeric(pre_df.get("pre_activity_pump_score", pd.Series(0.0, index=pre_df.index)), errors="coerce").fillna(0.0).ge(58.0)
-                & pre_dormant_gate
-            )
+            pre_dormant_gate = _dashboard_bool_series(pre_df, "pre_activity_no_recent_pump_gate")
+            pre_watch_mask = _pre_activity_dashboard_watch_mask(pre_df)
             pre_watch_df = pre_df[pre_watch_mask].copy()
             latent_flow_count = int(
                 pre_df.get("pre_activity_confirmed_target_flow", pd.Series(False, index=pre_df.index)).fillna(False).astype(bool).sum()

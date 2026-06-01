@@ -218,6 +218,90 @@ def test_dashboard_discord_candidate_line_prints_gate_proof(monkeypatch) -> None
     assert "/PROOFUSDT" in output
 
 
+def test_early_pump_dashboard_watch_requires_full_hard_gates() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "GOODUSDT",
+                "early_pump_radar_score": 60.0,
+                "early_pump_alert_flag": False,
+                "early_pump_holder_evidence_gate": True,
+                "early_pump_whale_gate": True,
+                "early_pump_binance_bitget_gate": True,
+                "early_pump_float_gate": True,
+                "early_pump_short_gate": True,
+                "early_pump_not_late_gate": True,
+                "early_pump_no_recent_pump_gate": True,
+            },
+            {
+                "symbol": "STALEALERTUSDT",
+                "early_pump_radar_score": 88.0,
+                "early_pump_alert_flag": True,
+                "early_pump_holder_evidence_gate": True,
+                "early_pump_whale_gate": True,
+                "early_pump_binance_bitget_gate": False,
+                "early_pump_float_gate": True,
+                "early_pump_short_gate": True,
+                "early_pump_not_late_gate": True,
+                "early_pump_no_recent_pump_gate": True,
+            },
+            {
+                "symbol": "DORMANTONLYUSDT",
+                "early_pump_radar_score": 91.0,
+                "early_pump_no_recent_pump_gate": True,
+            },
+        ]
+    )
+
+    selected = frame[app._early_pump_dashboard_watch_mask(frame)]
+
+    assert selected["symbol"].tolist() == ["GOODUSDT"]
+
+
+def test_pre_activity_dashboard_watch_requires_full_hard_gates() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "LATENTUSDT",
+                "pre_activity_pump_score": 60.0,
+                "pre_activity_alert_flag": False,
+                "pre_activity_holder_evidence_gate": True,
+                "pre_activity_whale_gate": True,
+                "pre_activity_binance_bitget_gate": True,
+                "pre_activity_float_gate": True,
+                "pre_activity_structure_gate": True,
+                "pre_activity_short_gate": True,
+                "pre_activity_behavior_gate": True,
+                "pre_activity_quiet_gate": True,
+                "pre_activity_no_recent_pump_gate": True,
+            },
+            {
+                "symbol": "NOFUELUSDT",
+                "pre_activity_pump_score": 90.0,
+                "pre_activity_alert_flag": True,
+                "pre_activity_holder_evidence_gate": True,
+                "pre_activity_whale_gate": True,
+                "pre_activity_binance_bitget_gate": True,
+                "pre_activity_float_gate": True,
+                "pre_activity_structure_gate": True,
+                "pre_activity_short_gate": False,
+                "pre_activity_behavior_gate": True,
+                "pre_activity_quiet_gate": True,
+                "pre_activity_no_recent_pump_gate": True,
+            },
+            {
+                "symbol": "DORMANTONLYUSDT",
+                "pre_activity_pump_score": 92.0,
+                "pre_activity_no_recent_pump_gate": True,
+            },
+        ]
+    )
+
+    selected = frame[app._pre_activity_dashboard_watch_mask(frame)]
+
+    assert selected["symbol"].tolist() == ["LATENTUSDT"]
+
+
 def test_cex_flow_dashboard_promotes_whale_sender_provenance() -> None:
     whale_sender_columns = set(app.CEX_FLOW_WHALE_SENDER_COLUMNS)
     whale_sender_index = app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_whale_sender_count")
