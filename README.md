@@ -588,6 +588,7 @@ The repository is intended to demonstrate practical crypto market-data engineeri
 - [Demo walkthrough](docs/demo-walkthrough.md): install, test, dashboard, Discord, proof loop.
 - [Architecture](docs/architecture.md): module map and data flow.
 - [Discord alpha workflow](docs/discord-alpha-workflow.md): operator loop and alert taxonomy.
+- [Core thesis gate audit](docs/core-thesis-gate-audit.md): maps each non-negotiable gate to the enforcing modules and tests.
 - [Sample Discord output](docs/sample-discord-output.md): representative `/alpha`, alert, `/cexflow`, and scoreboard text.
 
 Continuous test coverage is configured in [.github/workflows/tests.yml](.github/workflows/tests.yml).
