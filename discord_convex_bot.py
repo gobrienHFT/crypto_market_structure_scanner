@@ -1867,16 +1867,17 @@ def _load_whale_dominance_list(
 
     rows["symbol"] = rows["symbol"].astype(str).str.upper().str.strip()
     rows = rows[rows["symbol"].ne("")]
-    rows = _add_base_thesis_context(rows)
+    rows = _add_core_thesis_context(rows, min_whale_pct=threshold)
     rows = rows.sort_values(["_whale_metric", "_whale_top10", "symbol"], ascending=[False, False, True])
     rows = rows.drop_duplicates(subset=["symbol"], keep="first")
     visible = rows.head(min(max(int(limit), 1), 300))
     hidden_count = max(0, len(rows) - len(visible))
     base_thesis_count = int(_boolish_series(rows.get("_discord_base_thesis_gate"), index=rows.index).sum())
+    core_thesis_count = int(_boolish_series(rows.get("_discord_core_thesis_gate"), index=rows.index).sum())
 
     lines = [
         header,
-        f"Matches: {len(rows)} | Base thesis gate: {base_thesis_count} | Showing: {len(visible)}"
+        f"Matches: {len(rows)} | Base thesis gate: {base_thesis_count} | Core thesis gate: {core_thesis_count} | Showing: {len(visible)}"
         + (f" | Hidden: {hidden_count}" if hidden_count else ""),
         "",
         "Diagnostic rows: " + " ".join(f"/{symbol}" for symbol in visible["symbol"].tolist()),
@@ -1897,9 +1898,10 @@ def _load_whale_dominance_list(
         platform = _first_nonempty_text(row.get("token_platform", ""), row.get("chain", ""))
         platform_text = f" | chain {platform}" if platform else ""
         base_thesis = _base_thesis_status_text(row)
+        core_thesis = _core_thesis_status_text(row)
         lines.append(
             f"/{symbol} | top10 {top10_text} | top100 {top100_text} | holders {holder_text} | "
-            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text} | {base_thesis}{platform_text}"
+            f"shorts {short_text} | terminal {terminal_text} | CEX {cex_text} | {base_thesis} | {core_thesis}{platform_text}"
         )
     if hidden_count:
         lines.append(f"... {hidden_count} more match(es) hidden; raise limit to inspect more.")

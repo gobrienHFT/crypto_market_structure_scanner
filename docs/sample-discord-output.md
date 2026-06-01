@@ -199,13 +199,13 @@ Concentration gate: top10 91.0% / top100 99.0%
 ```text
 Whale dominance ranking
 Source: computed holder composition (42 rows, 3 skipped) from contract hints | Threshold: >= 90.0% | Bucket: top10 | Read: diagnostic holder-concentration rows, not the hard-gated crime-pump queue.
-Matches: 4 | Base thesis gate: 1 | Showing: 3 | Hidden: 1
+Matches: 4 | Base thesis gate: 1 | Core thesis gate: 1 | Showing: 3 | Hidden: 1
 
 Diagnostic rows: /TIGHTUSDT /CAPUSDT /MEGAUSDT
 
-/TIGHTUSDT | top10 95.4% | top100 99.8% | holders 220 | shorts 58.4% | terminal 61 | CEX 30 | baseThesis N | chain bsc
-/CAPUSDT | top10 93.1% | top100 98.6% | holders 880 | shorts 55.0% | terminal 70 | CEX 88 | baseThesis N | chain arbitrum
-/MEGAUSDT | top10 91.0% | top100 99.4% | holders 120 | shorts 63.2% | terminal 82 | CEX 72 | baseThesis Y | chain ethereum
+/TIGHTUSDT | top10 95.4% | top100 99.8% | holders 220 | shorts 58.4% | terminal 61 | CEX 30 | baseThesis N | coreThesis N blockers base,float | chain bsc
+/CAPUSDT | top10 93.1% | top100 98.6% | holders 880 | shorts 55.0% | terminal 70 | CEX 88 | baseThesis N | coreThesis N blockers base,shorts+fuel | chain arbitrum
+/MEGAUSDT | top10 91.0% | top100 99.4% | holders 120 | shorts 63.2% | terminal 82 | CEX 72 | baseThesis Y | coreThesis Y | chain ethereum
 ... 1 more match(es) hidden; raise limit to inspect more.
 ```
 
