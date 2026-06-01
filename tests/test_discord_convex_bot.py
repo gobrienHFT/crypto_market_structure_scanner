@@ -4862,6 +4862,56 @@ def test_load_candidates_no_current_candidates_does_not_show_old_cache(tmp_path,
     assert "CHIPUSDT" not in description
 
 
+def test_load_candidates_rejects_legacy_convex_rows_without_core_gate(monkeypatch) -> None:
+    base = {
+        "trade_bucket": "Convex Long",
+        "trade_bucket_score": 95,
+        "binance_volume_share_pct": 3.0,
+        "bitget_volume_share_pct": 2.0,
+        "low_float_score": 88.0,
+        "float_trap_score": 80.0,
+        "pre_pump_precision_score": 76.0,
+        "scan_mode": "Deep",
+        "scanned_at_utc": "2026-05-14 18:00:00 UTC",
+        **_holder_evidence("ethereum", "0x1111111111111111111111111111111111111111"),
+    }
+    fresh = pd.DataFrame(
+        [
+            {
+                **base,
+                "symbol": "SHORTONLYUSDT",
+                "short_account_pct": 72.0,
+            },
+            {
+                **base,
+                "symbol": "TOP100ONLYUSDT",
+                "top10_holder_pct": 55.0,
+                "top100_holder_pct": 99.0,
+                "short_account_pct": 61.0,
+                "short_account_build_score": 58.0,
+            },
+            {
+                **base,
+                "symbol": "GATEONLYUSDT",
+                "bitget_volume_share_pct": 0.0,
+                "gate_volume_share_pct": 5.0,
+                "short_account_pct": 61.0,
+                "short_account_build_score": 58.0,
+            },
+        ]
+    )
+    monkeypatch.setattr(bot, "_fresh_scanner_frame", lambda scan_mode=None, **kwargs: (fresh, "fresh Deep scan at 2026-05-14 18:00:00 UTC"))
+
+    title, description = bot._load_candidates(5)
+
+    assert "no current Convex candidates" in title
+    assert "strict core thesis gate" in description
+    assert "Core setup also requires short crowd + squeeze fuel, low-float/high-FDV, and not-late structure" in description
+    assert "SHORTONLYUSDT" not in description
+    assert "TOP100ONLYUSDT" not in description
+    assert "GATEONLYUSDT" not in description
+
+
 def test_load_terminal_list_prefers_fresh_full_universe(tmp_path, monkeypatch) -> None:
     cache = tmp_path / "old_latest.csv"
     pd.DataFrame(

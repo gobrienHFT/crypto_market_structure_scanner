@@ -28,6 +28,7 @@ The older `/ravelab` surface is no longer the primary workflow. It remains a mic
 The following surfaces are expected to apply the hard gate before promoting rows as candidates:
 
 - Discord primary queues: `/hunt`, `/thesis`, `/radar`, `/prime`, `/crimepump`
+- Legacy Discord candidate sample: `/convex`
 - Discord strict brief: `/alpha`
 - Discord breakout screens with default `thesis_only:true`: `/high`, `/low`
 - Dashboard Convex Long cache and webhook alerts
