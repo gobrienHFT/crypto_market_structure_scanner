@@ -4406,12 +4406,12 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
     assert "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate." in proof
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin Y" in proof
-    assert "RAVELAB triggers: MASSIVE whale-CEX 12.00M (>=10.00M floor) | A3 WHALE-CEX PRIME" in proof
+    assert "Hunt triggers: MASSIVE whale-CEX 12.00M (>=10.00M floor) | A3 WHALE-CEX PRIME" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y" in check
-    assert "RAVELAB triggers: MASSIVE whale-CEX 12.00M (>=10.00M floor) | A3 WHALE-CEX PRIME" in check
+    assert "Hunt triggers: MASSIVE whale-CEX 12.00M (>=10.00M floor) | A3 WHALE-CEX PRIME" in check
     assert "baseThesis/coreSetup can pass before CEX flow" in check
     assert "PASS target CEX flow" in check
     assert "PASS Binance+Bitget trading venue" in check
@@ -4428,7 +4428,7 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     gate_title, gate_check = bot._load_coin_check("GATECHECK", min_tokens=10_000_000)
 
     assert gate_title == "GATECHECKUSDT checklist"
-    assert "Verdict: WATCH" in gate_check
+    assert "Verdict: BLOCKED:venueBnBg" in gate_check
     assert "Thesis gates: baseThesis N | coreSetup N | flowSetup N | targetFlow Y" in gate_check
     assert "FAIL Binance+Bitget trading venue" in gate_check
     assert "Gate 2.0%,target" in gate_check
@@ -4484,7 +4484,7 @@ def test_coincheck_prints_ravelab_forced_flow_lane(monkeypatch) -> None:
 
     assert title == "MECHUSDT checklist"
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup N | targetFlow N" in check
-    assert "RAVELAB triggers: forced-flow" in check
+    assert "Hunt triggers: forced-flow" in check
     assert "| A1 CORE PRIME | core 6/6 | blockers none | flowMech FORCED" in check
     assert "FAIL target CEX flow" in check
 

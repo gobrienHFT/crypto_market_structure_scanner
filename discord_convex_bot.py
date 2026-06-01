@@ -975,7 +975,7 @@ def _single_symbol_ravelab_trigger_line(row: pd.Series, *, min_transfer_tokens: 
         min_transfer_tokens=max(0.0, float(min_transfer_tokens or 0.0)),
     )
     if scored.empty:
-        return "RAVELAB triggers: unavailable"
+        return "Hunt triggers: unavailable"
     holder_evidence_mask, _ = _ravelab_holder_evidence_masks(scored)
     scored["_ravelab_holder_evidence_gate"] = holder_evidence_mask
     cached_highs = _cached_breakout_windows_from_row(row)
@@ -994,7 +994,7 @@ def _single_symbol_ravelab_trigger_line(row: pd.Series, *, min_transfer_tokens: 
     core_total = int(_safe_float(row_scored.get("_ravelab_core_gate_total")) or 6)
     blockers = _clip_text(row_scored.get("_ravelab_missing_core_gates", ""), 80) or "none"
     mechanics = _ravelab_forced_flow_text(row_scored)
-    return f"RAVELAB triggers: {trigger} | {stage} | core {core_count}/{core_total} | blockers {blockers} | flowMech {mechanics}"
+    return f"Hunt triggers: {trigger} | {stage} | core {core_count}/{core_total} | blockers {blockers} | flowMech {mechanics}"
 
 
 def _load_candidates(limit: int) -> tuple[str, str]:
@@ -1080,7 +1080,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "",
         "Thesis drilldown:",
         "/coincheck <symbol> - one-symbol pass/fail checklist across holder, venue, squeeze, dormant/not-late, float, and CEX flow.",
-        "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /radar, not before it.",
+        "/ravelab - diagnostic microscope for the RAVE/LAB analogue stack, blockers, near misses, style filters, and full evidence. Use after /hunt, not before it.",
         "/precrime - quiet pre-activity board after hard holder, Binance+Bitget, and 60D no-pump gates.",
         "/pumpwatch - broader hard-gated early-pump catch board after holder, Binance+Bitget, 60D no-pump, float, squeeze, and not-late gates.",
         "/setupscore - strict full-thesis ranking with transfer, holder, venue, 60D no-pump, short, float, and not-late checks.",
@@ -3518,36 +3518,48 @@ def _goal_core_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
         return "PASS"
     if not _boolish_scalar(row.get("_goal_base_thesis_pass")):
         return _goal_row_status(row, min_score=min_score)
-    if not _boolish_scalar(row.get("_goal_short_pass")):
-        return "WATCH"
-    if not _boolish_scalar(row.get("_goal_float_pass")):
-        return "WATCH"
-    if not _boolish_scalar(row.get("_goal_structure_pass")):
-        return "WATCH"
-    return "WATCH"
+    missing = _goal_missing_gate_labels(row, include_target_flow=False)
+    if missing:
+        return f"BLOCKED:{','.join(missing[:3])}"
+    return "WATCH:score"
 
 
-def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
-    if _boolish_scalar(row.get("_goal_all_pass")) and (_safe_float(row.get("_goal_setup_score")) or 0.0) >= min_score:
-        return "PASS"
-    if not _boolish_scalar(row.get("_goal_target_flow")):
-        return "DATA GAP" if _boolish_scalar(row.get("_goal_any_flow")) or _clean_scalar_text(row.get("cex_deposit_flow_error", "")) else "REJECT"
+def _goal_missing_gate_labels(row: pd.Series, *, include_target_flow: bool = True) -> list[str]:
     missing: list[str] = []
+    if include_target_flow and not _boolish_scalar(row.get("_goal_target_flow")):
+        missing.append("targetFlow")
     if not _boolish_scalar(row.get("_goal_whale_concentration_pass")):
         missing.append("whale")
     elif _boolish_scalar(row.get("_goal_holder_evidence_required")) and not _boolish_scalar(row.get("_goal_holder_evidence_pass")):
-        missing.append("holder evidence")
+        missing.append("holderEvidence")
     if _boolish_scalar(row.get("_goal_venue_required")) and not _boolish_scalar(row.get("_goal_venue_pass")):
-        missing.append("venue")
+        missing.append("venueBnBg")
     if not _boolish_scalar(row.get("_goal_short_pass")):
-        missing.append("short")
+        missing.append("shortsFuel")
     if not _boolish_scalar(row.get("_goal_float_pass")):
         missing.append("float")
     if not _boolish_scalar(row.get("_goal_no_recent_pump_pass")):
-        missing.append("60D no-pump")
+        missing.append("noPump60")
     if not _boolish_scalar(row.get("_goal_structure_pass")):
         missing.append("timing")
-    return "WATCH" if missing else "WATCH"
+    return missing
+
+
+def _goal_row_status(row: pd.Series, *, min_score: float = 60.0) -> str:
+    score = _safe_float(row.get("_goal_setup_score")) or 0.0
+    if _boolish_scalar(row.get("_goal_all_pass")) and score >= min_score:
+        return "PASS"
+    missing = _goal_missing_gate_labels(row)
+    if _boolish_scalar(row.get("_goal_core_setup_pass")) and not _boolish_scalar(row.get("_goal_target_flow")):
+        return "CORE:await-flow"
+    if not _boolish_scalar(row.get("_goal_target_flow")) and (
+        _boolish_scalar(row.get("_goal_any_flow")) or _clean_scalar_text(row.get("cex_deposit_flow_error", ""))
+    ):
+        blockers = ",".join(missing[:3]) if missing else "targetFlow"
+        return f"DATA GAP:{blockers}"
+    if missing:
+        return f"BLOCKED:{','.join(missing[:3])}"
+    return "WATCH:score"
 
 
 def _setup_score_line(row: pd.Series, *, min_score: float = 60.0) -> str:
