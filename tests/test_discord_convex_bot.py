@@ -3327,6 +3327,18 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in hunt_output
     assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in hunt_output
 
+    thesis_title, thesis_chunks = bot._load_thesis_list(10, min_tokens=20_000)
+    thesis_output = "\n".join(thesis_chunks)
+    assert thesis_title == "Core thesis queue"
+    assert "Core thesis queue" in thesis_output
+    assert "Crime-pump early queue" not in thesis_output
+    assert "Strict RAVE/LAB crime-pump early radar" not in thesis_output
+    assert "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase." in thesis_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Massive whale-origin CEX: 0 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in thesis_output
+    assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in thesis_output
+    assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in thesis_output
+    assert "Near misses (blocked" not in thesis_output
+
     radar_title, radar_chunks = bot._load_radar_list(10, min_tokens=20_000)
     radar_output = "\n".join(radar_chunks)
     assert radar_title == "Early structure radar"
