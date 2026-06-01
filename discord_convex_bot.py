@@ -59,6 +59,7 @@ RAVELAB_HOLDER_EVIDENCE_CHAINS = {"ethereum", "bsc", "arbitrum"}
 RAVELAB_HOLDER_EVIDENCE_CHAIN_LABEL = "ETH/BNB/ARB"
 THESIS_MIN_TOP10_WHALE_PCT = 90.0
 RAVELAB_DEFAULT_WHALE_FLOW_MIN_TOKENS = 100_000.0
+RAVELAB_DEFAULT_MASSIVE_WHALE_FLOW_MIN_TOKENS = 10_000_000.0
 HOLDER_EXPLORER_SOURCE_PATTERN = re.compile(
     r"\b(?:etherscan|bscscan|arbiscan|explorer)\b|holder\s+endpoint",
     flags=re.IGNORECASE,
@@ -189,6 +190,15 @@ def _ravelab_whale_flow_floor(min_transfer_tokens: float, whale_flow_min_tokens:
         )
     )
     return max(0.0, float(min_transfer_tokens or 0.0), configured)
+
+
+def _ravelab_massive_whale_flow_floor(whale_flow_floor: float) -> float:
+    configured = _env_float(
+        "DISCORD_RAVELAB_MASSIVE_WHALE_FLOW_MIN_TOKENS",
+        RAVELAB_DEFAULT_MASSIVE_WHALE_FLOW_MIN_TOKENS,
+        minimum=0.0,
+    )
+    return max(0.0, float(whale_flow_floor or 0.0), configured)
 
 
 def _safe_pct(value: Any) -> float | None:
@@ -599,6 +609,23 @@ def _whale_sender_text(row: pd.Series, *, include_amount: bool = False) -> str:
     if detail:
         parts.append(" ".join(detail))
     return " | ".join(parts)
+
+
+def _ravelab_whale_flow_detail_suffix(row: pd.Series) -> str:
+    if not _boolish_scalar(row.get("_ravelab_whale_origin_flow")):
+        return ""
+    floor_column = (
+        "_ravelab_massive_whale_flow_floor_tokens"
+        if _boolish_scalar(row.get("_ravelab_massive_whale_origin_flow"))
+        else "_ravelab_whale_flow_floor_tokens"
+    )
+    floor = _safe_float(row.get(floor_column))
+    parts: list[str] = []
+    if _boolish_scalar(row.get("_ravelab_massive_whale_origin_flow")):
+        parts.append("MASSIVE")
+    if floor is not None and floor > 0:
+        parts.append(f"floor >= {_fmt_compact_number(floor)}")
+    return f" | {' | '.join(parts)}" if parts else ""
 
 
 def _whale_sender_qualifies(row: pd.Series) -> bool:
@@ -1044,7 +1071,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "Primary queue:",
         "/commands - this operator map.",
         "/help - same operator map, easier to remember.",
-        "/hunt [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - primary operator queue; trigger can show all, triggered, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
+        "/hunt [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows] - primary operator queue; trigger can show all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
         "/radar - technical alias for /hunt.",
         "/prime - terse alias for /hunt.",
         "/crimepump - legacy blunt-name alias for /hunt.",
@@ -3980,14 +4007,17 @@ def _ravelab_apply_thesis_columns(
     forced_flow_trigger = _ravelab_forced_flow_trigger_series(output)
     transfer_floor = max(0.0, float(min_transfer_tokens or 0.0))
     whale_flow_floor = _ravelab_whale_flow_floor(transfer_floor, min_whale_flow_tokens)
+    massive_whale_flow_floor = _ravelab_massive_whale_flow_floor(whale_flow_floor)
     qualified_whale_sender = output.apply(_whale_sender_qualifies, axis=1).astype(bool)
+    whale_sender_amount = _num_series(output, "cex_deposit_24h_whale_sender_token_amount")
     whale_origin_flow = (
         qualified_whale_sender
         & _num_series(output, "cex_deposit_24h_whale_sender_count").gt(0.0)
         & _num_series(output, "cex_deposit_24h_count").gt(0.0)
-        & _num_series(output, "cex_deposit_24h_whale_sender_token_amount").ge(whale_flow_floor)
+        & whale_sender_amount.ge(whale_flow_floor)
         & target_flow
     )
+    massive_whale_origin_flow = whale_origin_flow & whale_sender_amount.ge(massive_whale_flow_floor)
     core_gates = {
         "whale90+evidence": whale_gate & holder_gate,
         "Binance+Bitget": venue_gate,
@@ -4011,6 +4041,7 @@ def _ravelab_apply_thesis_columns(
         + _num_series(output, "_ravelab_breakout_score") * 0.05
         + target_flow.astype(float) * 4.0
         + whale_origin_flow.astype(float) * 8.0
+        + massive_whale_origin_flow.astype(float) * 4.0
         + breakout_any.astype(float) * 5.0
         + forced_flow_trigger.astype(float) * 4.0
     ).clip(lower=0.0, upper=100.0)
@@ -4034,7 +4065,9 @@ def _ravelab_apply_thesis_columns(
     output["_ravelab_squeeze_gate"] = squeeze_gate
     output["_ravelab_forced_flow_trigger"] = forced_flow_trigger
     output["_ravelab_whale_origin_flow"] = whale_origin_flow
+    output["_ravelab_massive_whale_origin_flow"] = massive_whale_origin_flow
     output["_ravelab_whale_flow_floor_tokens"] = whale_flow_floor
+    output["_ravelab_massive_whale_flow_floor_tokens"] = massive_whale_flow_floor
     output["_ravelab_core_gate_count"] = core_count
     output["_ravelab_core_gate_total"] = len(core_gates)
     output["_ravelab_missing_core_gates"] = missing_text
@@ -4441,7 +4474,16 @@ def _ravelab_trigger_text(row: pd.Series, *, fallback: str = "core watch") -> st
         amount_value = row.get("cex_deposit_24h_whale_sender_token_amount")
         if _safe_float(amount_value) is None:
             amount_value = row.get("cex_deposit_24h_max_amount")
-        triggers.append(f"whale-CEX {_fmt_compact_number(amount_value)}")
+        floor_value = (
+            row.get("_ravelab_massive_whale_flow_floor_tokens")
+            if _boolish_scalar(row.get("_ravelab_massive_whale_origin_flow"))
+            else row.get("_ravelab_whale_flow_floor_tokens")
+        )
+        floor_suffix = ""
+        if _safe_float(floor_value) is not None and _safe_float(floor_value) > 0:
+            floor_suffix = f" (>={_fmt_compact_number(floor_value)} floor)"
+        prefix = "MASSIVE whale-CEX" if _boolish_scalar(row.get("_ravelab_massive_whale_origin_flow")) else "whale-CEX"
+        triggers.append(f"{prefix} {_fmt_compact_number(amount_value)}{floor_suffix}")
     elif _boolish_scalar(row.get("_ravelab_target_flow")):
         targets = _target_cex_text(row) or "target CEX"
         triggers.append(f"target-CEX {targets} {_fmt_compact_number(row.get('cex_deposit_24h_max_amount'))}")
@@ -4526,7 +4568,7 @@ def _crime_pump_operator_line(row: pd.Series) -> str:
     whale_flow = _whale_sender_text(row, include_amount=True)
     flow_text = f"{targets} max {max_amount}"
     if whale_flow:
-        flow_text += f" | {whale_flow}"
+        flow_text += f" | {whale_flow}{_ravelab_whale_flow_detail_suffix(row)}"
     return (
         f"/{symbol} | {stage} | {side} | trigger {trigger_text} | thesis {thesis:.0f}/100 | whale {whale_text}{adjusted_whale_suffix} holderEv {holder_evidence_gate} | "
         f"venues Bn/Bg/Gate {has_binance}/{has_bitget}/{has_gate} | float {float_score:.0f}{fdv_text} | hist {history_text} pump60 {pump_text} | "
@@ -4601,7 +4643,7 @@ def _ravelab_line(row: pd.Series, *, detail: bool = False) -> str:
     adjusted_holder_suffix = f" adj({adjusted_holder})" if adjusted_holder else ""
     venue_evidence = _venue_evidence_text(row)
     whale_flow = _whale_sender_text(row, include_amount=True)
-    whale_flow_text = f" whale-CEX {whale_flow}" if whale_flow else ""
+    whale_flow_text = f" whale-CEX {whale_flow}{_ravelab_whale_flow_detail_suffix(row)}" if whale_flow else ""
     anchor_symbol, anchor_date = _ravelab_anchor_for_side(side, rave, lab)
     anchor = f" | anchor {anchor_symbol} {anchor_date}" if anchor_symbol else ""
     next_check = _clip_text(_ravelab_next_check(row), 96)
@@ -4734,6 +4776,11 @@ def _normalize_ravelab_trigger_filter(trigger_filter: str) -> str:
         "any": "triggered",
         "trigger": "triggered",
         "triggers": "triggered",
+        "massive": "massive_flow",
+        "massive_whale": "massive_flow",
+        "massive_whale_flow": "massive_flow",
+        "massive_cex": "massive_flow",
+        "massive_cex_flow": "massive_flow",
         "whale": "flow",
         "whale_flow": "flow",
         "cex": "target_flow",
@@ -4752,19 +4799,22 @@ def _normalize_ravelab_trigger_filter(trigger_filter: str) -> str:
         "watch": "core",
     }
     normalized = aliases.get(normalized, normalized)
-    return normalized if normalized in {"all", "triggered", "flow", "target_flow", "forced_flow", "breakout", "core"} else "all"
+    return normalized if normalized in {"all", "triggered", "massive_flow", "flow", "target_flow", "forced_flow", "breakout", "core"} else "all"
 
 
 def _ravelab_trigger_filter_mask(frame: pd.DataFrame, trigger_filter: str) -> pd.Series:
     if frame.empty:
         return pd.Series(False, index=frame.index)
     mode = _normalize_ravelab_trigger_filter(trigger_filter)
+    massive_whale_flow = _boolish_series(frame.get("_ravelab_massive_whale_origin_flow"), index=frame.index)
     whale_flow = _boolish_series(frame.get("_ravelab_whale_origin_flow"), index=frame.index)
     target_flow = _boolish_series(frame.get("_ravelab_target_flow"), index=frame.index)
     forced_flow = _boolish_series(frame.get("_ravelab_forced_flow_trigger"), index=frame.index)
     breakout = _boolish_series(frame.get("_ravelab_breakout_any"), index=frame.index)
     funding_flip = _boolish_series(frame.get("fresh_flip_flag"), index=frame.index)
     core_full = _num_series(frame, "_ravelab_core_gate_count").ge(_num_series(frame, "_ravelab_core_gate_total", default=6.0))
+    if mode == "massive_flow":
+        return massive_whale_flow.fillna(False)
     if mode == "flow":
         return whale_flow.fillna(False)
     if mode == "target_flow":
@@ -4861,7 +4911,8 @@ def _ravelab_lane_counts_line(frame: pd.DataFrame, *, trigger_filter_key: str = 
     label = "Trigger lanes before filter" if _normalize_ravelab_trigger_filter(trigger_filter_key) != "all" else "Trigger lanes"
     shown = len(frame) if shown_count is None else int(shown_count)
     if frame.empty:
-        return f"{label}: triggered 0 | whale-CEX 0 | target-CEX 0 | forced-flow 0 | breakout 0 | core-watch 0 | shown {shown}"
+        return f"{label}: triggered 0 | massive-whale-CEX 0 | whale-CEX 0 | target-CEX 0 | forced-flow 0 | breakout 0 | core-watch 0 | shown {shown}"
+    massive_whale_flow = _boolish_series(frame.get("_ravelab_massive_whale_origin_flow"), index=frame.index)
     whale_flow = _boolish_series(frame.get("_ravelab_whale_origin_flow"), index=frame.index)
     target_flow = _boolish_series(frame.get("_ravelab_target_flow"), index=frame.index)
     forced_flow = _boolish_series(frame.get("_ravelab_forced_flow_trigger"), index=frame.index)
@@ -4869,7 +4920,8 @@ def _ravelab_lane_counts_line(frame: pd.DataFrame, *, trigger_filter_key: str = 
     core_watch = _ravelab_trigger_filter_mask(frame, "core")
     triggered = _ravelab_trigger_filter_mask(frame, "triggered")
     return (
-        f"{label}: triggered {int(triggered.sum())} | whale-CEX {int(whale_flow.sum())} | "
+        f"{label}: triggered {int(triggered.sum())} | massive-whale-CEX {int(massive_whale_flow.sum())} | "
+        f"whale-CEX {int(whale_flow.sum())} | "
         f"target-CEX {int(target_flow.sum())} | forced-flow {int(forced_flow.sum())} | breakout {int(breakout.sum())} | "
         f"core-watch {int(core_watch.sum())} | shown {shown}"
     )
@@ -4911,6 +4963,7 @@ def _load_ravelab_list(
         lookback_hours=lookback_hours,
     )
     effective_whale_flow_floor = _ravelab_whale_flow_floor(effective_min_transfer, whale_flow_min_tokens)
+    effective_massive_whale_flow_floor = _ravelab_massive_whale_flow_floor(effective_whale_flow_floor)
     effective_min_whale_pct = _strict_thesis_min_whale_pct(min_whale_pct)
     style_key = str(style or "both").strip().lower()
     if style_key not in {"both", "rave", "lab"}:
@@ -4929,6 +4982,7 @@ def _load_ravelab_list(
         "Strict RAVE/LAB crime-pump early radar\n"
         f"Source: {source} | Transfer floor: {_fmt_compact_number(effective_min_transfer)} tokens | Lookback: {effective_lookback}h | "
         f"Whale-CEX floor: {_fmt_compact_number(effective_whale_flow_floor)} tokens | "
+        f"Massive whale-CEX floor: {_fmt_compact_number(effective_massive_whale_flow_floor)} tokens | "
         f"Style: {style_key} | Min early score: {float(min_score):.0f} | Min RAVE/LAB archetype: {float(min_archetype):.0f} | "
         f"Whale gate: top10 >= {effective_min_whale_pct:.1f}% | Squeeze stack gate: >= {float(min_squeeze_score):.0f} | "
         f"History gate: >= {int(min_history_days)}d | Max recent pump: < {float(max_recent_pump_pct):.0f}% over 60d | "
@@ -5024,7 +5078,8 @@ def _load_ravelab_list(
             f"dormant2m/history {int(_boolish_series(scored.get('_ravelab_dormant_2m_gate'), index=scored.index).sum())} | "
             f"squeeze {int(_boolish_series(scored.get('_ravelab_squeeze_gate'), index=scored.index).sum())} | "
             f"{_ravelab_core_label(scored).lower()} {_ravelab_core_full_count(scored)} | "
-            f"whale-origin CEX {int(_boolish_series(scored.get('_ravelab_whale_origin_flow'), index=scored.index).sum())}"
+            f"whale-origin CEX {int(_boolish_series(scored.get('_ravelab_whale_origin_flow'), index=scored.index).sum())} | "
+            f"massive whale-origin {int(_boolish_series(scored.get('_ravelab_massive_whale_origin_flow'), index=scored.index).sum())}"
         )
         if compact:
             lines = [
@@ -5032,6 +5087,7 @@ def _load_ravelab_list(
                 (
                     f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
                     f"Whale-CEX >= {_fmt_compact_number(effective_whale_flow_floor)} | "
+                    f"Massive >= {_fmt_compact_number(effective_massive_whale_flow_floor)} | "
                     f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
                 ),
                 "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
@@ -5046,6 +5102,7 @@ def _load_ravelab_list(
         nearest = scored.sort_values(
             [
                 "_ravelab_core_gate_count",
+                "_ravelab_massive_whale_origin_flow",
                 "_ravelab_whale_origin_flow",
                 "_ravelab_whale_gate",
                 "_ravelab_holder_evidence_gate",
@@ -5056,7 +5113,7 @@ def _load_ravelab_list(
                 "_ravelab_early_score",
                 "symbol",
             ],
-            ascending=[False, False, False, False, False, False, False, False, False, True],
+            ascending=[False, False, False, False, False, False, False, False, False, False, True],
         ).head(min(max(int(limit), 1), 30))
         lines = [
             header,
@@ -5085,6 +5142,7 @@ def _load_ravelab_list(
     selected = selected.sort_values(
         [
             "_ravelab_core_gate_count",
+            "_ravelab_massive_whale_origin_flow",
             "_ravelab_whale_origin_flow",
             "_ravelab_alert_flag",
             "_ravelab_target_flow",
@@ -5097,7 +5155,7 @@ def _load_ravelab_list(
             "_ravelab_archetype_score",
             "symbol",
         ],
-        ascending=[False, False, False, False, False, False, False, False, False, False, False, True],
+        ascending=[False, False, False, False, False, False, False, False, False, False, False, False, True],
     ).head(min(max(int(limit), 1), 100))
     near_misses = _ravelab_near_miss_rows(
         scored,
@@ -5112,6 +5170,7 @@ def _load_ravelab_list(
     )
     target_count = int(_boolish_series(selected.get("_ravelab_target_flow"), index=selected.index).sum())
     whale_origin_count = int(_boolish_series(selected.get("_ravelab_whale_origin_flow"), index=selected.index).sum())
+    massive_whale_origin_count = int(_boolish_series(selected.get("_ravelab_massive_whale_origin_flow"), index=selected.index).sum())
     forced_flow_count = int(_boolish_series(selected.get("_ravelab_forced_flow_trigger"), index=selected.index).sum())
     core_count = _ravelab_core_full_count(selected)
     core_label = _ravelab_core_label(selected)
@@ -5136,12 +5195,13 @@ def _load_ravelab_list(
             (
                 f"Source: {source} | Floor: {_fmt_compact_number(effective_min_transfer)} tokens | "
                 f"Whale-CEX >= {_fmt_compact_number(effective_whale_flow_floor)} | "
+                f"Massive >= {_fmt_compact_number(effective_massive_whale_flow_floor)} | "
                 f"Lookback: {effective_lookback}h | Trigger: {trigger_filter_key} | Breakouts: {breakout_label}"
             ),
             "Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.",
             (
                 f"Matches: {len(selected)} | {core_label}: {core_count} | Triggered: {triggered_count} | "
-                f"Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | "
+                f"Massive whale-origin CEX: {massive_whale_origin_count} | Whale-origin CEX: {whale_origin_count} | Target-flow: {target_count} | "
                 f"Forced-flow: {forced_flow_count} | Breakout highs: {breakout_count}"
             ),
             funnel_line,
@@ -5159,6 +5219,7 @@ def _load_ravelab_list(
         (
             f"Matches: {len(selected)} | RAVE-like: {rave_count} | LAB-like: {lab_count} | Mixed: {mixed_count} | "
             f"{core_label}: {core_count} | Target-flow rows: {target_count} | Whale-origin CEX rows: {whale_origin_count} | "
+            f"Massive whale-origin rows: {massive_whale_origin_count} | "
             f"Forced-flow rows: {forced_flow_count} | Near misses shown: {len(near_misses)} | "
             "Read: historical-analogue screen, not trade instruction."
         ),
@@ -6494,7 +6555,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         require_target_flow="Only show rows with confirmed Binance/Gate/Bitget transfer evidence.",
         require_breakout_high="Only show rows that broke at least one requested high-breakout window.",
         require_whale_origin_flow="Only show rows where a confirmed target-CEX transfer came from a scanned top-holder wallet and clears whale_flow_min_tokens.",
-        trigger_filter="Filter strict rows to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch only.",
+        trigger_filter="Filter strict rows to all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch.",
         near_miss_limit="Blocked high-signal rows to show after strict matches. Use 0 to hide.",
         detail="Show full multi-line evidence instead of the compact staged read.",
     )
@@ -6507,6 +6568,7 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         trigger_filter=[
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="massive whale-CEX flow", value="massive_flow"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
@@ -6581,13 +6643,14 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
         trigger=[
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="massive whale-CEX flow", value="massive_flow"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
@@ -6636,13 +6699,14 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
         trigger=[
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="massive whale-CEX flow", value="massive_flow"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
@@ -6691,13 +6755,14 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
         trigger=[
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="massive whale-CEX flow", value="massive_flow"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),
@@ -6746,13 +6811,14 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         whale_flow_min_tokens="Minimum top-holder-origin CEX transfer amount for the whale-CEX trigger lane.",
         limit="Maximum rows to return.",
         lookback_hours="Transfer lookback window in hours.",
-        trigger="Filter to all, triggered, whale-CEX flow, target-CEX flow, forced-flow mechanics, breakout, or core-watch rows.",
+        trigger="Filter to all, triggered, massive whale-CEX, whale-CEX, target-CEX, forced-flow, breakout, or core-watch rows.",
         breakout_windows="Comma-separated high-breakout windows to check after hard gates, e.g. 1D,2D,3D,4D.",
     )
     @app_commands.choices(
         trigger=[
             app_commands.Choice(name="all hard-gated rows", value="all"),
             app_commands.Choice(name="triggered only", value="triggered"),
+            app_commands.Choice(name="massive whale-CEX flow", value="massive_flow"),
             app_commands.Choice(name="whale-CEX flow", value="flow"),
             app_commands.Choice(name="target-CEX flow", value="target_flow"),
             app_commands.Choice(name="forced-flow mechanics", value="forced_flow"),

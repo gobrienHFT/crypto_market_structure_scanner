@@ -38,18 +38,18 @@ Candidates: /SLEEPUSDT
 
 ```text
 Early structure radar
-Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Whale-CEX >= 100.00K | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
+Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Floor: 20.00K tokens | Whale-CEX >= 100.00K | Massive >= 10.00M | Lookback: 24h | Trigger: all | Breakouts: 1D,2D,3D,4D,5D,20D
 Hard gates: top10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence; Binance+Bitget; float/FDV trap; 60D no-pump/dormant; squeeze stack; early/no-chase.
-Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1
+Matches: 2 | Core 6/6: 2 | Triggered: 2 | Massive whale-origin CEX: 0 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1
 Gate funnel: scan 11 -> score 10 -> whale90 9 -> holderSrc 5 -> Bn+Bg 4 -> float 4 -> squeeze 4 -> dormant 2 -> early 2 -> shown 2
-Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2
-Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
+Trigger lanes: triggered 2 | massive-whale-CEX 0 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2
+Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K (>=100.00K floor)) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 
 Candidates: /CAPUSDT /LABXUSDT
 
 /CAPUSDT | A2 BREAKOUT | RAVE-like | trigger breakout 1D,2D,3D,4D,5D,20D | thesis 86/100 | whale 94.0% holderEv Y | venues Bn/Bg/Gate Y/Y/N | float 88 FDV/MC 12.0x | hist 180d pump60 8.4%/60d | squeeze 62 fuel 52 shorts 54.0% | highs 1D,2D,3D,4D,5D,20D | CEX no target flow max n/a
   next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
-/LABXUSDT | A3 WHALE-CEX | LAB-like | trigger whale-CEX 360.00K | thesis 90/100 | whale 91.0% holderEv Y | venues Bn/Bg/Gate Y/Y/Y | float 84 FDV/MC 9.0x | hist 160d pump60 11.2%/60d | squeeze 58 fuel 56 shorts 51.0% | highs none | CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K
+/LABXUSDT | A3 WHALE-CEX | LAB-like | trigger whale-CEX 360.00K (>=100.00K floor) | thesis 90/100 | whale 91.0% holderEv Y | venues Bn/Bg/Gate Y/Y/Y | float 84 FDV/MC 9.0x | hist 160d pump60 11.2%/60d | squeeze 58 fuel 56 shorts 51.0% | highs none | CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | floor >= 100.00K
   next: watch for absorption after target-CEX inventory movement and first perp response
 
 Use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence.
@@ -59,14 +59,14 @@ Use `/ravelab near_miss_limit:5 detail:true` for blocked rows and full evidence.
 
 ```text
 Strict RAVE/LAB crime-pump early radar
-Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Whale-CEX floor: 100.00K tokens | Style: both | Min early score: 0 | Min RAVE/LAB archetype: 0 | Whale gate: top10 >= 90.0% | Squeeze stack gate: >= 50 | History gate: >= 60d | Max recent pump: < 35% over 60d | Holder evidence required: True | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False | Whale-origin CEX required: False | High breakout windows: 1D,2D,3D,4D,5D,20D | Breakout required: False | Near misses: 5 | Trigger filter: all | Detail: False
+Source: fresh Deep scan at 2026-05-28 09:22:00 UTC | Transfer floor: 20.00K tokens | Lookback: 24h | Whale-CEX floor: 100.00K tokens | Massive whale-CEX floor: 10.00M tokens | Style: both | Min early score: 0 | Min RAVE/LAB archetype: 0 | Whale gate: top10 >= 90.0% | Squeeze stack gate: >= 50 | History gate: >= 60d | Max recent pump: < 35% over 60d | Holder evidence required: True | Binance+Bitget required: True | Dormant 2m required: True | Quiet required: True | Target flow required: False | Whale-origin CEX required: False | High breakout windows: 1D,2D,3D,4D,5D,20D | Breakout required: False | Near misses: 5 | Trigger filter: all | Detail: False
 No-pump proof: requires 60D closed daily-candle pump history; missing/insufficient proof fails dormant2m.
 Core gates: top10 whale-control threshold with chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, 2mo no-pump/dormancy, squeeze stack, early/no-chase.
 Anchors: RAVEUSDT 2026-04-18 = cap-table reflexivity; LABUSDT 2026-05-11 = venue-inventory stress.
-Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 6/6: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
+Matches: 2 | RAVE-like: 1 | LAB-like: 1 | Mixed: 0 | Core 6/6: 2 | Target-flow rows: 1 | Whale-origin CEX rows: 1 | Massive whale-origin rows: 0 | Near misses shown: 2 | Read: historical-analogue screen, not trade instruction.
 Gate funnel: scan 11 -> score 10 -> whale90 9 -> holderSrc 5 -> Bn+Bg 4 -> float 4 -> squeeze 4 -> dormant 2 -> early 2 -> shown 2
-Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2
-Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
+Trigger lanes: triggered 2 | massive-whale-CEX 0 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2
+Trigger queue: /LABXUSDT A3 (whale-CEX 360.00K (>=100.00K floor)) | /CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)
 All shown rows passed top10 whale-control >= 90.0%, explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50.
 Holder evidence rows: 2 with ETH/BNB/ARB chain+contract explorer holder-source snapshot | contract rows 2 | pct-only rows 0
 Breakout high checks: 1D,2D,3D,4D,5D,20D | dynamic checks 8 | cached flags 4 | errors 0 | insufficient 0
@@ -77,8 +77,8 @@ Candidates: /CAPUSDT /LABXUSDT
 /CAPUSDT | RAVE-like | A2 BREAKOUT PRIME | core 6/6 | trigger breakout 1D,2D,3D,4D,5D,20D | thesis 86/100 crime 36/100 early 73/100 | blockers none | anchor RAVEUSDT 2026-04-18
   proof: whale 94.0% holderEv Y | venues Bn Y/Bg Y/Gate N | float 88(Y) FDV/MC 12.0x | noPump Y pump60 8.4%/60d binance60d | hist 180d dormant2m Y | flowMech FUEL 57/100 exh 18 shorts 54.0% +short 1.1pp OI +2.4% volx 1.4 | squeeze 62(Y) fuel 52 ssq 48 flip N shortMaj Y shorts 54.0% | highs 1D,2D,3D,4D,5D | CEX no target flow 0tx max n/a | holder chain ethereum, holders 6000, top10 94.0% / top100 99.8%, src Etherscan holder endpoint, contract 0x1111...1111 | venue Bn 8.0%; Bg 2.0%; Gate no
   next: watch 1D-5D highs, first volume lift, and OI expansion without chase heat
-/LABXUSDT | LAB-like | A3 WHALE-CEX PRIME | core 6/6 | trigger whale-CEX 360.00K | thesis 90/100 crime 42/100 early 82/100 | blockers none | anchor LABUSDT 2026-05-11
-  proof: whale 91.0% holderEv Y | venues Bn Y/Bg Y/Gate Y | float 84(Y) FDV/MC 9.0x | noPump Y pump60 11.2%/60d binance60d | hist 160d dormant2m Y | flowMech INVENTORY 63/100 exh 22 shorts 51.0% +short 0.8pp OI +3.0% volx 1.8 | squeeze 58(Y) fuel 56 ssq 47 flip N shortMaj Y shorts 51.0% | highs none | CEX Binance, Gate.io 2tx max 360.00K whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | holder chain arbitrum, holders 8000, top10 91.0% / top100 99.2%, src Arbiscan holder endpoint, contract 0x2222...2222 | venue Bn 9.0%,target; Bg 2.0%; Gate target
+/LABXUSDT | LAB-like | A3 WHALE-CEX PRIME | core 6/6 | trigger whale-CEX 360.00K (>=100.00K floor) | thesis 90/100 crime 42/100 early 82/100 | blockers none | anchor LABUSDT 2026-05-11
+  proof: whale 91.0% holderEv Y | venues Bn Y/Bg Y/Gate Y | float 84(Y) FDV/MC 9.0x | noPump Y pump60 11.2%/60d binance60d | hist 160d dormant2m Y | flowMech INVENTORY 63/100 exh 22 shorts 51.0% +short 0.8pp OI +3.0% volx 1.8 | squeeze 58(Y) fuel 56 ssq 47 flip N shortMaj Y shorts 51.0% | highs none | CEX Binance, Gate.io 2tx max 360.00K whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | floor >= 100.00K | holder chain arbitrum, holders 8000, top10 91.0% / top100 99.2%, src Arbiscan holder endpoint, contract 0x2222...2222 | venue Bn 9.0%,target; Bg 2.0%; Gate target
   next: watch for absorption after target-CEX inventory movement and first perp response
 
 Near misses (blocked, not eligible yet; failed gates are shown as blockers):

@@ -3087,9 +3087,9 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert output.index("-> float ") < output.index("-> squeeze")
     assert "holderSrc" in output
     assert "shown 2" in output
-    assert "Trigger lanes: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2" in output
+    assert "Trigger lanes: triggered 2 | massive-whale-CEX 0 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 2" in output
     assert "Core 6/6: 2" in output
-    assert "Whale-origin CEX rows: 1" in output
+    assert "Whale-origin CEX rows: 1 | Massive whale-origin rows: 0" in output
     assert "Forced-flow rows: 0 | Near misses shown: 2" in output
     assert "Holder evidence rows:" in output
     assert "Breakout high checks:" in output
@@ -3097,7 +3097,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "All shown rows passed top10 whale-control >= 90.0%, explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap, no recent pump >= 35%, history >= 60d and dormant2m, squeeze stack >= 50." in output
     assert "Candidates:" in output
     assert "Trigger queue:" in output
-    assert "/LABXUSDT A3 (whale-CEX 360.00K)" in output
+    assert "/LABXUSDT A3 (whale-CEX 360.00K (>=100.00K floor))" in output
     assert "/CAPUSDT A2 (breakout 1D,2D,3D,4D,5D,20D)" in output
     assert output.index("Trigger queue:") < output.index("Holder evidence rows:")
     assert "/CAPUSDT" in output
@@ -3109,10 +3109,10 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "venue Bn 9.0%,target; Bg 2.0%; Gate target" in output
     assert "/LABXUSDT | LAB-like" in output
     assert "A3 WHALE-CEX PRIME" in output
-    assert "core 6/6 | trigger whale-CEX 360.00K | thesis" in output
+    assert "core 6/6 | trigger whale-CEX 360.00K (>=100.00K floor) | thesis" in output
     assert "trigger breakout 1D,2D,3D,4D,5D,20D" in output
     assert "blockers none" in output
-    assert "whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa" in output
+    assert "whale-CEX 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | floor >= 100.00K" in output
     assert "proof: whale 91.0% holderEv Y | venues Bn Y/Bg Y/Gate Y | float" in output
     assert "FDV/MC 9.0x | noPump Y pump60 2.0%/60d binance60d" in output
     assert "anchor LABUSDT 2026-05-11" in output
@@ -3173,7 +3173,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     trigger_flow_output = "\n".join(trigger_flow_chunks)
     assert "Trigger filter: flow" in trigger_flow_output
     assert "trigger:flow 1" in trigger_flow_output
-    assert "Trigger lanes before filter: triggered 2 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 1" in trigger_flow_output
+    assert "Trigger lanes before filter: triggered 2 | massive-whale-CEX 0 | whale-CEX 1 | target-CEX 1 | forced-flow 0 | breakout 1 | core-watch 0 | shown 1" in trigger_flow_output
     assert "/LABXUSDT | LAB-like" in trigger_flow_output
     assert "/CAPUSDT" not in trigger_flow_output
 
@@ -3200,13 +3200,13 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert "Trigger: all" in crime_output
     assert "Gate funnel:" in crime_output
     assert "Trigger lanes: triggered 2" in crime_output
-    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in crime_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Massive whale-origin CEX: 0 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in crime_output
     assert "Trigger queue:" in crime_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in crime_output
     assert "venues Bn/Bg/Gate Y/Y/N | float" in crime_output
     assert "FDV/MC 12.0x | hist 180d pump60" in crime_output
     assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in crime_output
-    assert "CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K" in crime_output
+    assert "CEX Binance, Gate.io max 360.00K | 1 top-holder sender tx | whale-origin 360.00K | r1 91.0% 0xaaaa...aaaa | floor >= 100.00K" in crime_output
     assert "Strict RAVE/LAB crime-pump early radar" not in crime_output
     assert "Near misses (blocked" not in crime_output
 
@@ -3215,7 +3215,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert hunt_title == "Alpha hunt"
     assert "Alpha hunt" in hunt_output
     assert "Crime-pump early queue" not in hunt_output
-    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in hunt_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Massive whale-origin CEX: 0 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in hunt_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in hunt_output
     assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in hunt_output
 
@@ -3224,7 +3224,7 @@ def test_load_ravelab_list_finds_early_historical_analogues(monkeypatch) -> None
     assert radar_title == "Early structure radar"
     assert "Early structure radar" in radar_output
     assert "Crime-pump early queue" not in radar_output
-    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in radar_output
+    assert "Matches: 2 | Core 6/6: 2 | Triggered: 2 | Massive whale-origin CEX: 0 | Whale-origin CEX: 1 | Target-flow: 1 | Forced-flow: 0 | Breakout highs: 1" in radar_output
     assert "/CAPUSDT | A2 BREAKOUT | RAVE-like" in radar_output
     assert "/LABXUSDT | A3 WHALE-CEX | LAB-like" in radar_output
 
@@ -3509,6 +3509,82 @@ def test_ravelab_trigger_text_prioritizes_whale_flow_then_breakout() -> None:
     assert bot._ravelab_trigger_text(row) == "whale-CEX 1.50M, breakout 1D,2D"
 
 
+def test_ravelab_massive_whale_flow_is_separate_trigger_lane(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS", "100000")
+    monkeypatch.setenv("DISCORD_RAVELAB_MASSIVE_WHALE_FLOW_MIN_TOKENS", "10000000")
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "MIDFLOWUSDT",
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": True,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 62.0,
+                "short_account_pct": 54.0,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 2_500_000,
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
+                "cex_deposit_24h_target_exchanges": "Binance",
+            },
+            {
+                "symbol": "BIGFLOWUSDT",
+                "_ravelab_whale_gate": True,
+                "_ravelab_holder_evidence_gate": True,
+                "_ravelab_venue_gate": True,
+                "_ravelab_float_gate": True,
+                "_ravelab_no_large_pump_gate": True,
+                "_ravelab_dormant_2m_gate": True,
+                "_ravelab_early_gate": True,
+                "_ravelab_target_flow": True,
+                "_ravelab_breakout_any": False,
+                "_ravelab_squeeze_score": 72.0,
+                "_ravelab_squeeze_fuel_score": 68.0,
+                "_ravelab_short_crowd_score": 62.0,
+                "short_account_pct": 54.0,
+                "cex_deposit_24h_count": 1,
+                "cex_deposit_24h_whale_sender_count": 1,
+                "cex_deposit_24h_whale_sender_token_amount": 12_000_000,
+                "cex_deposit_24h_top_sender_rank": 1,
+                "cex_deposit_24h_top_sender_pct": 91.0,
+                "cex_deposit_24h_target_exchanges": "Binance",
+            },
+        ]
+    )
+
+    scored = bot._ravelab_apply_thesis_columns(
+        frame,
+        min_squeeze_score=50.0,
+        min_transfer_tokens=20_000,
+        min_whale_flow_tokens=100_000,
+    ).set_index("symbol", drop=False)
+
+    assert bool(scored.loc["MIDFLOWUSDT", "_ravelab_whale_origin_flow"])
+    assert not bool(scored.loc["MIDFLOWUSDT", "_ravelab_massive_whale_origin_flow"])
+    assert bool(scored.loc["BIGFLOWUSDT", "_ravelab_massive_whale_origin_flow"])
+    assert (
+        bot._ravelab_trigger_text(scored.loc["MIDFLOWUSDT"])
+        == "whale-CEX 2.50M (>=100.00K floor)"
+    )
+    assert (
+        bot._ravelab_trigger_text(scored.loc["BIGFLOWUSDT"])
+        == "MASSIVE whale-CEX 12.00M (>=10.00M floor)"
+    )
+    assert list(scored[bot._ravelab_trigger_filter_mask(scored, "massive_flow")]["symbol"]) == ["BIGFLOWUSDT"]
+    assert bot._ravelab_lane_counts_line(scored) == (
+        "Trigger lanes: triggered 2 | massive-whale-CEX 1 | whale-CEX 2 | target-CEX 2 | forced-flow 0 | breakout 0 | core-watch 0 | shown 2"
+    )
+
+
 def test_ravelab_forced_flow_trigger_is_first_class_lane() -> None:
     frame = pd.DataFrame(
         [
@@ -3565,7 +3641,7 @@ def test_ravelab_forced_flow_trigger_is_first_class_lane() -> None:
     assert bool(bot._ravelab_trigger_filter_mask(scored, "forced").loc["MECHUSDT"])
     assert not bool(bot._ravelab_trigger_filter_mask(scored, "core").loc["MECHUSDT"])
     assert bot._ravelab_lane_counts_line(scored.loc[["MECHUSDT"]]) == (
-        "Trigger lanes: triggered 1 | whale-CEX 0 | target-CEX 0 | forced-flow 1 | breakout 0 | core-watch 0 | shown 1"
+        "Trigger lanes: triggered 1 | massive-whale-CEX 0 | whale-CEX 0 | target-CEX 0 | forced-flow 1 | breakout 0 | core-watch 0 | shown 1"
     )
     assert bot._ravelab_queue_summary_lines(scored.loc[["MECHUSDT"]]) == [
         "Trigger queue: /MECHUSDT A1 (forced-flow 76)"
@@ -3778,7 +3854,7 @@ def test_ravelab_flow_triggers_respect_min_transfer_floor(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert "trigger:flow 1" in output
-    assert "Trigger lanes before filter: triggered 1 | whale-CEX 1 | target-CEX 1" in output
+    assert "Trigger lanes before filter: triggered 1 | massive-whale-CEX 0 | whale-CEX 1 | target-CEX 1" in output
     assert "/BIGFLOWUSDT" in output
     assert "/LOWFLOWUSDT" not in output
 
@@ -4310,12 +4386,12 @@ def test_load_flow_proof_and_coincheck_show_confirmed_transfer_details(monkeypat
     assert "Whale sender: 1 top-holder sender tx | whale-origin 12.00M | r1 91.0% 0x1111...1111" in proof
     assert "Transfer labels prove flow only; they do not prove the Binance+Bitget trading-venue gate." in proof
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y | holder Y | venueBnBg Y | float Y | shorts+fuel Y | noPump60 Y | whaleOrigin Y" in proof
-    assert "RAVELAB triggers: whale-CEX 12.00M | A3 WHALE-CEX PRIME" in proof
+    assert "RAVELAB triggers: MASSIVE whale-CEX 12.00M (>=10.00M floor) | A3 WHALE-CEX PRIME" in proof
     assert "Flow source: token_transfer_api" in proof
     assert check_title == "PROOFUSDT checklist"
     assert "Verdict: PASS" in check
     assert "Thesis gates: baseThesis Y | coreSetup Y | flowSetup Y | targetFlow Y" in check
-    assert "RAVELAB triggers: whale-CEX 12.00M | A3 WHALE-CEX PRIME" in check
+    assert "RAVELAB triggers: MASSIVE whale-CEX 12.00M (>=10.00M floor) | A3 WHALE-CEX PRIME" in check
     assert "baseThesis/coreSetup can pass before CEX flow" in check
     assert "PASS target CEX flow" in check
     assert "PASS Binance+Bitget trading venue" in check
