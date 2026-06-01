@@ -2805,16 +2805,13 @@ def _binance_bitget_trading_gate_mask(frame: pd.DataFrame) -> pd.Series:
     if frame.empty:
         return pd.Series(False, index=frame.index)
     top_venue = _text_series(frame, "top_venue")
-    symbols = _text_series(frame, "symbol")
     explicit_binance_perp = (
         _boolish_series(frame.get("binance_perp_universe"), index=frame.index)
         | _boolish_series(frame.get("is_binance_perp"), index=frame.index)
         | _boolish_series(frame.get("_ravelab_binance_perp_universe"), index=frame.index)
     )
-    implicit_binance_perp = symbols.ne("") if _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", False) else pd.Series(False, index=frame.index)
     has_binance = (
         explicit_binance_perp
-        | implicit_binance_perp
         | _num_series(frame, "binance_volume_share_pct").gt(0.0)
         | top_venue.str.contains(BINANCE_PATTERN, na=False)
     )

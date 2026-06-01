@@ -151,7 +151,7 @@ DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
 ```
 
-Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so symbol text alone cannot satisfy Binance evidence; set it to `1` only for legacy Binance-only caches generated before that marker existed. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
+Fresh scans stamp `binance_perp_universe=true`, so the Binance side of the Binance+Bitget gate is explicit. Symbol text alone cannot satisfy Binance evidence, even if the deprecated `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS` variable is present. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` require the explicit Binance perp marker, Binance venue share, or Binance top-venue text, plus 60D no-pump proof. Candidate surfaces then add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows as candidates.
 
 For a dedicated transfer monitor:
 

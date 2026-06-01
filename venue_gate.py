@@ -139,7 +139,7 @@ def binance_bitget_venue_gate_enabled() -> bool:
 
 
 def assume_symbol_universe_is_binance_perp() -> bool:
-    return _env_bool("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", False)
+    return False
 
 
 def binance_bitget_min_share_pct() -> float:
@@ -151,7 +151,6 @@ def binance_bitget_venue_mask(frame: pd.DataFrame, *, allow_cex_flow_targets: bo
         return pd.Series(False, index=frame.index)
 
     min_share = binance_bitget_min_share_pct()
-    symbols = _text_column(frame, "symbol").str.strip().ne("")
     binance_share = _numeric_column(frame, "binance_volume_share_pct").gt(min_share)
     bitget_share = _numeric_column(frame, "bitget_volume_share_pct").gt(min_share)
     top_venue = _text_column(frame, "top_venue")
@@ -160,9 +159,8 @@ def binance_bitget_venue_mask(frame: pd.DataFrame, *, allow_cex_flow_targets: bo
         | _boolish_column(frame, "is_binance_perp")
         | _boolish_column(frame, "_ravelab_binance_perp_universe")
     )
-    implicit_binance_perp = symbols if assume_symbol_universe_is_binance_perp() else pd.Series(False, index=frame.index)
 
-    has_binance = explicit_binance_perp | implicit_binance_perp | binance_share | top_venue.str.contains(BINANCE_RE, na=False)
+    has_binance = explicit_binance_perp | binance_share | top_venue.str.contains(BINANCE_RE, na=False)
     has_bitget = bitget_share | top_venue.str.contains(BITGET_RE, na=False)
     return (has_binance & has_bitget).fillna(False)
 

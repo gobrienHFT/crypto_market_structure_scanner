@@ -202,7 +202,7 @@ DISCORD_REQUIRE_BITGET_OR_GATE=1
 DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
 ```
 
-Fresh scans write `binance_perp_universe=true` before Discord gates run. Keep `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0` so Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text. Set it to `1` only for legacy Binance-only cache files that lack the marker. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
+Fresh scans write `binance_perp_universe=true` before Discord gates run. Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text; symbol text alone never proves Binance venue support, even if the deprecated `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS` variable is present. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
 
 Per-symbol cooldown state is stored locally in:
 

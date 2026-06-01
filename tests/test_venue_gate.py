@@ -28,9 +28,9 @@ def test_binance_bitget_venue_gate_rejects_gate_only_rows(monkeypatch) -> None:
     assert selected["symbol"].tolist() == ["BITGETUSDT"]
 
 
-def test_binance_bitget_venue_gate_can_require_explicit_binance_evidence(monkeypatch) -> None:
+def test_binance_bitget_venue_gate_ignores_deprecated_binance_assumption_env(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
-    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "0")
+    monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "1")
     frame = pd.DataFrame(
         [
             {"symbol": "SYMBOLONLYUSDT", "trade_bucket_score": 90, "bitget_volume_share_pct": 1.0},

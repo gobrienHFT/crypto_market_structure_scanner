@@ -4832,7 +4832,7 @@ def test_discord_venue_gate_requires_explicit_binance_evidence_by_default(monkey
     assert selected["symbol"].tolist() == ["MARKEDUSDT", "SHAREUSDT"]
 
 
-def test_discord_legacy_venue_gate_can_assume_binance_perp_universe(monkeypatch) -> None:
+def test_discord_legacy_venue_gate_never_assumes_binance_from_symbol_text(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_REQUIRE_BITGET_OR_GATE", raising=False)
     monkeypatch.setenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", "1")
     frame = pd.DataFrame(
@@ -4844,7 +4844,7 @@ def test_discord_legacy_venue_gate_can_assume_binance_perp_universe(monkeypatch)
 
     selected = frame[bot._binance_bitget_trading_gate_mask(frame)]
 
-    assert selected["symbol"].tolist() == ["SYMBOLONLYUSDT"]
+    assert selected.empty
 
 
 def test_discord_thesis_venue_gate_ignores_disabled_generic_env(monkeypatch) -> None:
