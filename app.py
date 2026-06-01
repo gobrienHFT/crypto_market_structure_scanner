@@ -63,6 +63,8 @@ DEFAULT_CRIME_EXCLUDED_BASES = (
     "BTC,ETH,XRP,BNB,SOL,DOGE,ADA,TRX,LINK,LTC,BCH,DOT,AVAX,TON,SHIB,HBAR,XLM,ETC,ICP,NEAR,APT,ARB,OP"
 )
 DEFAULT_CRIME_FORCE_SYMBOLS = "RAVEUSDT,FIGHTUSDT,CHIPUSDT,SIRENUSDT,STOUSDT,HIGHUSDT,RIVERUSDT,PIPPINUSDT"
+THESIS_HOLDER_CHAIN_OPTIONS = ("ethereum", "bsc", "arbitrum")
+THESIS_HOLDER_CHAIN_LABEL = "ETH/BNB/ARB"
 MM_PROXIMITY_COLUMNS = [
     "mm_proximity_score",
     "mm_proximity_maker",
@@ -9495,7 +9497,7 @@ def _render_concentration_result(result: Any) -> None:
 def render_concentration_dashboard() -> None:
     st.title("Binance Perp Controlled-Float Scanner")
     st.caption(
-        "Automatically walks the Binance USDT perpetual universe, resolves token contracts from a local ETH/BNB seed file plus explorers, "
+        f"Automatically walks the Binance USDT perpetual universe, resolves token contracts from a local {THESIS_HOLDER_CHAIN_LABEL} seed file plus explorers, "
         "fetches holder tables, filters custody/storage false positives, and ranks controlled-float squeeze candidates."
     )
 
@@ -9504,7 +9506,7 @@ def render_concentration_dashboard() -> None:
 
     with tabs[0]:
         st.subheader("Universe builder")
-        seed_file_path = st.text_input("ETH/BNB contract seed file", value=str(DEFAULT_SEED_PATH))
+        seed_file_path = st.text_input(f"{THESIS_HOLDER_CHAIN_LABEL} contract seed file", value=str(DEFAULT_SEED_PATH))
         settings = st.columns(4)
         oi_top_n = int(settings[0].number_input("Enrich OI top N", min_value=0, max_value=200, value=25, step=5))
         holder_top_n = int(settings[1].number_input("Holder rows/scan", min_value=100, max_value=1000, value=100, step=100))
@@ -9561,7 +9563,7 @@ def render_concentration_dashboard() -> None:
             for index, candidate in enumerate(candidates, start=1):
                 progress.progress(index / max(1, len(candidates)))
                 if not candidate.contract_address or not candidate.chain:
-                    failures.append(f"{candidate.symbol}: no local ETH/BNB contract match")
+                    failures.append(f"{candidate.symbol}: no local {THESIS_HOLDER_CHAIN_LABEL} contract match")
                     continue
                 try:
                     result = scanner.scan(
@@ -9812,11 +9814,11 @@ def render_concentration_dashboard() -> None:
             input_cols = st.columns(3)
             symbol = input_cols[0].text_input("Symbol", placeholder="BIO")
             contract = input_cols[1].text_input("Contract address", placeholder="0x...")
-            chain = input_cols[2].selectbox("Chain", ["ethereum", "bsc"], index=0)
+            chain = input_cols[2].selectbox("Chain", list(THESIS_HOLDER_CHAIN_OPTIONS), index=0)
             top_n = int(st.number_input("Top holders", min_value=20, max_value=1000, value=100, step=20))
             if st.button("Scan single token"):
                 if not contract.strip():
-                    st.error("Enter an Ethereum or BNB Chain contract address.")
+                    st.error(f"Enter an {THESIS_HOLDER_CHAIN_LABEL} contract address.")
                 else:
                     scanner = TokenConcentrationScanner(cache=cache)
                     result = scanner.scan(
@@ -9846,7 +9848,11 @@ def render_concentration_dashboard() -> None:
         seed_queue_path = queue_cols[0].text_input("Seed file", value=str(DEFAULT_SEED_PATH))
         top_n_volume = queue_cols[1].number_input("Top N by volume", min_value=0, max_value=500, value=50, step=10)
         min_holders = queue_cols[2].number_input("Minimum holder count", min_value=0, max_value=10000, value=100, step=50)
-        chain_filter = queue_cols[3].multiselect("Chain filter", ["ethereum", "bsc"], default=["ethereum", "bsc"])
+        chain_filter = queue_cols[3].multiselect(
+            "Chain filter",
+            list(THESIS_HOLDER_CHAIN_OPTIONS),
+            default=list(THESIS_HOLDER_CHAIN_OPTIONS),
+        )
         if st.button("Queue scanner job"):
             cache.enqueue(
                 mode,

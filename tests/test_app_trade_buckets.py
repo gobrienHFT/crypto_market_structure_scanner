@@ -10,6 +10,11 @@ os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
 import app
 
 
+def test_dashboard_holder_chain_options_include_arbitrum() -> None:
+    assert app.THESIS_HOLDER_CHAIN_LABEL == "ETH/BNB/ARB"
+    assert app.THESIS_HOLDER_CHAIN_OPTIONS == ("ethereum", "bsc", "arbitrum")
+
+
 def test_score_trade_buckets_requires_hard_thesis_before_convex_long(monkeypatch) -> None:
     monkeypatch.delenv("DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS", raising=False)
     frame = pd.DataFrame(
