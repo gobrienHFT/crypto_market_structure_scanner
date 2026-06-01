@@ -191,9 +191,9 @@ def test_load_shorts_list_returns_every_symbol_over_50pct(tmp_path, monkeypatch)
     assert "BBBUSDT" in output
     assert "AAAUSDT" not in output
     assert "Read: high short-account percentage is weak context only" in output
-    assert "/CCCUSDT | shorts 72.5% | baseThesis ? | no scanner thesis context" in output
-    assert "/BBBUSDT | shorts 50.1% | baseThesis ? | no scanner thesis context" in output
-    assert output.index("/CCCUSDT | shorts 72.5%") < output.index("/BBBUSDT | shorts 50.1%")
+    assert "/CCCUSDT | weakCtx shorts 72.5% | baseThesis ? | no scanner thesis context" in output
+    assert "/BBBUSDT | weakCtx shorts 50.1% | baseThesis ? | no scanner thesis context" in output
+    assert output.index("/CCCUSDT | weakCtx shorts 72.5%") < output.index("/BBBUSDT | weakCtx shorts 50.1%")
 
 
 def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
@@ -211,7 +211,7 @@ def test_load_shorts_list_prefers_live_binance_rows(monkeypatch) -> None:
     output = "\n".join(chunks)
 
     assert "Source: live Binance account-ratio scan" in output
-    assert "/PLAYUSDT | shorts 52.3% | baseThesis ? | no scanner thesis context" in output
+    assert "/PLAYUSDT | weakCtx shorts 52.3% | baseThesis ? | no scanner thesis context" in output
     assert "RAVEUSDT" not in output
 
 
@@ -249,8 +249,8 @@ def test_load_shorts_list_overlays_base_thesis_context(tmp_path, monkeypatch) ->
 
     assert title == "Short-account majority list"
     assert "Thesis context: latest scanner cache | Base thesis rows: 1" in output
-    assert "/SHORTONLYUSDT | shorts 71.0% | baseThesis N | holder N top10 55.0% | BnBg Y | noPump60 Y" in output
-    assert "/THESISUSDT | shorts 62.0% | baseThesis Y | holder Y top10 91.0% | BnBg Y | noPump60 Y" in output
+    assert "/SHORTONLYUSDT | weakCtx shorts 71.0% | baseThesis N | holder N top10 55.0% | BnBg Y | noPump60 Y" in output
+    assert "/THESISUSDT | weakCtx shorts 62.0% | baseThesis Y | holder Y top10 91.0% | BnBg Y | noPump60 Y" in output
 
 
 def test_load_funding_leaderboard_splits_long_and_short_carry(monkeypatch) -> None:

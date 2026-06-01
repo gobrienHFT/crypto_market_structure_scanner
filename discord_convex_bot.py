@@ -6074,7 +6074,7 @@ def _format_shorts_frame(frame: pd.DataFrame, *, source: str, prefix: str = "") 
             context = f" | holder {holder}{top10_text} | BnBg {venue} | noPump60 {no_pump}"
         else:
             context = " | no scanner thesis context"
-        lines.append(f"/{symbol} | shorts {short_text} | baseThesis {base_thesis}{context}")
+        lines.append(f"/{symbol} | weakCtx shorts {short_text} | baseThesis {base_thesis}{context}")
     return "Short-account majority list", _chunk_text_lines(lines)
 
 
