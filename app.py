@@ -2797,7 +2797,7 @@ def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
         if pd.notna(row.get("valuation_trap_score")) and float(row["valuation_trap_score"]) >= 55.0:
             triggers.append("valuation trap")
         if bool(row.get("pre_pump_candidate_flag")):
-            triggers.append("pre-ignition candidate")
+            triggers.append("pre-ignition signal")
         if bool(row.get("convexity_prime_flag")):
             triggers.append("convexity prime")
         if bool(row.get("early_convexity_flag")):
@@ -5574,7 +5574,7 @@ def render_breakout_dashboard() -> None:
             ),
             "convexity_prime_flag": st.column_config.CheckboxColumn(
                 "Convex Prime",
-                help="Best-in-class early convexity candidates.",
+                help="Best-in-class early convexity signals before hard thesis gating.",
             ),
             "convexity_chase_risk_flag": st.column_config.CheckboxColumn(
                 "Chase Risk",
@@ -6590,7 +6590,7 @@ def render_breakout_dashboard() -> None:
         d4.metric("180D low breaks", int(all_df["broke_low_180d"].sum()) if not all_df.empty else 0)
 
         e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Structure candidates", int(all_df["crime_pump_flag"].sum()) if not all_df.empty else 0)
+        e1.metric("Structure signals", int(all_df["crime_pump_flag"].sum()) if not all_df.empty else 0)
         e2.metric("Ignition setups", int(all_df["ignition_setup_flag"].sum()) if not all_df.empty else 0)
         e3.metric("Exhaustion flags", int(all_df["exhaustion_flag"].sum()) if not all_df.empty else 0)
         median_pump_score = float(all_df["crime_pump_score"].median()) if not all_df.empty else 0.0
@@ -7161,7 +7161,7 @@ def render_breakout_dashboard() -> None:
 
             st.markdown("#### Ranked Short Squeeze Tape")
             if squeeze_ranked_df.empty:
-                st.info("No funding-flip / short-squeeze candidates in the scanned universe.")
+                st.info("No funding-flip / short-squeeze signals in the scanned universe.")
             else:
                 st.dataframe(
                     _display_frame(squeeze_ranked_df.head(30), squeeze_cols),
@@ -7693,7 +7693,7 @@ def render_breakout_dashboard() -> None:
             ].copy()
             crime_view_df = candidate_view_df.copy()
             radar_1, radar_2, radar_3, radar_4, radar_5 = st.columns(5)
-            radar_1.metric("Pre-ignition candidates", int(all_df["pre_pump_candidate_flag"].sum()) if not all_df.empty else 0)
+            radar_1.metric("Pre-ignition signals", int(all_df["pre_pump_candidate_flag"].sum()) if not all_df.empty else 0)
             radar_2.metric("Convex prime", int(all_df["convexity_prime_flag"].sum()) if not all_df.empty else 0)
             radar_3.metric("Squeeze machines", int(all_df["squeeze_machine_flag"].sum()) if not all_df.empty else 0)
             radar_4.metric("Chase risk", int(all_df["convexity_chase_risk_flag"].sum()) if not all_df.empty else 0)
@@ -7776,7 +7776,7 @@ def render_breakout_dashboard() -> None:
 
             crime_convex_col.subheader("Convex Long")
             if crime_convex_df.empty:
-                crime_convex_col.info("No cleaner convex-long structure candidates in this scan.")
+                crime_convex_col.info("No cleaner convex-long structure watches in this scan.")
             else:
                 crime_convex_col.dataframe(
                     _display_frame(crime_convex_df, crime_bucket_cols),
@@ -7886,7 +7886,7 @@ def render_breakout_dashboard() -> None:
                 | ranked_crime_df["squeeze_risk_flag"]
                 | ranked_crime_df["blowoff_risk_flag"]
             ]
-            with st.expander("Show flagged structure candidates only"):
+            with st.expander("Show flagged structure signals only"):
                 if flagged_crime_df.empty:
                     st.info("No symbols are crossing the current structure, ignition, exhaustion, or squeeze/blowoff thresholds.")
                 else:
@@ -8589,7 +8589,7 @@ def render_breakout_dashboard() -> None:
 
             st.subheader("Forward Label Tracker")
             st.caption(
-                "Every scan appends a lightweight snapshot. This panel labels prior top-10 pre-ignition candidates by "
+                "Every scan appends a lightweight snapshot. This panel labels prior top-10 pre-ignition signals by "
                 "the best later price observed inside each horizon, so we can tune for precision instead of guessing."
             )
             history = _read_pre_pump_snapshot_history()

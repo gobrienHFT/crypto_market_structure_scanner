@@ -220,7 +220,7 @@ def infer_setup_archetype(row: Mapping[str, Any] | pd.Series) -> str:
     if _row_bool(row, "forced_buying_setup_flag"):
         return "forced-flow pressure"
     if _row_bool(row, "clean_convex_setup_flag"):
-        return "clean market-structure candidate"
+        return "clean market-structure watch"
     if _row_bool(row, "convexity_chase_risk_flag") or _row_bool(row, "convexity_too_late_flag"):
         return "late-stage heat"
     return "watchlist structure"
