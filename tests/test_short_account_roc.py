@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from binance_futures import FuturesSymbol
 from short_account_roc import (
+    ShortAccountRocConfig,
     active_signal_keys,
+    build_discord_payload,
     build_short_account_roc_row,
     flagged_frame,
     scan_short_account_roc,
@@ -66,6 +70,44 @@ def test_short_account_roc_row_and_flags_cover_builds_and_covers() -> None:
 
     assert flagged["symbol"].tolist() == ["COVERUSDT", "BUILDUSDT"]
     assert keys == {"BUILDUSDT:build", "COVERUSDT:cover"}
+
+
+def test_short_account_discord_payload_labels_state_diff_rows() -> None:
+    row = build_short_account_roc_row(
+        futures_symbol=_symbol("BUILDUSDT"),
+        ratio_rows=[_ratio(1, 0.50), _ratio(2, 0.535)],
+        ticker={"lastPrice": "1.2", "quoteVolume": "1000000"},
+    )
+    config = ShortAccountRocConfig(
+        base_url="https://example.test",
+        timeout=1,
+        retries=0,
+        requests_per_second=1,
+        interval_seconds=60,
+        max_symbols=0,
+        symbols=(),
+        period="1h",
+        history_limit=2,
+        min_abs_pp=1.5,
+        min_abs_pct=3.0,
+        min_quote_volume=0,
+        top_n=25,
+        realert_hours=6,
+        output_dir=Path("."),
+        webhook_url="",
+        once=True,
+        dry_run=True,
+        write_full_scan=True,
+        suppress_initial_alerts=False,
+    )
+
+    payload = build_discord_payload(pd.DataFrame([row]), config, flagged_count=25)
+    description = payload["embeds"][0]["description"]
+
+    assert "New/re-alert rows: 1 | Flagged snapshot: 25" in description
+    assert "state-diff alerts only" in description
+    assert "/BUILDUSDT" in description
+    assert "vol24 $1.00M" in description
 
 
 def test_scan_short_account_roc_uses_quote_volume_filter_and_history() -> None:

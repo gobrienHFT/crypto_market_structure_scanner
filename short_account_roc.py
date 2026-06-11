@@ -15,11 +15,12 @@ import pandas as pd
 import requests
 
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic, FuturesSymbol
-from discord_flag_formatter import DISCORD_FOOTER, DISCORD_PRODUCT_IDENTITY
+from discord_flag_formatter import DISCORD_EMBED_DESCRIPTION_LIMIT, DISCORD_FOOTER, DISCORD_PRODUCT_IDENTITY
 
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = APP_DIR / "short_account_roc_output"
+MAX_DISCORD_ALERT_LINES = 25
 
 
 @dataclass(frozen=True)
@@ -389,6 +390,13 @@ def _format_number(value: Any, suffix: str = "") -> str:
     parsed = _to_float(value)
     if not math.isfinite(parsed):
         return "n/a"
+    absolute = abs(parsed)
+    if absolute >= 1_000_000_000:
+        return f"{parsed / 1_000_000_000:.2f}B{suffix}"
+    if absolute >= 1_000_000:
+        return f"{parsed / 1_000_000:.2f}M{suffix}"
+    if absolute >= 1_000:
+        return f"{parsed / 1_000:.2f}K{suffix}"
     return f"{parsed:.2f}{suffix}"
 
 
@@ -404,28 +412,61 @@ def _format_alert_line(row: pd.Series) -> str:
     )
 
 
-def _post_webhook(rows: pd.DataFrame, config: ShortAccountRocConfig) -> None:
+def _description_with_alert_lines(prefix: str, lines: list[str]) -> str:
+    selected: list[str] = []
+    for line in lines[:MAX_DISCORD_ALERT_LINES]:
+        candidate_selected = selected + [line]
+        omitted = len(lines) - len(candidate_selected)
+        marker = f"\n... +{omitted} more alert rows omitted; see latest CSV." if omitted else ""
+        candidate = prefix + "\n".join(candidate_selected) + marker
+        if len(candidate) > DISCORD_EMBED_DESCRIPTION_LIMIT:
+            break
+        selected.append(line)
+
+    omitted = len(lines) - len(selected)
+    description = prefix + "\n".join(selected)
+    if omitted:
+        marker = f"\n... +{omitted} more alert rows omitted; see latest CSV."
+        while selected and len(description + marker) > DISCORD_EMBED_DESCRIPTION_LIMIT:
+            selected.pop()
+            omitted += 1
+            marker = f"\n... +{omitted} more alert rows omitted; see latest CSV."
+            description = prefix + "\n".join(selected)
+        description += marker
+    return description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def build_discord_payload(rows: pd.DataFrame, config: ShortAccountRocConfig, *, flagged_count: int | None = None) -> dict[str, Any]:
     if rows.empty:
-        return
+        return {}
     lines = [_format_alert_line(row) for _, row in rows.iterrows()]
-    description = (
+    snapshot_text = f" | Flagged snapshot: {flagged_count}" if flagged_count is not None else ""
+    prefix = (
         f"{DISCORD_PRODUCT_IDENTITY}\n\n"
         f"Short-account 1h ROC monitor\n"
-        f"Threshold: abs delta >= {config.min_abs_pp:.2f}pp or abs relative >= {config.min_abs_pct:.2f}% | "
-        f"Period: {config.period} | Detected: {_now_label()}\n\n"
-        + "\n".join(lines[:25])
+        f"New/re-alert rows: {len(rows)}{snapshot_text} | Threshold: abs delta >= {config.min_abs_pp:.2f}pp "
+        f"or abs relative >= {config.min_abs_pct:.2f}% | Period: {config.period} | Detected: {_now_label()}\n"
+        f"Discord shows state-diff alerts only; console/CSV can contain the broader flagged snapshot.\n\n"
     )
+    description = _description_with_alert_lines(prefix, lines)
     payload = {
         "username": "Short ROC Scanner",
         "embeds": [
             {
                 "title": f"Short-account 1h ROC alert ({len(rows)})",
-                "description": description[:3900],
+                "description": description,
                 "color": 0xF97316,
                 "footer": {"text": DISCORD_FOOTER},
             }
         ],
     }
+    return payload
+
+
+def _post_webhook(rows: pd.DataFrame, config: ShortAccountRocConfig, *, flagged_count: int | None = None) -> None:
+    if rows.empty:
+        return
+    payload = build_discord_payload(rows, config, flagged_count=flagged_count)
     if config.dry_run:
         print("DRY RUN webhook payload:")
         print(payload)
@@ -497,7 +538,7 @@ def run_forever(config: ShortAccountRocConfig) -> None:
                 )
             ].copy()
             if not alert_rows.empty:
-                _post_webhook(alert_rows, config)
+                _post_webhook(alert_rows, config, flagged_count=len(flagged))
                 _append_alerts(alert_path, alert_rows)
                 now = _now_label()
                 for key in alert_keys:

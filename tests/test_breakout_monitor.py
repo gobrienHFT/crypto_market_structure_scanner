@@ -97,9 +97,11 @@ class BreakoutMonitorTests(unittest.TestCase):
 
         frame = pd.DataFrame([row])
         alert_rows = alert_rows_for_signal_keys(frame, {"TESTUSDT:broke_high_20d"})
-        payload = build_discord_payload(alert_rows)
+        payload = build_discord_payload(alert_rows, flagged_count=7)
         description = payload["embeds"][0]["description"]
 
+        self.assertIn("New alert symbols: 1 | Active flagged snapshot: 7", description)
+        self.assertIn("state-diff alerts only", description)
         self.assertIn("/TESTUSDT", description)
         self.assertIn("20D high breakout", description)
         self.assertIn("vol24 $2.50M", description)

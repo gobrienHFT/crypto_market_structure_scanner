@@ -15,13 +15,14 @@ import pandas as pd
 import requests
 
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic, FuturesSymbol
-from discord_flag_formatter import DISCORD_FOOTER, DISCORD_PRODUCT_IDENTITY
+from discord_flag_formatter import DISCORD_EMBED_DESCRIPTION_LIMIT, DISCORD_FOOTER, DISCORD_PRODUCT_IDENTITY
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = APP_DIR / "breakout_monitor_output"
 BREAKOUT_WINDOWS = (5, 10, 20, 50, 90, 180, 1300)
 MA_WINDOW = 200
 KLINE_LIMIT = max(max(BREAKOUT_WINDOWS), MA_WINDOW) + 1
+MAX_DISCORD_ALERT_LINES = 25
 
 
 @dataclass(frozen=True)
@@ -407,23 +408,49 @@ def _format_alert_line(row: pd.Series) -> str:
     )
 
 
-def build_discord_payload(rows: pd.DataFrame) -> dict[str, Any]:
+def _description_with_alert_lines(prefix: str, lines: list[str]) -> str:
+    selected: list[str] = []
+    for line in lines[:MAX_DISCORD_ALERT_LINES]:
+        candidate_selected = selected + [line]
+        omitted = len(lines) - len(candidate_selected)
+        marker = f"\n... +{omitted} more alert rows omitted; see latest CSV." if omitted else ""
+        candidate = prefix + "\n".join(candidate_selected) + marker
+        if len(candidate) > DISCORD_EMBED_DESCRIPTION_LIMIT:
+            break
+        selected.append(line)
+
+    omitted = len(lines) - len(selected)
+    description = prefix + "\n".join(selected)
+    if omitted:
+        marker = f"\n... +{omitted} more alert rows omitted; see latest CSV."
+        while selected and len(description + marker) > DISCORD_EMBED_DESCRIPTION_LIMIT:
+            selected.pop()
+            omitted += 1
+            marker = f"\n... +{omitted} more alert rows omitted; see latest CSV."
+            description = prefix + "\n".join(selected)
+        description += marker
+    return description[:DISCORD_EMBED_DESCRIPTION_LIMIT]
+
+
+def build_discord_payload(rows: pd.DataFrame, *, flagged_count: int | None = None) -> dict[str, Any]:
     if rows.empty:
         return {}
     lines = [_format_alert_line(row) for _, row in rows.iterrows()]
-    description = (
+    snapshot_text = f" | Active flagged snapshot: {flagged_count}" if flagged_count is not None else ""
+    prefix = (
         f"{DISCORD_PRODUCT_IDENTITY}\n\n"
         f"Breakout/MA200 monitor\n"
-        f"Signals: {len(rows)} symbols | Windows: {', '.join(f'{window}D' for window in BREAKOUT_WINDOWS)} | "
-        f"Detected: {_now_label()}\n\n"
-        + "\n".join(lines[:25])
+        f"New alert symbols: {len(rows)}{snapshot_text} | Windows: {', '.join(f'{window}D' for window in BREAKOUT_WINDOWS)} | "
+        f"Detected: {_now_label()}\n"
+        f"Discord shows state-diff alerts only; console/CSV can contain the broader flagged snapshot.\n\n"
     )
+    description = _description_with_alert_lines(prefix, lines)
     return {
         "username": "Breakout Scanner",
         "embeds": [
             {
                 "title": f"Breakout monitor alert ({len(rows)})",
-                "description": description[:3900],
+                "description": description,
                 "color": 0x38BDF8,
                 "footer": {"text": DISCORD_FOOTER},
             }
@@ -431,10 +458,10 @@ def build_discord_payload(rows: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _post_webhook(rows: pd.DataFrame, config: MonitorConfig) -> None:
+def _post_webhook(rows: pd.DataFrame, config: MonitorConfig, *, flagged_count: int | None = None) -> None:
     if rows.empty:
         return
-    payload = build_discord_payload(rows)
+    payload = build_discord_payload(rows, flagged_count=flagged_count)
     if config.dry_run:
         print("DRY RUN webhook payload:")
         print(payload)
@@ -503,7 +530,7 @@ def run_forever(config: MonitorConfig) -> None:
 
             alert_rows = alert_rows_for_signal_keys(frame, new_signals)
             if not alert_rows.empty:
-                _post_webhook(alert_rows, config)
+                _post_webhook(alert_rows, config, flagged_count=len(flagged_frame(frame)))
             _append_alerts(alert_path, new_signals, event="new")
             _append_alerts(alert_path, resolved_signals, event="resolved")
             _write_state(state_path, active_signals)
