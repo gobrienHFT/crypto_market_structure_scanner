@@ -186,6 +186,7 @@ Webhook alerts support:
 - Binance+Bitget thesis venue gating by default, with Gate treated as optional supporting evidence
 - dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
 - dedicated 24/7 short-account 1h rate-of-change connector for rapid short builds/covers
+- dedicated 24/7 breakout/high-low/MA200 connector for fresh Binance perp structure changes
 - venue-inventory stress notes when CEX deposits are large versus visible liquidity
 - case-study analogue lines for fast pattern triage, including the RAVE 2026-04-18 and LAB 2026-05-11 historical anchors when matched
 - optional holder composition summaries
@@ -218,6 +219,14 @@ run_short_account_roc_watcher_24_7.bat
 ```
 
 It posts to `SHORT_ROC_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune it with `SHORT_ROC_MIN_ABS_PP`, `SHORT_ROC_MIN_ABS_PCT`, `SHORT_ROC_INTERVAL_SECONDS`, `SHORT_ROC_TOP_N`, and `SHORT_ROC_REALERT_HOURS`.
+
+Run the breakout/high-low/MA200 Discord connector with:
+
+```powershell
+run_breakout_monitor_24_7.bat
+```
+
+It posts newly appearing breakout signals to `BREAKOUT_MONITOR_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune it with `BREAKOUT_MONITOR_INTERVAL_SECONDS`, `BREAKOUT_MONITOR_SYMBOLS`, `BREAKOUT_MONITOR_MAX_SYMBOLS`, and `BREAKOUT_MONITOR_SUPPRESS_INITIAL_ALERTS`.
 
 ---
 
@@ -577,6 +586,12 @@ Run the short-account 1h ROC watcher:
 
 ```powershell
 run_short_account_roc_watcher_24_7.bat
+```
+
+Run the breakout/high-low/MA200 watcher:
+
+```powershell
+run_breakout_monitor_24_7.bat
 ```
 
 ---

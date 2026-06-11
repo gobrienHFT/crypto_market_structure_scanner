@@ -9,4 +9,6 @@ logs/
 runtime_logs/
 data/
 outputs/
+breakout_monitor_output*/
+short_account_roc_output*/
 *.sqlite
