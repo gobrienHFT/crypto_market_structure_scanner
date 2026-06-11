@@ -65,6 +65,11 @@ class BreakoutRow:
     short_account_history_points: int
     short_account_change_1p_pct: float
     short_account_change_1p_pp: float
+    short_account_previous_1h_pct: float
+    short_account_roc_1h_pct: float
+    short_account_roc_1h_pp: float
+    short_account_roc_1h_abs_pp: float
+    short_account_roc_1h_direction: str
     short_account_change_3p_pct: float
     short_account_change_3p_pp: float
     short_account_change_6p_pct: float

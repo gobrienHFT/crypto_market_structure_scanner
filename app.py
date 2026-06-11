@@ -40,6 +40,7 @@ from market_structure_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_mo
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
 from pre_activity_radar import PRE_ACTIVITY_RADAR_COLUMNS, apply_pre_activity_radar
 from proof_engine import archive_alerts
+from short_account_roc import short_account_history_stats
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
 from screener import ScreenerData, build_screener_data
 from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
@@ -644,70 +645,7 @@ def _pct_change(current: Any, previous: Any) -> float:
 
 
 def _short_account_history_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    stats: dict[str, Any] = {
-        "short_account_history_points": 0,
-        "short_account_change_max_pct": float("nan"),
-        "short_account_change_max_pp": float("nan"),
-        "short_account_change_max_window": "",
-        "short_account_change_min_pct": float("nan"),
-        "short_account_change_min_pp": float("nan"),
-        "short_account_change_min_window": "",
-    }
-    sorted_rows = sorted(
-        [row for row in rows if isinstance(row, dict)],
-        key=lambda row: int(float(row.get("timestamp", 0) or 0)),
-    )
-    short_values = [_share_to_pct(row.get("shortAccount")) for row in sorted_rows]
-    short_values = [value for value in short_values if not math.isnan(value)]
-    stats["short_account_history_points"] = len(short_values)
-    if not short_values:
-        return stats
-
-    current = short_values[-1]
-    pct_changes: dict[int, float] = {}
-    pp_changes: dict[int, float] = {}
-    for window in SHORT_ACCOUNT_CHANGE_WINDOWS:
-        pct_key = f"short_account_change_{window}p_pct"
-        pp_key = f"short_account_change_{window}p_pp"
-        if len(short_values) <= window:
-            stats[pct_key] = float("nan")
-            stats[pp_key] = float("nan")
-            continue
-        previous = short_values[-1 - window]
-        pp_change = current - previous
-        pct_change = _pct_change(current, previous)
-        stats[pct_key] = pct_change
-        stats[pp_key] = pp_change
-        pct_changes[window] = pct_change
-        pp_changes[window] = pp_change
-
-    valid_pct_changes = {
-        window: value
-        for window, value in pct_changes.items()
-        if not math.isnan(value)
-    }
-    valid_pp_changes = {
-        window: value
-        for window, value in pp_changes.items()
-        if not math.isnan(value)
-    }
-    if valid_pct_changes:
-        max_window = max(valid_pct_changes, key=valid_pct_changes.get)
-        min_window = min(valid_pct_changes, key=valid_pct_changes.get)
-        stats["short_account_change_max_pct"] = valid_pct_changes[max_window]
-        stats["short_account_change_max_window"] = f"{max_window}p"
-        stats["short_account_change_min_pct"] = valid_pct_changes[min_window]
-        stats["short_account_change_min_window"] = f"{min_window}p"
-    if valid_pp_changes:
-        max_pp_window = max(valid_pp_changes, key=valid_pp_changes.get)
-        min_pp_window = min(valid_pp_changes, key=valid_pp_changes.get)
-        stats["short_account_change_max_pp"] = valid_pp_changes[max_pp_window]
-        stats["short_account_change_min_pp"] = valid_pp_changes[min_pp_window]
-        if not stats["short_account_change_max_window"]:
-            stats["short_account_change_max_window"] = f"{max_pp_window}p"
-        if not stats["short_account_change_min_window"]:
-            stats["short_account_change_min_window"] = f"{min_pp_window}p"
-    return stats
+    return short_account_history_stats(rows, windows=tuple(SHORT_ACCOUNT_CHANGE_WINDOWS))
 
 
 def _hourly_market_stats(klines: list[list[Any]]) -> dict[str, float]:
@@ -5039,6 +4977,11 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 short_account_history_points=int(short_account_history_stats.get("short_account_history_points", 0) or 0),
                 short_account_change_1p_pct=_float_nan(short_account_history_stats.get("short_account_change_1p_pct")),
                 short_account_change_1p_pp=_float_nan(short_account_history_stats.get("short_account_change_1p_pp")),
+                short_account_previous_1h_pct=_float_nan(short_account_history_stats.get("short_account_previous_1h_pct")),
+                short_account_roc_1h_pct=_float_nan(short_account_history_stats.get("short_account_roc_1h_pct")),
+                short_account_roc_1h_pp=_float_nan(short_account_history_stats.get("short_account_roc_1h_pp")),
+                short_account_roc_1h_abs_pp=_float_nan(short_account_history_stats.get("short_account_roc_1h_abs_pp")),
+                short_account_roc_1h_direction=str(short_account_history_stats.get("short_account_roc_1h_direction", "") or ""),
                 short_account_change_3p_pct=_float_nan(short_account_history_stats.get("short_account_change_3p_pct")),
                 short_account_change_3p_pp=_float_nan(short_account_history_stats.get("short_account_change_3p_pp")),
                 short_account_change_6p_pct=_float_nan(short_account_history_stats.get("short_account_change_6p_pct")),
@@ -6204,6 +6147,23 @@ def render_breakout_dashboard() -> None:
             ),
             "short_account_change_1p_pct": st.column_config.NumberColumn("Short Δ 1p", format="%.2f%%"),
             "short_account_change_1p_pp": st.column_config.NumberColumn("Short Δ 1p pp", format="%.2f pp"),
+            "short_account_previous_1h_pct": st.column_config.NumberColumn("Prev Short 1h", format="%.1f%%"),
+            "short_account_roc_1h_pct": st.column_config.NumberColumn(
+                "Short ROC 1h",
+                format="%.2f%%",
+                help="Relative change in Binance global short-account share over the last 1h account-ratio step.",
+            ),
+            "short_account_roc_1h_pp": st.column_config.NumberColumn(
+                "Short ROC 1h pp",
+                format="%.2f pp",
+                help="Percentage-point change in Binance global short-account share over the last 1h account-ratio step.",
+            ),
+            "short_account_roc_1h_abs_pp": st.column_config.NumberColumn(
+                "Abs ROC 1h pp",
+                format="%.2f pp",
+                help="Absolute percentage-point move in short-account share over the last 1h account-ratio step.",
+            ),
+            "short_account_roc_1h_direction": st.column_config.TextColumn("1h Direction"),
             "short_account_change_3p_pct": st.column_config.NumberColumn("Short Δ 3p", format="%.2f%%"),
             "short_account_change_3p_pp": st.column_config.NumberColumn("Short Δ 3p pp", format="%.2f pp"),
             "short_account_change_6p_pct": st.column_config.NumberColumn("Short Δ 6p", format="%.2f%%"),
@@ -6838,6 +6798,7 @@ def render_breakout_dashboard() -> None:
                 "Terminal Evidence",
                 "CEX Flow",
                 "Timing",
+                "1H Short ROC",
                 "Short Account Moves",
                 "RAVE/LAB Radar",
                 "Pump Radar",
@@ -8206,6 +8167,70 @@ def render_breakout_dashboard() -> None:
 
         with screener_tabs[11]:
             st.caption(
+                "Dedicated 1-hour rate-of-change grid for Binance global short-account share. "
+                "Positive percentage-point moves mean accounts are moving net short; negative moves mean short accounts are covering or long accounts are increasing."
+            )
+            short_roc_cols = [
+                "symbol",
+                "base_asset",
+                "trade_bucket",
+                "trade_bucket_score",
+                "market_type",
+                "last_price",
+                "short_account_roc_1h_direction",
+                "short_account_previous_1h_pct",
+                "short_account_pct",
+                "short_account_roc_1h_pp",
+                "short_account_roc_1h_pct",
+                "short_account_roc_1h_abs_pp",
+                "long_account_pct",
+                "long_short_account_ratio",
+                "short_account_history_points",
+                "oi_delta_pct",
+                "oi_value_usdt",
+                "hour_return_pct",
+                "hour_volume_multiple",
+                "short_liquidation_fuel_score",
+                "funding_flip_score",
+                "forced_buying_setup_score",
+                "short_crowding_score",
+                "quote_volume_24h",
+                "day_return_pct",
+            ]
+            short_roc_df = all_df[
+                pd.to_numeric(all_df["short_account_history_points"], errors="coerce").fillna(0) >= 2
+            ].copy()
+            short_roc_df["short_account_roc_1h_abs_pp"] = pd.to_numeric(
+                short_roc_df.get("short_account_roc_1h_abs_pp", pd.Series(0.0, index=short_roc_df.index)),
+                errors="coerce",
+            ).fillna(0.0)
+            short_roc_df = short_roc_df.sort_values(
+                ["short_account_roc_1h_abs_pp", "quote_volume_24h", "symbol"],
+                ascending=[False, False, True],
+            )
+            roc_increase_df = short_roc_df[pd.to_numeric(short_roc_df.get("short_account_roc_1h_pp"), errors="coerce").fillna(0.0) > 0]
+            roc_decrease_df = short_roc_df[pd.to_numeric(short_roc_df.get("short_account_roc_1h_pp"), errors="coerce").fillna(0.0) < 0]
+            biggest_abs = float(short_roc_df["short_account_roc_1h_abs_pp"].max()) if not short_roc_df.empty else float("nan")
+            avg_abs = float(short_roc_df["short_account_roc_1h_abs_pp"].mean()) if not short_roc_df.empty else float("nan")
+            sr1, sr2, sr3, sr4 = st.columns(4)
+            sr1.metric("Symbols with 1h history", int(len(short_roc_df)))
+            sr2.metric("Short builds", int(len(roc_increase_df)))
+            sr3.metric("Short covers", int(len(roc_decrease_df)))
+            sr4.metric("Biggest abs move", f"{biggest_abs:.2f} pp" if math.isfinite(biggest_abs) else "n/a")
+            st.metric("Average abs 1h move", f"{avg_abs:.2f} pp" if math.isfinite(avg_abs) else "n/a")
+
+            if short_roc_df.empty:
+                st.info("No 1-hour short-account history is available in this scan.")
+            else:
+                st.dataframe(
+                    _display_frame(short_roc_df.head(80), short_roc_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+        with screener_tabs[12]:
+            st.caption(
                 "Ranks the biggest changes in Binance global short-account share by symbol. "
                 f"Period: {LONG_SHORT_RATIO_PERIOD}; windows: {', '.join(f'{window}p' for window in SHORT_ACCOUNT_CHANGE_WINDOWS)}; "
                 f"history rows requested per symbol: {LONG_SHORT_RATIO_HISTORY_LIMIT}. "
@@ -8356,7 +8381,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[12]:
+        with screener_tabs[13]:
             st.caption(
                 "Ranks RAVE/LAB-style controlled-float upside structures by combining centralized holder/insider proxies, "
                 "low-float and FDV gap, rising short-account share, target CEX-flow proxies for Binance/Bitget/Gate/OKX, "
@@ -8630,7 +8655,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[13]:
+        with screener_tabs[14]:
             st.caption(
                 "One-board triage for the exact early move pattern: explorer-backed top10 whale control, Binance+Bitget trading evidence, "
                 "60D no-pump/dormancy proof, confirmed Binance/Bitget/Gate wallet-to-CEX flow when available, short-account squeeze fuel, low-float structure, and not-late timing."
@@ -8757,7 +8782,7 @@ def render_breakout_dashboard() -> None:
                         column_config=breakout_column_config,
                     )
 
-        with screener_tabs[14]:
+        with screener_tabs[15]:
             st.caption(
                 "Pre-activity radar: explorer-backed top10 holder control, Binance+Bitget trading evidence, controlled float, target-CEX inventory tells, "
                 "60D no-pump/dormancy proof, short-fuse perp positioning, and thin books, while filtering out names that already have chase heat."

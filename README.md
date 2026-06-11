@@ -157,6 +157,7 @@ Dashboard functionality includes:
 - concentration overlays
 - holder composition summaries
 - token contract inspection
+- a distinct `1H Short ROC` grid for past-hour Binance global short-account share changes
 - cached scan comparison
 - local persistence of scanner outputs
 - discretionary review of structural market conditions
@@ -184,6 +185,7 @@ Webhook alerts support:
 - strict 90%+ holder-concentration evidence gate with ETH/BNB/ARB chain, contract, and explorer holder-source snapshot backing
 - Binance+Bitget thesis venue gating by default, with Gate treated as optional supporting evidence
 - dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
+- dedicated 24/7 short-account 1h rate-of-change connector for rapid short builds/covers
 - venue-inventory stress notes when CEX deposits are large versus visible liquidity
 - case-study analogue lines for fast pattern triage, including the RAVE 2026-04-18 and LAB 2026-05-11 historical anchors when matched
 - optional holder composition summaries
@@ -208,6 +210,14 @@ Per-symbol cooldown state is stored locally in:
 ```text
 data/discord_convex_alert_state.csv
 ```
+
+Run the short-account 1h rate-of-change Discord connector with:
+
+```powershell
+run_short_account_roc_watcher_24_7.bat
+```
+
+It posts to `SHORT_ROC_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune it with `SHORT_ROC_MIN_ABS_PP`, `SHORT_ROC_MIN_ABS_PCT`, `SHORT_ROC_INTERVAL_SECONDS`, `SHORT_ROC_TOP_N`, and `SHORT_ROC_REALERT_HOURS`.
 
 ---
 
@@ -561,6 +571,12 @@ Run the Discord watcher:
 
 ```powershell
 run_discord_convex_watcher.bat
+```
+
+Run the short-account 1h ROC watcher:
+
+```powershell
+run_short_account_roc_watcher_24_7.bat
 ```
 
 ---
