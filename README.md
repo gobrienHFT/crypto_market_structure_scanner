@@ -251,6 +251,7 @@ Supported commands include:
 /alpha [limit]
 /convex [limit]
 /shorts
+/shortpct [limit] [period] [min_pp] [min_pct]
 /funding [side] [limit] [period] [min_abs_funding_pct]
 /hunt [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
 /thesis [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
@@ -301,6 +302,7 @@ The bot can retrieve:
 - a strict core-thesis alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short crowd plus squeeze fuel, and not-late gates
 - latest cached scanner rankings
 - a `/shorts` diagnostic board for symbols where more than 50% of accounts are short; rows are labelled `weakCtx` and overlay `baseThesis Y/N/?` so high short-account percentage stays weak context unless the strict holder, Binance+Bitget, and 60D no-pump gates also pass
+- a `/shortpct` live Binance board for the fastest positive short-account percentage increases by rate of change, with both percentage-point delta and relative ROC printed next to optional base-thesis context
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups after the hard explorer holder-source snapshot, Binance+Bitget thesis gates, pinned 60D no-pump/dormancy proof, low-float/high-FDV structure proof, and short crowd plus squeeze fuel: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books as amplifiers, and no-chase low activity
 - a primary `/hunt` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for `massive_flow` top-holder-origin CEX transfers, lower-floor `flow` whale-CEX diagnostics, generic target-CEX flow, forced-flow mechanics, breakout highs, triggered-only, or core-watch rows

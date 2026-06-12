@@ -100,6 +100,7 @@ STATIC_SLASH_COMMAND_NAMES = (
     "sethflow",
     "setupscore",
     "shorts",
+    "shortpct",
     "squeezeready",
     "startbot",
     "stopbot",
@@ -369,6 +370,7 @@ def _feature_required_tier(feature: str) -> str:
         "archive": "pro",
         "shortcut": "paid",
         "shorts": "free",
+        "shortpct": "free",
         "whales": "paid",
         "funding": "free",
         "high": "free",
@@ -736,6 +738,10 @@ def _snapshot_path() -> Path:
 
 def _shorts_cache_path() -> Path:
     return Path(_env_value("DISCORD_SHORTS_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_majority.csv")))
+
+
+def _shortpct_cache_path() -> Path:
+    return Path(_env_value("DISCORD_SHORTPCT_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_roc.csv")))
 
 
 def _whales_cache_path() -> Path:
@@ -1107,6 +1113,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/high <days> and /low <days> - hard-gated breakout highs/lows for any 1D-1499D window; set thesis_only:false for raw market context.",
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
         "/shorts - weak-context short-majority board with baseThesis Y/N/? overlay.",
+        "/shortpct [limit] [period] [min_pp] [min_pct] - live Binance board for fastest positive short-account percentage increases.",
         "/funding - Binance funding/carry board.",
         "/floattrap, /squeezeready, /cextargets - single-lens diagnostics; raw rows show baseThesis and coreThesis blockers when available.",
         "/terminal, /timing - strict base-thesis-filtered structure/timing boards; shown rows print baseThesis Y.",
@@ -6406,6 +6413,210 @@ def _format_shorts_frame(frame: pd.DataFrame, *, source: str, prefix: str = "") 
     return "Short-account majority list", _chunk_text_lines(lines)
 
 
+def _load_shortpct_list(limit: int = 15, *, period: str = "1h", min_pp: float = 0.0, min_pct: float = 0.0) -> tuple[str, list[str]]:
+    clean_period = _clean_ratio_period(period, default="1h")
+    live_frame, live_error = _load_live_shortpct_frame(period=clean_period)
+    capped_limit = min(max(int(limit), 1), 50)
+    if not live_frame.empty:
+        return _format_shortpct_frame(
+            live_frame,
+            source="live Binance account-ratio scan",
+            limit=capped_limit,
+            period=clean_period,
+            min_pp=max(0.0, float(min_pp)),
+            min_pct=max(0.0, float(min_pct)),
+        )
+    cache_frame = _read_csv_if_exists(_shortpct_cache_path())
+    prefix = f"Live scan unavailable: {live_error}" if live_error else ""
+    if not cache_frame.empty:
+        return _format_shortpct_frame(
+            cache_frame,
+            source="cached Binance account-ratio scan",
+            prefix=prefix,
+            limit=capped_limit,
+            period=clean_period,
+            min_pp=max(0.0, float(min_pp)),
+            min_pct=max(0.0, float(min_pct)),
+        )
+    return "Short-account ROC leaderboard", [f"{prefix}\nNo short-account ROC rows available yet.".strip()]
+
+
+def _clean_ratio_period(period: Any, *, default: str = "1h") -> str:
+    clean = str(period or default).strip().lower()
+    allowed = {"5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"}
+    return clean if clean in allowed else default
+
+
+def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]:
+    cache_path = _shortpct_cache_path()
+    ttl_seconds = _env_int("DISCORD_SHORTPCT_CACHE_TTL_SECONDS", 120, minimum=0)
+    if ttl_seconds > 0 and cache_path.exists() and time.time() - cache_path.stat().st_mtime <= ttl_seconds:
+        try:
+            cached = pd.read_csv(cache_path)
+            cached_period = str(cached.get("period", pd.Series([period])).iloc[0]).strip().lower()
+            if not cached.empty and cached_period == period:
+                return cached, ""
+        except Exception:
+            pass
+
+    try:
+        client = BinanceFuturesPublic(
+            timeout=_env_int("DISCORD_SHORTPCT_BINANCE_TIMEOUT_SECONDS", 10, minimum=3),
+            requests_per_second=float(_env_value("DISCORD_SHORTPCT_REQUESTS_PER_SECOND", "8")),
+            retries=_env_int("DISCORD_SHORTPCT_BINANCE_RETRIES", 2, minimum=1),
+        )
+        symbols = [item.symbol for item in client.perpetual_usdt_symbols() if item.symbol]
+        tickers = {str(row.get("symbol", "")).upper(): row for row in client.ticker_24hr() if row.get("symbol")}
+    except Exception as exc:
+        return pd.DataFrame(), str(exc)
+
+    max_symbols = _env_int("DISCORD_SHORTPCT_MAX_SYMBOLS", 0, minimum=0)
+    if max_symbols > 0:
+        symbols = symbols[:max_symbols]
+    rows: list[dict[str, Any]] = []
+    errors = 0
+    scanned_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    for symbol in symbols:
+        try:
+            ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=2)
+        except Exception:
+            errors += 1
+            continue
+        if len(ratio_rows) < 2:
+            continue
+        previous = ratio_rows[-2]
+        latest = ratio_rows[-1]
+        previous_short = _safe_pct(previous.get("shortAccount"))
+        current_short = _safe_pct(latest.get("shortAccount"))
+        long_pct = _safe_pct(latest.get("longAccount"))
+        ratio = _safe_float(latest.get("longShortRatio"))
+        if previous_short is None or current_short is None:
+            continue
+        delta_pp = current_short - previous_short
+        if abs(previous_short) < 1e-12:
+            delta_pct = None
+        else:
+            delta_pct = (current_short / previous_short - 1.0) * 100.0
+        ticker = tickers.get(symbol, {})
+        rows.append(
+            {
+                "symbol": symbol,
+                "period": period,
+                "short_account_pct": current_short,
+                "short_account_previous_pct": previous_short,
+                "short_account_roc_pp": delta_pp,
+                "short_account_roc_pct": delta_pct,
+                "long_account_pct": long_pct,
+                "long_short_account_ratio": ratio,
+                "quote_volume_24h": _safe_float(ticker.get("quoteVolume")),
+                "price_change_24h_pct": _safe_pct(ticker.get("priceChangePercent")),
+                "scan_mode": f"live {period} short-account ROC",
+                "scanned_at_utc": scanned_at,
+            }
+        )
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame, f"no live short-account ROC rows returned ({errors} symbol errors)"
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(cache_path, index=False)
+    except Exception:
+        pass
+    return frame, ""
+
+
+def _format_shortpct_frame(
+    frame: pd.DataFrame,
+    *,
+    source: str,
+    limit: int,
+    period: str,
+    min_pp: float,
+    min_pct: float,
+    prefix: str = "",
+) -> tuple[str, list[str]]:
+    rows = frame.copy()
+    for column in ("short_account_pct", "short_account_previous_pct", "short_account_roc_pp", "short_account_roc_pct", "quote_volume_24h", "price_change_24h_pct"):
+        if column not in rows.columns:
+            rows[column] = float("nan")
+        if column in rows.columns:
+            rows[column] = pd.to_numeric(rows[column], errors="coerce")
+    if "period" in rows.columns:
+        rows = rows[rows["period"].astype(str).str.strip().str.lower().eq(period)].copy()
+    if "symbol" not in rows.columns or "short_account_roc_pp" not in rows.columns or "short_account_roc_pct" not in rows.columns:
+        return "Short-account ROC leaderboard", [f"{prefix}\nNo short-account ROC columns exist in the latest cache.".strip()]
+
+    matches = rows[
+        rows["short_account_roc_pp"].gt(0)
+        & rows["short_account_roc_pct"].gt(0)
+        & rows["short_account_roc_pp"].ge(float(min_pp))
+        & rows["short_account_roc_pct"].ge(float(min_pct))
+    ].copy()
+    if matches.empty:
+        return (
+            "Short-account ROC leaderboard",
+            [
+                (
+                    f"{prefix}\nNo symbols had positive short-account ROC for period {period} "
+                    f"at min_pp {min_pp:.2f} and min_pct {min_pct:.2f}."
+                ).strip()
+            ],
+        )
+    matches["symbol"] = matches["symbol"].astype(str).str.upper().str.strip()
+    matches = matches[matches["symbol"].ne("")].drop_duplicates(subset=["symbol"], keep="first")
+    matches = matches.sort_values(["short_account_roc_pct", "short_account_roc_pp", "quote_volume_24h", "symbol"], ascending=[False, False, False, True])
+    total_matches = len(matches)
+    matches = matches.head(max(1, int(limit))).copy()
+    matches, context_label = _with_shorts_thesis_context(matches, source=source)
+    scanned_at = str(rows.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
+    scan_mode = str(rows.get("scan_mode", pd.Series([f"live {period} short-account ROC"])).iloc[0])
+    base_thesis_count = int(_boolish_series(matches.get("_discord_base_thesis_gate"), index=matches.index).sum())
+    header = (
+        f"Short-account ROC leaderboard ({len(matches)}/{total_matches})\n"
+        f"Rank: positive short-account relative ROC | Period: {period} | Source: {source} | Scan: {scan_mode} | Updated: {scanned_at}\n"
+        f"Filters: delta >= +{min_pp:.2f}pp and relative >= +{min_pct:.2f}% | Thesis context: {context_label or 'none'} | Base thesis rows: {base_thesis_count}\n"
+        "Read: this is short-crowd build speed, not a standalone setup; pair with holder, venue, float, no-pump, OI/volume, and not-late checks."
+    )
+    if prefix:
+        header = f"{prefix}\n\n{header}"
+    lines = [header, ""]
+    for _, row in matches.iterrows():
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        previous_short = _safe_pct(row.get("short_account_previous_pct"))
+        current_short = _safe_pct(row.get("short_account_pct"))
+        delta_pp = _safe_float(row.get("short_account_roc_pp"))
+        delta_pct = _safe_float(row.get("short_account_roc_pct"))
+        volume = _safe_float(row.get("quote_volume_24h"))
+        day_change = _safe_pct(row.get("price_change_24h_pct"))
+        short_text = (
+            f"{previous_short:.1f}%->{current_short:.1f}%"
+            if previous_short is not None and current_short is not None
+            else "n/a"
+        )
+        delta_text = (
+            f"+{delta_pp:.2f}pp / +{delta_pct:.2f}%"
+            if delta_pp is not None and delta_pct is not None
+            else "n/a"
+        )
+        day_text = f"24h {day_change:+.1f}%" if day_change is not None else "24h n/a"
+        has_context = _boolish_scalar(row.get("_shorts_context_available"))
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N" if has_context else "?"
+        if has_context:
+            holder = "Y" if _boolish_scalar(row.get("_shorts_holder_gate")) else "N"
+            venue = "Y" if _boolish_scalar(row.get("_shorts_venue_gate")) else "N"
+            no_pump = "Y" if _boolish_scalar(row.get("_shorts_no_pump_gate")) else "N"
+            top10 = _safe_pct(row.get("_shorts_top10_effective"))
+            top10_text = f" top10 {top10:.1f}%" if top10 is not None else ""
+            context = f" | baseThesis {base_thesis} | holder {holder}{top10_text} | BnBg {venue} | noPump60 {no_pump}"
+        else:
+            context = f" | baseThesis {base_thesis} | no scanner thesis context"
+        lines.append(
+            f"/{symbol} | shortROC {delta_text} | shorts {short_text} | vol {_fmt_compact_number(volume)} | {day_text}{context}"
+        )
+    return "Short-account ROC leaderboard", _chunk_text_lines(lines)
+
+
 def _cache_status() -> str:
     path = _cache_path()
     if not path.exists():
@@ -6542,6 +6753,40 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if not chunks:
             chunks = ["No short-account majority tokens found."]
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF59E0B)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    shortpct_kwargs = {"name": "shortpct", "description": "Rank symbols by fastest positive short-account percentage ROC."}
+    if guild is not None:
+        shortpct_kwargs["guild"] = guild
+
+    @tree.command(**shortpct_kwargs)
+    @app_commands.describe(
+        limit="Maximum rows to return.",
+        period="Binance account-ratio period, usually 1h. Also supports 5m, 15m, 30m, 2h, 4h, 6h, 12h, 1d.",
+        min_pp="Minimum positive percentage-point short-account increase.",
+        min_pct="Minimum positive relative short-account increase percentage.",
+    )
+    async def shortpct(interaction: discord.Interaction, limit: int = 15, period: str = "1h", min_pp: float = 0.0, min_pct: float = 0.0) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("shortpct")):
+            await interaction.response.send_message(_access_denied_message("shortpct"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_shortpct_list,
+            min(max(int(limit), 1), 50),
+            period=period,
+            min_pp=max(0.0, float(min_pp)),
+            min_pct=max(0.0, float(min_pct)),
+        )
+        if not chunks:
+            chunks = ["No positive short-account ROC rows found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:

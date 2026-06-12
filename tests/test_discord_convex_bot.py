@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -277,6 +278,51 @@ def test_load_shorts_list_overlays_base_thesis_context(tmp_path, monkeypatch) ->
     assert "Thesis context: latest scanner cache | Base thesis rows: 1" in output
     assert "/SHORTONLYUSDT | weakCtx shorts 71.0% | baseThesis N | holder N top10 55.0% | BnBg Y | noPump60 Y" in output
     assert "/THESISUSDT | weakCtx shorts 62.0% | baseThesis Y | holder Y top10 91.0% | BnBg Y | noPump60 Y" in output
+
+
+def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> None:
+    class FakeShortPctClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def perpetual_usdt_symbols(self):
+            return [
+                SimpleNamespace(symbol="FASTUSDT"),
+                SimpleNamespace(symbol="SLOWUSDT"),
+                SimpleNamespace(symbol="COVERUSDT"),
+            ]
+
+        def ticker_24hr(self):
+            return [
+                {"symbol": "FASTUSDT", "quoteVolume": "3000000", "priceChangePercent": "5.5"},
+                {"symbol": "SLOWUSDT", "quoteVolume": "1000000", "priceChangePercent": "-1.2"},
+                {"symbol": "COVERUSDT", "quoteVolume": "2000000", "priceChangePercent": "2.0"},
+            ]
+
+        def global_long_short_account_ratio(self, symbol, *, period="1h", limit=2):
+            assert period == "1h"
+            assert limit == 2
+            rows = {
+                "FASTUSDT": [{"shortAccount": "0.40", "longAccount": "0.60"}, {"shortAccount": "0.50", "longAccount": "0.50"}],
+                "SLOWUSDT": [{"shortAccount": "0.50", "longAccount": "0.50"}, {"shortAccount": "0.55", "longAccount": "0.45"}],
+                "COVERUSDT": [{"shortAccount": "0.60", "longAccount": "0.40"}, {"shortAccount": "0.57", "longAccount": "0.43"}],
+            }
+            return rows[symbol]
+
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeShortPctClient)
+    monkeypatch.setenv("DISCORD_SHORTPCT_CACHE_PATH", str(tmp_path / "shortpct.csv"))
+    monkeypatch.setenv("DISCORD_SHORTPCT_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr(bot, "_latest_snapshot_frame", lambda: pd.DataFrame())
+    monkeypatch.setattr(bot, "_read_csv_if_exists", lambda path: pd.DataFrame())
+
+    title, chunks = bot._load_shortpct_list(limit=10, period="1h", min_pp=0.0, min_pct=0.0)
+    output = "\n".join(chunks)
+
+    assert title == "Short-account ROC leaderboard"
+    assert "/FASTUSDT | shortROC +10.00pp / +25.00% | shorts 40.0%->50.0% | vol 3.00M | 24h +5.5% | baseThesis ?" in output
+    assert "/SLOWUSDT | shortROC +5.00pp / +10.00% | shorts 50.0%->55.0% | vol 1.00M | 24h -1.2% | baseThesis ?" in output
+    assert "COVERUSDT" not in output
+    assert output.index("/FASTUSDT") < output.index("/SLOWUSDT")
 
 
 def test_load_funding_leaderboard_splits_long_and_short_carry(monkeypatch) -> None:
