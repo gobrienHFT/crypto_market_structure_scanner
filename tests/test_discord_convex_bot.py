@@ -287,9 +287,10 @@ def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> N
 
         def perpetual_usdt_symbols(self):
             return [
-                SimpleNamespace(symbol="FASTUSDT"),
-                SimpleNamespace(symbol="SLOWUSDT"),
-                SimpleNamespace(symbol="COVERUSDT"),
+                SimpleNamespace(symbol="FASTUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="SLOWUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="COVERUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="MSFTUSDT", underlying_type="STOCK"),
             ]
 
         def ticker_24hr(self):
@@ -302,6 +303,7 @@ def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> N
         def global_long_short_account_ratio(self, symbol, *, period="1h", limit=2):
             assert period == "1h"
             assert limit == 2
+            assert symbol != "MSFTUSDT"
             rows = {
                 "FASTUSDT": [{"shortAccount": "0.40", "longAccount": "0.60"}, {"shortAccount": "0.50", "longAccount": "0.50"}],
                 "SLOWUSDT": [{"shortAccount": "0.50", "longAccount": "0.50"}, {"shortAccount": "0.55", "longAccount": "0.45"}],
@@ -335,9 +337,10 @@ def test_load_shorttrend_list_ranks_persistent_short_builds(tmp_path, monkeypatc
 
         def perpetual_usdt_symbols(self):
             return [
-                SimpleNamespace(symbol="TRENDUSDT"),
-                SimpleNamespace(symbol="BLIPUSDT"),
-                SimpleNamespace(symbol="DOWNUSDT"),
+                SimpleNamespace(symbol="TRENDUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="BLIPUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="DOWNUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="BABAUSDT", underlying_type="STOCK"),
             ]
 
         def ticker_24hr(self):
@@ -350,6 +353,7 @@ def test_load_shorttrend_list_ranks_persistent_short_builds(tmp_path, monkeypatc
         def global_long_short_account_ratio(self, symbol, *, period="1h", limit=25):
             assert period == "1h"
             assert limit == 7
+            assert symbol != "BABAUSDT"
             rows = {
                 "TRENDUSDT": ratio_path([40, 41, 42, 43, 44, 45, 46, 47]),
                 "BLIPUSDT": ratio_path([41, 41, 41, 41, 41, 41, 40, 41]),

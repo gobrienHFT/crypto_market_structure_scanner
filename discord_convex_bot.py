@@ -750,6 +750,20 @@ def _shorttrend_cache_path() -> Path:
     return Path(_env_value("DISCORD_SHORTTREND_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_trend.csv")))
 
 
+def _is_crypto_futures_symbol(item: Any) -> bool:
+    symbol = str(getattr(item, "symbol", "") or "").upper().strip()
+    if not symbol.endswith("USDT"):
+        return False
+    underlying_type = str(getattr(item, "underlying_type", "") or "").upper().strip()
+    if underlying_type and underlying_type not in {"COIN", "CRYPTO"}:
+        return False
+    return True
+
+
+def _crypto_usdt_symbol_names(items: list[Any]) -> list[str]:
+    return [str(item.symbol).upper().strip() for item in items if _is_crypto_futures_symbol(item)]
+
+
 def _whales_cache_path() -> Path:
     return Path(_env_value("DISCORD_WHALES_CACHE_PATH", str(APP_DIR / "data" / "latest_whale_dominance.csv")))
 
@@ -6472,7 +6486,8 @@ def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]
             requests_per_second=float(_env_value("DISCORD_SHORTPCT_REQUESTS_PER_SECOND", "8")),
             retries=_env_int("DISCORD_SHORTPCT_BINANCE_RETRIES", 2, minimum=1),
         )
-        symbols = [item.symbol for item in client.perpetual_usdt_symbols() if item.symbol]
+        universe = client.perpetual_usdt_symbols()
+        symbols = _crypto_usdt_symbol_names(universe)
         tickers = {str(row.get("symbol", "")).upper(): row for row in client.ticker_24hr() if row.get("symbol")}
     except Exception as exc:
         return pd.DataFrame(), str(exc)
@@ -6483,6 +6498,7 @@ def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]
     rows: list[dict[str, Any]] = []
     errors = 0
     scanned_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    underlying_by_symbol = {str(item.symbol).upper().strip(): str(getattr(item, "underlying_type", "") or "").upper().strip() for item in universe if getattr(item, "symbol", "")}
     for symbol in symbols:
         try:
             ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=2)
@@ -6508,6 +6524,7 @@ def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]
         rows.append(
             {
                 "symbol": symbol,
+                "underlying_type": underlying_by_symbol.get(symbol, ""),
                 "period": period,
                 "short_account_pct": current_short,
                 "short_account_previous_pct": previous_short,
@@ -6551,6 +6568,9 @@ def _format_shortpct_frame(
             rows[column] = pd.to_numeric(rows[column], errors="coerce")
     if "period" in rows.columns:
         rows = rows[rows["period"].astype(str).str.strip().str.lower().eq(period)].copy()
+    if "underlying_type" in rows.columns:
+        underlying = rows["underlying_type"].fillna("").astype(str).str.upper().str.strip()
+        rows = rows[underlying.isin({"", "COIN", "CRYPTO"})].copy()
     if "symbol" not in rows.columns or "short_account_roc_pp" not in rows.columns or "short_account_roc_pct" not in rows.columns:
         return "Short-account ROC leaderboard", [f"{prefix}\nNo short-account ROC columns exist in the latest cache.".strip()]
 
@@ -6734,7 +6754,8 @@ def _load_live_shorttrend_frame(*, period: str = "1h", windows: tuple[int, ...] 
             requests_per_second=float(_env_value("DISCORD_SHORTTREND_REQUESTS_PER_SECOND", "8")),
             retries=_env_int("DISCORD_SHORTTREND_BINANCE_RETRIES", 2, minimum=1),
         )
-        symbols = [item.symbol for item in client.perpetual_usdt_symbols() if item.symbol]
+        universe = client.perpetual_usdt_symbols()
+        symbols = _crypto_usdt_symbol_names(universe)
         tickers = {str(row.get("symbol", "")).upper(): row for row in client.ticker_24hr() if row.get("symbol")}
     except Exception as exc:
         return pd.DataFrame(), str(exc)
@@ -6746,6 +6767,7 @@ def _load_live_shorttrend_frame(*, period: str = "1h", windows: tuple[int, ...] 
     scanned_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     rows: list[dict[str, Any]] = []
     errors = 0
+    underlying_by_symbol = {str(item.symbol).upper().strip(): str(getattr(item, "underlying_type", "") or "").upper().strip() for item in universe if getattr(item, "symbol", "")}
     for symbol in symbols:
         try:
             ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=limit)
@@ -6754,6 +6776,7 @@ def _load_live_shorttrend_frame(*, period: str = "1h", windows: tuple[int, ...] 
             continue
         trend_row = _shorttrend_row(symbol, ratio_rows, period=period, windows=windows, ticker=tickers.get(symbol, {}), scanned_at=scanned_at)
         if trend_row is not None:
+            trend_row["underlying_type"] = underlying_by_symbol.get(symbol, "")
             rows.append(trend_row)
 
     frame = pd.DataFrame(rows)
@@ -6798,6 +6821,9 @@ def _format_shorttrend_frame(
         rows[column] = pd.to_numeric(rows[column], errors="coerce")
     if "period" in rows.columns:
         rows = rows[rows["period"].astype(str).str.strip().str.lower().eq(period)].copy()
+    if "underlying_type" in rows.columns:
+        underlying = rows["underlying_type"].fillna("").astype(str).str.upper().str.strip()
+        rows = rows[underlying.isin({"", "COIN", "CRYPTO"})].copy()
     if "symbol" not in rows.columns:
         return "Short-account trend leaderboard", [f"{prefix}\nNo short-account trend symbols exist in the latest cache.".strip()]
 
