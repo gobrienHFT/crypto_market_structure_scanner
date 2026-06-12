@@ -101,6 +101,7 @@ STATIC_SLASH_COMMAND_NAMES = (
     "setupscore",
     "shorts",
     "shortpct",
+    "shorttrend",
     "squeezeready",
     "startbot",
     "stopbot",
@@ -371,6 +372,7 @@ def _feature_required_tier(feature: str) -> str:
         "shortcut": "paid",
         "shorts": "free",
         "shortpct": "free",
+        "shorttrend": "free",
         "whales": "paid",
         "funding": "free",
         "high": "free",
@@ -744,6 +746,10 @@ def _shortpct_cache_path() -> Path:
     return Path(_env_value("DISCORD_SHORTPCT_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_roc.csv")))
 
 
+def _shorttrend_cache_path() -> Path:
+    return Path(_env_value("DISCORD_SHORTTREND_CACHE_PATH", str(APP_DIR / "data" / "latest_short_account_trend.csv")))
+
+
 def _whales_cache_path() -> Path:
     return Path(_env_value("DISCORD_WHALES_CACHE_PATH", str(APP_DIR / "data" / "latest_whale_dominance.csv")))
 
@@ -1114,6 +1120,7 @@ def _load_command_guide() -> tuple[str, list[str]]:
         "/corr [threshold] - BTC-correlation filter; negative correlations always show, threshold cuts highly correlated names.",
         "/shorts - weak-context short-majority board with baseThesis Y/N/? overlay.",
         "/shortpct [limit] [period] [min_pp] [min_pct] - live Binance board for fastest positive short-account percentage increases.",
+        "/shorttrend [limit] [period] [min_windows] [min_total_pp] - live Binance trend board for persistent short-account builds across multiple ROC windows.",
         "/funding - Binance funding/carry board.",
         "/floattrap, /squeezeready, /cextargets - single-lens diagnostics; raw rows show baseThesis and coreThesis blockers when available.",
         "/terminal, /timing - strict base-thesis-filtered structure/timing boards; shown rows print baseThesis Y.",
@@ -6509,7 +6516,7 @@ def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]
                 "long_account_pct": long_pct,
                 "long_short_account_ratio": ratio,
                 "quote_volume_24h": _safe_float(ticker.get("quoteVolume")),
-                "price_change_24h_pct": _safe_pct(ticker.get("priceChangePercent")),
+                "price_change_24h_pct": _safe_float(ticker.get("priceChangePercent")),
                 "scan_mode": f"live {period} short-account ROC",
                 "scanned_at_utc": scanned_at,
             }
@@ -6588,7 +6595,7 @@ def _format_shortpct_frame(
         delta_pp = _safe_float(row.get("short_account_roc_pp"))
         delta_pct = _safe_float(row.get("short_account_roc_pct"))
         volume = _safe_float(row.get("quote_volume_24h"))
-        day_change = _safe_pct(row.get("price_change_24h_pct"))
+        day_change = _safe_float(row.get("price_change_24h_pct"))
         short_text = (
             f"{previous_short:.1f}%->{current_short:.1f}%"
             if previous_short is not None and current_short is not None
@@ -6615,6 +6622,253 @@ def _format_shortpct_frame(
             f"/{symbol} | shortROC {delta_text} | shorts {short_text} | vol {_fmt_compact_number(volume)} | {day_text}{context}"
         )
     return "Short-account ROC leaderboard", _chunk_text_lines(lines)
+
+
+def _shorttrend_windows() -> tuple[int, ...]:
+    configured = sorted(window for window in _env_csv_ints("DISCORD_SHORTTREND_WINDOWS") if window > 0)
+    return tuple(configured or [1, 3, 6, 12, 24])
+
+
+def _trend_window_label(window: int, period: str) -> str:
+    return f"{window}h" if period == "1h" else f"{window}x{period}"
+
+
+def _shorttrend_row(symbol: str, ratio_rows: list[dict[str, Any]], *, period: str, windows: tuple[int, ...], ticker: dict[str, Any] | None = None, scanned_at: str = "") -> dict[str, Any] | None:
+    sorted_rows = sorted([row for row in ratio_rows if isinstance(row, dict)], key=lambda row: _safe_float(row.get("timestamp") or row.get("time")) or 0.0)
+    short_values = [_safe_pct(row.get("shortAccount")) for row in sorted_rows]
+    short_values = [value for value in short_values if value is not None]
+    if not short_values:
+        return None
+    ticker = ticker or {}
+    current = short_values[-1]
+    row: dict[str, Any] = {
+        "symbol": symbol.upper(),
+        "period": period,
+        "short_account_pct": current,
+        "short_account_history_points": len(short_values),
+        "positive_window_count": 0,
+        "available_window_count": 0,
+        "short_account_total_positive_pp": 0.0,
+        "short_account_total_pp": 0.0,
+        "short_account_trend_score": 0.0,
+        "quote_volume_24h": _safe_float(ticker.get("quoteVolume")),
+        "price_change_24h_pct": _safe_float(ticker.get("priceChangePercent")),
+        "scan_mode": f"live {period} short-account trend",
+        "scanned_at_utc": scanned_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+    }
+    for window in windows:
+        pp_key = f"short_account_change_{window}p_pp"
+        pct_key = f"short_account_change_{window}p_pct"
+        if len(short_values) <= window:
+            row[pp_key] = float("nan")
+            row[pct_key] = float("nan")
+            continue
+        previous = short_values[-1 - window]
+        delta_pp = current - previous
+        delta_pct = (current / previous - 1.0) * 100.0 if abs(previous) >= 1e-12 else float("nan")
+        row[pp_key] = delta_pp
+        row[pct_key] = delta_pct
+        row["available_window_count"] += 1
+        row["short_account_total_pp"] += delta_pp
+        if delta_pp > 0:
+            row["positive_window_count"] += 1
+            row["short_account_total_positive_pp"] += delta_pp
+
+    one_point_pp = _safe_float(row.get("short_account_change_1p_pp")) or 0.0
+    row["short_account_trend_score"] = (
+        float(row["positive_window_count"]) * 100.0
+        + float(row["short_account_total_positive_pp"]) * 10.0
+        + max(0.0, one_point_pp) * 5.0
+        + max(0.0, current - 50.0)
+    )
+    return row
+
+
+def _load_shorttrend_list(limit: int = 15, *, period: str = "1h", min_windows: int = 3, min_total_pp: float = 1.0) -> tuple[str, list[str]]:
+    clean_period = _clean_ratio_period(period, default="1h")
+    windows = _shorttrend_windows()
+    live_frame, live_error = _load_live_shorttrend_frame(period=clean_period, windows=windows)
+    capped_limit = min(max(int(limit), 1), 50)
+    if not live_frame.empty:
+        return _format_shorttrend_frame(
+            live_frame,
+            source="live Binance account-ratio scan",
+            limit=capped_limit,
+            period=clean_period,
+            windows=windows,
+            min_windows=max(1, int(min_windows)),
+            min_total_pp=max(0.0, float(min_total_pp)),
+        )
+    cache_frame = _read_csv_if_exists(_shorttrend_cache_path())
+    prefix = f"Live scan unavailable: {live_error}" if live_error else ""
+    if not cache_frame.empty:
+        return _format_shorttrend_frame(
+            cache_frame,
+            source="cached Binance account-ratio trend scan",
+            prefix=prefix,
+            limit=capped_limit,
+            period=clean_period,
+            windows=windows,
+            min_windows=max(1, int(min_windows)),
+            min_total_pp=max(0.0, float(min_total_pp)),
+        )
+    return "Short-account trend leaderboard", [f"{prefix}\nNo short-account trend rows available yet.".strip()]
+
+
+def _load_live_shorttrend_frame(*, period: str = "1h", windows: tuple[int, ...] | None = None) -> tuple[pd.DataFrame, str]:
+    windows = windows or _shorttrend_windows()
+    cache_path = _shorttrend_cache_path()
+    ttl_seconds = _env_int("DISCORD_SHORTTREND_CACHE_TTL_SECONDS", 180, minimum=0)
+    if ttl_seconds > 0 and cache_path.exists() and time.time() - cache_path.stat().st_mtime <= ttl_seconds:
+        try:
+            cached = pd.read_csv(cache_path)
+            cached_period = str(cached.get("period", pd.Series([period])).iloc[0]).strip().lower()
+            if not cached.empty and cached_period == period:
+                return cached, ""
+        except Exception:
+            pass
+
+    try:
+        client = BinanceFuturesPublic(
+            timeout=_env_int("DISCORD_SHORTTREND_BINANCE_TIMEOUT_SECONDS", 12, minimum=3),
+            requests_per_second=float(_env_value("DISCORD_SHORTTREND_REQUESTS_PER_SECOND", "8")),
+            retries=_env_int("DISCORD_SHORTTREND_BINANCE_RETRIES", 2, minimum=1),
+        )
+        symbols = [item.symbol for item in client.perpetual_usdt_symbols() if item.symbol]
+        tickers = {str(row.get("symbol", "")).upper(): row for row in client.ticker_24hr() if row.get("symbol")}
+    except Exception as exc:
+        return pd.DataFrame(), str(exc)
+
+    max_symbols = _env_int("DISCORD_SHORTTREND_MAX_SYMBOLS", 0, minimum=0)
+    if max_symbols > 0:
+        symbols = symbols[:max_symbols]
+    limit = min(max(max(windows) + 1, 2), 500)
+    scanned_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    rows: list[dict[str, Any]] = []
+    errors = 0
+    for symbol in symbols:
+        try:
+            ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=limit)
+        except Exception:
+            errors += 1
+            continue
+        trend_row = _shorttrend_row(symbol, ratio_rows, period=period, windows=windows, ticker=tickers.get(symbol, {}), scanned_at=scanned_at)
+        if trend_row is not None:
+            rows.append(trend_row)
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame, f"no live short-account trend rows returned ({errors} symbol errors)"
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(cache_path, index=False)
+    except Exception:
+        pass
+    return frame, ""
+
+
+def _format_shorttrend_frame(
+    frame: pd.DataFrame,
+    *,
+    source: str,
+    limit: int,
+    period: str,
+    windows: tuple[int, ...],
+    min_windows: int,
+    min_total_pp: float,
+    prefix: str = "",
+) -> tuple[str, list[str]]:
+    rows = frame.copy()
+    numeric_columns = [
+        "short_account_pct",
+        "short_account_history_points",
+        "positive_window_count",
+        "available_window_count",
+        "short_account_total_positive_pp",
+        "short_account_total_pp",
+        "short_account_trend_score",
+        "quote_volume_24h",
+        "price_change_24h_pct",
+    ]
+    for window in windows:
+        numeric_columns.extend([f"short_account_change_{window}p_pp", f"short_account_change_{window}p_pct"])
+    for column in numeric_columns:
+        if column not in rows.columns:
+            rows[column] = float("nan")
+        rows[column] = pd.to_numeric(rows[column], errors="coerce")
+    if "period" in rows.columns:
+        rows = rows[rows["period"].astype(str).str.strip().str.lower().eq(period)].copy()
+    if "symbol" not in rows.columns:
+        return "Short-account trend leaderboard", [f"{prefix}\nNo short-account trend symbols exist in the latest cache.".strip()]
+
+    matches = rows[
+        rows["positive_window_count"].ge(float(min_windows))
+        & rows["short_account_total_positive_pp"].ge(float(min_total_pp))
+    ].copy()
+    if matches.empty:
+        return (
+            "Short-account trend leaderboard",
+            [
+                (
+                    f"{prefix}\nNo symbols passed short trend filters for period {period}: "
+                    f"min_windows {min_windows}, min_total_pp {min_total_pp:.2f}."
+                ).strip()
+            ],
+        )
+    matches["symbol"] = matches["symbol"].astype(str).str.upper().str.strip()
+    matches = matches[matches["symbol"].ne("")].drop_duplicates(subset=["symbol"], keep="first")
+    matches = matches.sort_values(
+        ["positive_window_count", "short_account_total_positive_pp", "short_account_trend_score", "quote_volume_24h", "symbol"],
+        ascending=[False, False, False, False, True],
+    )
+    total_matches = len(matches)
+    matches = matches.head(max(1, int(limit))).copy()
+    matches, context_label = _with_shorts_thesis_context(matches, source=source)
+    scanned_at = str(rows.get("scanned_at_utc", pd.Series(["unknown"])).iloc[0])
+    scan_mode = str(rows.get("scan_mode", pd.Series([f"live {period} short-account trend"])).iloc[0])
+    base_thesis_count = int(_boolish_series(matches.get("_discord_base_thesis_gate"), index=matches.index).sum())
+    window_text = ",".join(_trend_window_label(window, period) for window in windows)
+    header = (
+        f"Short-account trend leaderboard ({len(matches)}/{total_matches})\n"
+        f"Rank: persistent positive short-account ROC | Windows: {window_text} | Source: {source} | Scan: {scan_mode} | Updated: {scanned_at}\n"
+        f"Filters: positive windows >= {min_windows} and total positive delta >= +{min_total_pp:.2f}pp | Thesis context: {context_label or 'none'} | Base thesis rows: {base_thesis_count}\n"
+        "Read: trend-following short crowd build. Strongest when it aligns with OI/volume expansion, holder control, venue support, and no-pump/not-late structure."
+    )
+    if prefix:
+        header = f"{prefix}\n\n{header}"
+    lines = [header, ""]
+    for _, row in matches.iterrows():
+        symbol = _clean_scalar_text(row.get("symbol", "")).upper().strip() or "UNKNOWN"
+        current_short = _safe_pct(row.get("short_account_pct"))
+        pos_count = int(_safe_float(row.get("positive_window_count")) or 0)
+        available_count = int(_safe_float(row.get("available_window_count")) or 0)
+        total_positive_pp = _safe_float(row.get("short_account_total_positive_pp")) or 0.0
+        changes: list[str] = []
+        for window in windows:
+            delta_pp = _safe_float(row.get(f"short_account_change_{window}p_pp"))
+            if delta_pp is None:
+                continue
+            changes.append(f"{_trend_window_label(window, period)} {delta_pp:+.2f}pp")
+        changes_text = _clip_text(", ".join(changes), 110) or "changes n/a"
+        volume = _safe_float(row.get("quote_volume_24h"))
+        day_change = _safe_float(row.get("price_change_24h_pct"))
+        day_text = f"24h {day_change:+.1f}%" if day_change is not None else "24h n/a"
+        has_context = _boolish_scalar(row.get("_shorts_context_available"))
+        base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N" if has_context else "?"
+        if has_context:
+            holder = "Y" if _boolish_scalar(row.get("_shorts_holder_gate")) else "N"
+            venue = "Y" if _boolish_scalar(row.get("_shorts_venue_gate")) else "N"
+            no_pump = "Y" if _boolish_scalar(row.get("_shorts_no_pump_gate")) else "N"
+            top10 = _safe_pct(row.get("_shorts_top10_effective"))
+            top10_text = f" top10 {top10:.1f}%" if top10 is not None else ""
+            context = f" | baseThesis {base_thesis} | holder {holder}{top10_text} | BnBg {venue} | noPump60 {no_pump}"
+        else:
+            context = f" | baseThesis {base_thesis} | no scanner thesis context"
+        current_text = f"{current_short:.1f}%" if current_short is not None else "n/a"
+        lines.append(
+            f"/{symbol} | trend {pos_count}/{available_count} +{total_positive_pp:.2f}pp | shorts {current_text} | {changes_text} | vol {_fmt_compact_number(volume)} | {day_text}{context}"
+        )
+    return "Short-account trend leaderboard", _chunk_text_lines(lines)
 
 
 def _cache_status() -> str:
@@ -6787,6 +7041,40 @@ def main(*, force_disable_symbol_shortcuts: bool = False) -> None:
         if not chunks:
             chunks = ["No positive short-account ROC rows found."]
         embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xF97316)
+        embed.set_footer(text=DISCORD_FOOTER)
+        await interaction.followup.send(embed=embed)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(f"```text\n{chunk}\n```")
+
+    shorttrend_kwargs = {"name": "shorttrend", "description": "Rank persistent short-account build trends across multiple ROC windows."}
+    if guild is not None:
+        shorttrend_kwargs["guild"] = guild
+
+    @tree.command(**shorttrend_kwargs)
+    @app_commands.describe(
+        limit="Maximum rows to return.",
+        period="Binance account-ratio period. Default 1h makes windows read as 1h/3h/6h/12h/24h.",
+        min_windows="Minimum number of configured windows with positive short-account change.",
+        min_total_pp="Minimum summed positive short-account delta across trend windows.",
+    )
+    async def shorttrend(interaction: discord.Interaction, limit: int = 15, period: str = "1h", min_windows: int = 3, min_total_pp: float = 1.0) -> None:
+        if not _channel_allowed(interaction):
+            await interaction.response.send_message("This command is locked to the configured alert channel.", ephemeral=True)
+            return
+        if not _tier_allows(_interaction_tier(interaction), _feature_required_tier("shorttrend")):
+            await interaction.response.send_message(_access_denied_message("shorttrend"), ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        title, chunks = await asyncio.to_thread(
+            _load_shorttrend_list,
+            min(max(int(limit), 1), 50),
+            period=period,
+            min_windows=min(max(int(min_windows), 1), len(_shorttrend_windows())),
+            min_total_pp=max(0.0, float(min_total_pp)),
+        )
+        if not chunks:
+            chunks = ["No persistent short-account trend rows found."]
+        embed = discord.Embed(title=title, description=f"```text\n{chunks[0]}\n```", color=0xFB923C)
         embed.set_footer(text=DISCORD_FOOTER)
         await interaction.followup.send(embed=embed)
         for chunk in chunks[1:]:

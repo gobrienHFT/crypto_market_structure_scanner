@@ -325,6 +325,54 @@ def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> N
     assert output.index("/FASTUSDT") < output.index("/SLOWUSDT")
 
 
+def test_load_shorttrend_list_ranks_persistent_short_builds(tmp_path, monkeypatch) -> None:
+    def ratio_path(values: list[float]) -> list[dict[str, str]]:
+        return [{"timestamp": str(index), "shortAccount": str(value / 100.0), "longAccount": str(1.0 - value / 100.0)} for index, value in enumerate(values)]
+
+    class FakeShortTrendClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def perpetual_usdt_symbols(self):
+            return [
+                SimpleNamespace(symbol="TRENDUSDT"),
+                SimpleNamespace(symbol="BLIPUSDT"),
+                SimpleNamespace(symbol="DOWNUSDT"),
+            ]
+
+        def ticker_24hr(self):
+            return [
+                {"symbol": "TRENDUSDT", "quoteVolume": "5000000", "priceChangePercent": "3.0"},
+                {"symbol": "BLIPUSDT", "quoteVolume": "4000000", "priceChangePercent": "1.0"},
+                {"symbol": "DOWNUSDT", "quoteVolume": "3000000", "priceChangePercent": "-2.0"},
+            ]
+
+        def global_long_short_account_ratio(self, symbol, *, period="1h", limit=25):
+            assert period == "1h"
+            assert limit == 7
+            rows = {
+                "TRENDUSDT": ratio_path([40, 41, 42, 43, 44, 45, 46, 47]),
+                "BLIPUSDT": ratio_path([41, 41, 41, 41, 41, 41, 40, 41]),
+                "DOWNUSDT": ratio_path([50, 49, 48, 47, 46, 45, 44, 43]),
+            }
+            return rows[symbol]
+
+    monkeypatch.setattr(bot, "BinanceFuturesPublic", FakeShortTrendClient)
+    monkeypatch.setenv("DISCORD_SHORTTREND_CACHE_PATH", str(tmp_path / "shorttrend.csv"))
+    monkeypatch.setenv("DISCORD_SHORTTREND_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setenv("DISCORD_SHORTTREND_WINDOWS", "1,3,6")
+    monkeypatch.setattr(bot, "_latest_snapshot_frame", lambda: pd.DataFrame())
+    monkeypatch.setattr(bot, "_read_csv_if_exists", lambda path: pd.DataFrame())
+
+    title, chunks = bot._load_shorttrend_list(limit=10, period="1h", min_windows=3, min_total_pp=3.0)
+    output = "\n".join(chunks)
+
+    assert title == "Short-account trend leaderboard"
+    assert "/TRENDUSDT | trend 3/3 +10.00pp | shorts 47.0% | 1h +1.00pp, 3h +3.00pp, 6h +6.00pp | vol 5.00M | 24h +3.0% | baseThesis ?" in output
+    assert "BLIPUSDT" not in output
+    assert "DOWNUSDT" not in output
+
+
 def test_load_funding_leaderboard_splits_long_and_short_carry(monkeypatch) -> None:
     now_ms = int(bot.time.time() * 1000)
 
