@@ -12,4 +12,5 @@ outputs/
 breakout_monitor_output*/
 short_account_roc_output*/
 inx_hourly_monitor_output*/
+coai_hourly_monitor_output*/
 *.sqlite

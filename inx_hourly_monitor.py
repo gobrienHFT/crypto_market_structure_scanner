@@ -83,6 +83,16 @@ def _now_label() -> str:
     return _now_utc().strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _base_asset(symbol: Any) -> str:
+    clean = str(symbol or "").upper().strip()
+    return clean[:-4] if clean.endswith("USDT") else clean
+
+
+def _output_prefix(symbol: Any) -> str:
+    base = _base_asset(symbol) or "symbol"
+    return "".join(char.lower() if char.isalnum() else "_" for char in base).strip("_") or "symbol"
+
+
 def _row_timestamp(row: dict[str, Any]) -> int:
     for key in ("timestamp", "time"):
         parsed = _to_float(row.get(key))
@@ -277,6 +287,7 @@ def fetch_inx_hourly_snapshot(client: BinanceFuturesPublic, config: InxHourlyCon
 
 def _payload_lines(row: dict[str, Any], errors: list[str]) -> list[str]:
     symbol = str(row.get("symbol", "")).upper()
+    base = _base_asset(symbol)
     lines = [
         (
             f"/{symbol} | short {_format_pct(row.get('short_account_previous_1h_pct'), signed=False)} -> "
@@ -290,7 +301,7 @@ def _payload_lines(row: dict[str, Any], errors: list[str]) -> list[str]:
             f"value ${_format_number(row.get('open_interest_value'))}"
         ),
         (
-            f"60m volume {_format_number(row.get('volume_base_60m'))} {symbol.replace('USDT', '')} | "
+            f"60m volume {_format_number(row.get('volume_base_60m'))} {base} | "
             f"quote ${_format_number(row.get('volume_quote_60m'))} | trades {_format_number(row.get('trades_60m'))}"
         ),
         (
@@ -308,17 +319,19 @@ def _payload_lines(row: dict[str, Any], errors: list[str]) -> list[str]:
 
 def build_discord_payload(row: dict[str, Any], errors: list[str] | None = None) -> dict[str, Any]:
     errors = errors or []
+    symbol = str(row.get("symbol", "INXUSDT")).upper()
+    base = _base_asset(symbol) or symbol
     description = (
-        f"INX one-hour perp monitor\n"
+        f"{base} one-hour perp monitor\n"
         f"Source: {row.get('source') or 'Binance Futures public data'} | Detected: {_now_label()}\n"
         f"Posts every cycle; metrics are the latest 1h short-account point, 1h OI point, and last 12 closed 5m volume bars.\n\n"
         + "\n".join(_payload_lines(row, errors))
     )
     return {
-        "username": "INX Hourly Scanner",
+        "username": f"{base} Hourly Scanner",
         "embeds": [
             {
-                "title": f"{str(row.get('symbol', 'INXUSDT')).upper()} one-hour monitor",
+                "title": f"{symbol} one-hour monitor",
                 "description": description[:3900],
                 "color": 0x22C55E if _to_float(row.get("short_account_roc_1h_pp")) >= 0 else 0xEF4444,
                 "footer": {"text": DISCORD_FOOTER},
@@ -342,9 +355,10 @@ def _post_webhook(row: dict[str, Any], errors: list[str], config: InxHourlyConfi
 
 def _write_outputs(row: dict[str, Any], errors: list[str], config: InxHourlyConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    latest_path = config.output_dir / "inx_hourly_latest.csv"
-    history_path = config.output_dir / "inx_hourly_history.csv"
-    error_path = config.output_dir / "inx_hourly_errors_latest.txt"
+    prefix = _output_prefix(config.symbol)
+    latest_path = config.output_dir / f"{prefix}_hourly_latest.csv"
+    history_path = config.output_dir / f"{prefix}_hourly_history.csv"
+    error_path = config.output_dir / f"{prefix}_hourly_errors_latest.txt"
 
     fieldnames = list(row.keys())
     for path, mode in ((latest_path, "w"), (history_path, "a")):
@@ -388,14 +402,14 @@ def run_forever(config: InxHourlyConfig) -> None:
             print(f"[{_now_label()}] stopped by user", flush=True)
             return
         except Exception as exc:
-            print(f"[{_now_label()}] INX monitor cycle failed: {exc}", flush=True)
+            print(f"[{_now_label()}] {config.symbol.upper()} monitor cycle failed: {exc}", flush=True)
         if config.once:
             return
         time.sleep(max(30.0, float(config.interval_seconds)))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="24/7 INX one-hour short/OI/volume Discord monitor.")
+    parser = argparse.ArgumentParser(description="24/7 single-symbol one-hour short/OI/volume Discord monitor.")
     parser.add_argument("--once", action="store_true", help="Run one scan and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print webhook payload instead of posting.")
     parser.add_argument("--symbol", default=_env_value("INX_MONITOR_SYMBOL", "INXUSDT"), help="Symbol to monitor. Default INXUSDT.")
@@ -437,7 +451,7 @@ def main(argv: list[str] | None = None) -> None:
     _load_local_env()
     config = config_from_args(parse_args(argv))
     print(
-        f"[{_now_label()}] starting INX hourly monitor | symbol={config.symbol} "
+        f"[{_now_label()}] starting hourly monitor | symbol={config.symbol} "
         f"interval={config.interval_seconds:.0f}s output={config.output_dir}",
         flush=True,
     )

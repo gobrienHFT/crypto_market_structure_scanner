@@ -187,7 +187,7 @@ Webhook alerts support:
 - dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
 - dedicated 24/7 short-account 1h rate-of-change connector for rapid short builds/covers
 - dedicated 24/7 breakout/high-low/MA200 connector for fresh Binance perp structure changes
-- dedicated 24/7 INX one-hour connector for short-account change, open interest, and recent volume
+- dedicated 24/7 single-symbol one-hour connectors for short-account change, open interest, and recent volume
 - venue-inventory stress notes when CEX deposits are large versus visible liquidity
 - case-study analogue lines for fast pattern triage, including the RAVE 2026-04-18 and LAB 2026-05-11 historical anchors when matched
 - optional holder composition summaries
@@ -235,7 +235,13 @@ Run the INX one-hour short/OI/volume Discord connector with:
 run_inx_hourly_monitor_24_7.bat
 ```
 
-It posts every cycle to `INX_MONITOR_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune it with `INX_MONITOR_SYMBOL`, `INX_MONITOR_INTERVAL_SECONDS`, and `INX_MONITOR_OUTPUT_DIR`. The default symbol is `INXUSDT`.
+Run the COAI one-hour short/OI/volume Discord connector with:
+
+```powershell
+run_coai_hourly_monitor_24_7.bat
+```
+
+Both post every cycle to `INX_MONITOR_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune the shared monitor with `INX_MONITOR_SYMBOL`, `INX_MONITOR_INTERVAL_SECONDS`, and `INX_MONITOR_OUTPUT_DIR`; the COAI BAT overrides the symbol/output directory to `COAIUSDT` and `coai_hourly_monitor_output`.
 
 ---
 
@@ -611,6 +617,12 @@ Run the INX one-hour short/OI/volume watcher:
 
 ```powershell
 run_inx_hourly_monitor_24_7.bat
+```
+
+Run the COAI one-hour short/OI/volume watcher:
+
+```powershell
+run_coai_hourly_monitor_24_7.bat
 ```
 
 ---

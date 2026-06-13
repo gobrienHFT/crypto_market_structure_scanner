@@ -61,7 +61,30 @@ def test_inx_hourly_snapshot_and_payload_track_requested_metrics() -> None:
     payload = build_discord_payload(row)
     description = payload["embeds"][0]["description"]
 
+    assert payload["username"] == "INX Hourly Scanner"
+    assert "INX one-hour perp monitor" in description
     assert "/INXUSDT" in description
     assert "short 50.00% -> 53.50%" in description
     assert "OI 1.00M -> 1.12M" in description
     assert "quote $12.00K" in description
+
+
+def test_hourly_payload_labels_follow_requested_symbol() -> None:
+    row = build_inx_hourly_snapshot(
+        symbol="COAIUSDT",
+        ratio_rows=[_ratio(1, 0.40), _ratio(2, 0.45)],
+        open_interest_rows=[_oi(1, 100_000, 25_000), _oi(2, 125_000, 30_000)],
+        klines_5m=[_kline(index, quote_volume=2500.0) for index in range(13)],
+        live_open_interest={"openInterest": "125000"},
+        mark_price_rows=[{"markPrice": "0.42"}],
+        scanned_at=datetime(2026, 6, 13, tzinfo=timezone.utc),
+    )
+
+    payload = build_discord_payload(row)
+    description = payload["embeds"][0]["description"]
+
+    assert payload["username"] == "COAI Hourly Scanner"
+    assert payload["embeds"][0]["title"] == "COAIUSDT one-hour monitor"
+    assert "COAI one-hour perp monitor" in description
+    assert "/COAIUSDT" in description
+    assert "60m volume 6.00K COAI" in description
