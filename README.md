@@ -158,6 +158,7 @@ Dashboard functionality includes:
 - holder composition summaries
 - token contract inspection
 - a distinct `1H Short ROC` grid for past-hour Binance global short-account share changes
+- a `Shorts Fighting Uptrend` board for positive-funding coins where short accounts are high/rising while price structure keeps trending up
 - cached scan comparison
 - local persistence of scanner outputs
 - discretionary review of structural market conditions

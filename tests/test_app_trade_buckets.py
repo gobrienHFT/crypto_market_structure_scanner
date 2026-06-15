@@ -302,6 +302,76 @@ def test_pre_activity_dashboard_watch_requires_full_hard_gates() -> None:
     assert selected["symbol"].tolist() == ["LATENTUSDT"]
 
 
+def test_crowded_short_uptrend_candidates_require_funding_shorts_build_and_trend() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "WINUSDT",
+                "base_asset": "WIN",
+                "market_type": "CRYPTO",
+                "carry_funding_pct": 0.012,
+                "predicted_funding_pct": 0.018,
+                "short_account_pct": 62.0,
+                "short_account_roc_1h_pp": 1.2,
+                "short_account_change_max_pp": 2.0,
+                "short_account_change_max_pct": 4.0,
+                "short_account_change_max_window": "3p",
+                "broke_high_20d": True,
+                "range_high_break_count": 1,
+                "day_return_pct": 12.0,
+                "oi_delta_pct": 4.0,
+                "quote_volume_24h": 1_000_000,
+            },
+            {
+                "symbol": "NOFUNDUSDT",
+                "market_type": "CRYPTO",
+                "carry_funding_pct": -0.010,
+                "predicted_funding_pct": -0.006,
+                "short_account_pct": 68.0,
+                "short_account_roc_1h_pp": 2.0,
+                "broke_high_20d": True,
+                "day_return_pct": 14.0,
+            },
+            {
+                "symbol": "NOBUILDUSDT",
+                "market_type": "CRYPTO",
+                "carry_funding_pct": 0.020,
+                "short_account_pct": 66.0,
+                "short_account_roc_1h_pp": 0.0,
+                "short_account_change_max_pp": 0.0,
+                "short_account_change_max_pct": 0.0,
+                "broke_high_20d": True,
+                "day_return_pct": 10.0,
+            },
+            {
+                "symbol": "EQUITYUSDT",
+                "market_type": "EQUITY",
+                "carry_funding_pct": 0.020,
+                "short_account_pct": 66.0,
+                "short_account_roc_1h_pp": 2.0,
+                "broke_high_20d": True,
+                "day_return_pct": 10.0,
+            },
+        ]
+    )
+
+    selected = app._crowded_short_uptrend_candidates(frame)
+
+    assert selected["symbol"].tolist() == ["WINUSDT"]
+    row = selected.iloc[0]
+    assert bool(row["crowded_short_uptrend_funding_gate"])
+    assert bool(row["crowded_short_uptrend_short_gate"])
+    assert bool(row["crowded_short_uptrend_build_gate"])
+    assert bool(row["crowded_short_uptrend_trend_gate"])
+    assert "funding 0.0180%" in row["crowded_short_uptrend_note"]
+    assert "shorts 62.0%" in row["crowded_short_uptrend_note"]
+
+    scored_all = app._crowded_short_uptrend_candidates(frame, min_funding_pct=-1.0, return_all=True)
+
+    assert "NOFUNDUSDT" in scored_all["symbol"].tolist()
+    assert "EQUITYUSDT" not in scored_all["symbol"].tolist()
+
+
 def test_cex_flow_dashboard_promotes_whale_sender_provenance() -> None:
     whale_sender_columns = set(app.CEX_FLOW_WHALE_SENDER_COLUMNS)
     whale_sender_index = app.CEX_FLOW_DASHBOARD_COLUMNS.index("cex_deposit_24h_whale_sender_count")

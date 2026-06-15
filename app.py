@@ -2012,6 +2012,203 @@ def _apply_range_breakout_events(all_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+CROWDED_SHORT_UPTREND_COLUMNS = [
+    "crowded_short_uptrend_score",
+    "crowded_short_uptrend_flag",
+    "crowded_short_uptrend_note",
+    "crowded_short_uptrend_funding_gate",
+    "crowded_short_uptrend_short_gate",
+    "crowded_short_uptrend_build_gate",
+    "crowded_short_uptrend_trend_gate",
+    "crowded_short_uptrend_effective_funding_pct",
+    "crowded_short_uptrend_funding_score",
+    "crowded_short_uptrend_short_score",
+    "crowded_short_uptrend_build_score",
+    "crowded_short_uptrend_trend_score",
+    "crowded_short_uptrend_oi_score",
+    "crowded_short_uptrend_late_heat_score",
+]
+
+
+def _crowded_short_uptrend_candidates(
+    all_df: pd.DataFrame,
+    *,
+    min_short_pct: float = 50.0,
+    min_short_roc_1h_pp: float = 0.25,
+    min_funding_pct: float = 0.0,
+    return_all: bool = False,
+) -> pd.DataFrame:
+    if all_df.empty:
+        empty = all_df.copy()
+        for column in CROWDED_SHORT_UPTREND_COLUMNS:
+            empty[column] = pd.Series(dtype="object" if column.endswith("note") else "float64")
+        return empty
+
+    frame = all_df.copy()
+    index = frame.index
+
+    def _num_col(column: str, default: float = float("nan")) -> pd.Series:
+        source = frame[column] if column in frame.columns else pd.Series(default, index=index)
+        return pd.to_numeric(source, errors="coerce")
+
+    def _bool_col(column: str) -> pd.Series:
+        source = frame[column] if column in frame.columns else pd.Series(False, index=index)
+        return source.fillna(False).astype(bool)
+
+    carry_funding = _num_col("carry_funding_pct")
+    predicted_funding = _num_col("predicted_funding_pct")
+    effective_funding = pd.concat([carry_funding, predicted_funding], axis=1).max(axis=1, skipna=True)
+    short_pct = _num_col("short_account_pct")
+    short_roc_1h_pp = _num_col("short_account_roc_1h_pp").fillna(0.0)
+    short_change_max_pp = _num_col("short_account_change_max_pp").fillna(0.0)
+    short_change_max_pct = _num_col("short_account_change_max_pct").fillna(0.0)
+    day_return = _num_col("day_return_pct")
+    hour_return = _num_col("hour_return_pct")
+    high_break_count = (
+        _bool_col("broke_high_5d").astype(int)
+        + _bool_col("broke_high_20d").astype(int)
+        + _bool_col("broke_high_90d").astype(int)
+        + _bool_col("broke_high_180d").astype(int)
+    )
+    low_break_count = (
+        _bool_col("broke_low_5d").astype(int)
+        + _bool_col("broke_low_20d").astype(int)
+        + _bool_col("broke_low_90d").astype(int)
+        + _bool_col("broke_low_180d").astype(int)
+    )
+
+    funding_score = _linear_score(effective_funding, low=0.0001, high=0.08)
+    short_score = _linear_score(short_pct, low=50.0, high=70.0)
+    build_score = pd.concat(
+        [
+            _linear_score(short_roc_1h_pp, low=0.25, high=3.0),
+            _linear_score(short_change_max_pp, low=0.75, high=6.0),
+            _linear_score(short_change_max_pct, low=2.0, high=12.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    high_break_score = (high_break_count.astype(float) * 28.0).clip(lower=0.0, upper=100.0)
+    range_high_score = _linear_score(_num_col("range_high_break_count").fillna(0.0), low=0.5, high=3.0)
+    trend_score = pd.concat(
+        [
+            high_break_score,
+            range_high_score,
+            _num_col("trend_confluence_score").fillna(0.0),
+            _num_col("breakout_pressure_score").fillna(0.0),
+            _linear_score(day_return, low=2.0, high=35.0),
+            _linear_score(hour_return, low=0.5, high=10.0),
+            _linear_score(_num_col("daily_quote_volume_multiple"), low=1.10, high=4.0),
+            _linear_score(_num_col("hour_close_location_pct"), low=55.0, high=85.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    oi_score = pd.concat(
+        [
+            _linear_score(_num_col("oi_delta_pct"), low=0.5, high=8.0),
+            _linear_score(_num_col("oi_to_24h_volume_pct"), low=2.0, high=25.0),
+            _num_col("forced_buying_setup_score").fillna(0.0),
+            _num_col("short_liquidation_fuel_score").fillna(0.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0)
+    late_heat_score = pd.concat(
+        [
+            _num_col("crime_exhaustion_score").fillna(0.0),
+            _num_col("convexity_late_penalty").fillna(0.0),
+            _num_col("terminal_risk_score").fillna(0.0),
+            _num_col("exit_fragility_score").fillna(0.0),
+            _bool_col("blowoff_risk_flag").astype(float) * 100.0,
+            _bool_col("blowoff_watch_flag").astype(float) * 70.0,
+            _bool_col("unwind_risk_flag").astype(float) * 65.0,
+            low_break_count.astype(float) * 22.0,
+            _linear_score(-day_return, low=4.0, high=20.0),
+        ],
+        axis=1,
+    ).max(axis=1).fillna(0.0).clip(lower=0.0, upper=100.0)
+
+    score = (
+        funding_score * 0.18
+        + short_score * 0.23
+        + build_score * 0.24
+        + trend_score * 0.25
+        + oi_score * 0.10
+        - late_heat_score * 0.12
+    ).clip(lower=0.0, upper=100.0)
+
+    market_type = frame["market_type"].astype(str).str.upper() if "market_type" in frame.columns else pd.Series("", index=index)
+    crypto_gate = ~market_type.isin(TRADFI_ALWAYS_INCLUDE_TYPES)
+    funding_gate = effective_funding > float(min_funding_pct)
+    short_gate = short_pct >= float(min_short_pct)
+    build_gate = (
+        (short_roc_1h_pp >= float(min_short_roc_1h_pp))
+        | (short_change_max_pp >= 1.0)
+        | (short_change_max_pct >= 2.5)
+    )
+    trend_gate = (high_break_count >= 1) | (trend_score >= 45.0)
+    candidate_flag = crypto_gate & funding_gate & short_gate & build_gate & trend_gate & (score >= 35.0)
+
+    out = frame.copy()
+    out["crowded_short_uptrend_score"] = score
+    out["crowded_short_uptrend_flag"] = candidate_flag.fillna(False).astype(bool)
+    out["crowded_short_uptrend_funding_gate"] = funding_gate.fillna(False).astype(bool)
+    out["crowded_short_uptrend_short_gate"] = short_gate.fillna(False).astype(bool)
+    out["crowded_short_uptrend_build_gate"] = build_gate.fillna(False).astype(bool)
+    out["crowded_short_uptrend_trend_gate"] = trend_gate.fillna(False).astype(bool)
+    out["crowded_short_uptrend_effective_funding_pct"] = effective_funding
+    out["crowded_short_uptrend_funding_score"] = funding_score
+    out["crowded_short_uptrend_short_score"] = short_score
+    out["crowded_short_uptrend_build_score"] = build_score
+    out["crowded_short_uptrend_trend_score"] = trend_score
+    out["crowded_short_uptrend_oi_score"] = oi_score
+    out["crowded_short_uptrend_late_heat_score"] = late_heat_score
+
+    def _note(row: pd.Series) -> str:
+        factors: list[str] = []
+        funding = _safe_float(row.get("crowded_short_uptrend_effective_funding_pct"))
+        if math.isfinite(funding):
+            factors.append(f"funding {funding:.4f}%")
+        current_short = _safe_float(row.get("short_account_pct"))
+        if math.isfinite(current_short):
+            factors.append(f"shorts {current_short:.1f}%")
+        roc = _safe_float(row.get("short_account_roc_1h_pp"))
+        max_pp = _safe_float(row.get("short_account_change_max_pp"))
+        if math.isfinite(roc) and roc > 0:
+            factors.append(f"1h short +{roc:.2f}pp")
+        elif math.isfinite(max_pp) and max_pp > 0:
+            window = str(row.get("short_account_change_max_window", "") or "").strip()
+            factors.append(f"short +{max_pp:.2f}pp{(' ' + window) if window else ''}")
+        high_count_raw = _safe_float(row.get("range_high_break_count"))
+        high_count = int(high_count_raw) if math.isfinite(high_count_raw) else 0
+        if high_count > 0:
+            factors.append(f"{high_count} high break windows")
+        elif bool(row.get("broke_high_5d")):
+            factors.append("5D high break")
+        trend = _safe_float(row.get("crowded_short_uptrend_trend_score"))
+        if math.isfinite(trend) and trend >= 55.0:
+            factors.append(f"trend score {trend:.0f}")
+        oi = _safe_float(row.get("oi_delta_pct"))
+        if math.isfinite(oi) and oi > 0:
+            factors.append(f"OI +{oi:.1f}%")
+        heat = _safe_float(row.get("crowded_short_uptrend_late_heat_score"))
+        if math.isfinite(heat) and heat >= 55.0:
+            factors.append(f"late heat {heat:.0f}")
+        return " | ".join(factors[:7]) if factors else "No crowded-short uptrend evidence in this scan."
+
+    out["crowded_short_uptrend_note"] = out.apply(_note, axis=1)
+    ranked = out[crypto_gate].copy() if return_all else out[out["crowded_short_uptrend_flag"]].copy()
+    return ranked.sort_values(
+        [
+            "crowded_short_uptrend_score",
+            "crowded_short_uptrend_build_score",
+            "crowded_short_uptrend_short_score",
+            "crowded_short_uptrend_trend_score",
+            "quote_volume_24h" if "quote_volume_24h" in out.columns else "crowded_short_uptrend_oi_score",
+            "symbol",
+        ],
+        ascending=[False, False, False, False, False, True],
+    )
+
+
 def _score_trade_buckets(all_df: pd.DataFrame) -> pd.DataFrame:
     if all_df.empty:
         all_df["trade_bucket"] = pd.Series(dtype="object")
@@ -5680,6 +5877,32 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Funding-flip / short-squeeze composite: funding flip, short crowding, breakout pressure, ATH runway, minus chase penalty.",
             ),
+            "crowded_short_uptrend_score": st.column_config.NumberColumn(
+                "Crowded Uptrend",
+                format="%.1f",
+                help="Ranks coins where positive funding, high/rising short accounts, and uptrend/breakout structure coexist.",
+            ),
+            "crowded_short_uptrend_flag": st.column_config.CheckboxColumn("Crowded Uptrend"),
+            "crowded_short_uptrend_note": st.column_config.TextColumn("Crowded Uptrend Note"),
+            "crowded_short_uptrend_funding_gate": st.column_config.CheckboxColumn("Funding > 0"),
+            "crowded_short_uptrend_short_gate": st.column_config.CheckboxColumn("High Shorts"),
+            "crowded_short_uptrend_build_gate": st.column_config.CheckboxColumn("Shorts Building"),
+            "crowded_short_uptrend_trend_gate": st.column_config.CheckboxColumn("Uptrend Gate"),
+            "crowded_short_uptrend_effective_funding_pct": st.column_config.NumberColumn(
+                "Effective Funding",
+                format="%.4f%%",
+                help="Max of live estimated and modeled funding, used only as a positive-funding gate and score input.",
+            ),
+            "crowded_short_uptrend_funding_score": st.column_config.NumberColumn("Funding Score", format="%.1f"),
+            "crowded_short_uptrend_short_score": st.column_config.NumberColumn("Short Level", format="%.1f"),
+            "crowded_short_uptrend_build_score": st.column_config.NumberColumn("Short Build", format="%.1f"),
+            "crowded_short_uptrend_trend_score": st.column_config.NumberColumn("Trend", format="%.1f"),
+            "crowded_short_uptrend_oi_score": st.column_config.NumberColumn("OI/Fuel", format="%.1f"),
+            "crowded_short_uptrend_late_heat_score": st.column_config.NumberColumn(
+                "Late Heat",
+                format="%.1f",
+                help="Penalty from exhaustion, late-risk, blowoff/unwind flags, low breaks, or sharp downside tape.",
+            ),
             "last_settled_funding_pct": st.column_config.NumberColumn(
                 "Prev Funding",
                 format="%.4f%%",
@@ -6803,6 +7026,7 @@ def render_breakout_dashboard() -> None:
                 "RAVE/LAB Radar",
                 "Pump Radar",
                 "Pre-Activity Radar",
+                "Shorts Fighting Uptrend",
             ]
         )
 
@@ -8889,6 +9113,159 @@ def render_breakout_dashboard() -> None:
                 else:
                     st.dataframe(
                         _display_frame(pre_df, pre_activity_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[16]:
+            st.caption(
+                "Continuation lens for coins where shorts are still crowded and building while funding is positive and price structure is trending up. "
+                "Downside breaks and late heat stay visible as penalties because high-volatility trends can still be valid until the structure actually unwinds."
+            )
+            crowded_uptrend_cols = [
+                "symbol",
+                "base_asset",
+                "crowded_short_uptrend_score",
+                "crowded_short_uptrend_note",
+                "crowded_short_uptrend_funding_gate",
+                "crowded_short_uptrend_short_gate",
+                "crowded_short_uptrend_build_gate",
+                "crowded_short_uptrend_trend_gate",
+                "crowded_short_uptrend_effective_funding_pct",
+                "carry_funding_pct",
+                "predicted_funding_pct",
+                "short_account_pct",
+                "short_account_previous_1h_pct",
+                "short_account_roc_1h_pp",
+                "short_account_roc_1h_pct",
+                "short_account_change_max_pp",
+                "short_account_change_max_pct",
+                "short_account_change_max_window",
+                "long_short_account_ratio",
+                "last_price",
+                "day_return_pct",
+                "hour_return_pct",
+                "range_high_break_count",
+                "range_low_break_count",
+                "broke_high_5d",
+                "broke_high_20d",
+                "broke_high_90d",
+                "broke_high_180d",
+                "broke_low_5d",
+                "broke_low_20d",
+                "trend_confluence_score",
+                "breakout_pressure_score",
+                "daily_quote_volume_multiple",
+                "hour_volume_multiple",
+                "hour_close_location_pct",
+                "oi_delta_pct",
+                "oi_to_24h_volume_pct",
+                "forced_buying_setup_score",
+                "short_liquidation_fuel_score",
+                "crowded_short_uptrend_funding_score",
+                "crowded_short_uptrend_short_score",
+                "crowded_short_uptrend_build_score",
+                "crowded_short_uptrend_trend_score",
+                "crowded_short_uptrend_oi_score",
+                "crowded_short_uptrend_late_heat_score",
+                "trade_bucket",
+                "trade_bucket_score",
+                "convexity_entry_score",
+                "terminal_edge_score",
+                "timing_score",
+            ]
+            control_cols = st.columns(4)
+            min_short_pct = float(
+                control_cols[0].number_input(
+                    "Min short accounts %",
+                    min_value=35.0,
+                    max_value=90.0,
+                    value=50.0,
+                    step=1.0,
+                    key="crowded_uptrend_min_short_pct",
+                )
+            )
+            min_short_roc_pp = float(
+                control_cols[1].number_input(
+                    "Min 1h short build pp",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=0.25,
+                    step=0.25,
+                    key="crowded_uptrend_min_short_roc_pp",
+                )
+            )
+            min_funding_pct = float(
+                control_cols[2].number_input(
+                    "Min funding %",
+                    min_value=-0.1000,
+                    max_value=0.2500,
+                    value=0.0000,
+                    step=0.0025,
+                    format="%.4f",
+                    key="crowded_uptrend_min_funding_pct",
+                )
+            )
+            top_n = int(
+                control_cols[3].number_input(
+                    "Rows",
+                    min_value=10,
+                    max_value=150,
+                    value=50,
+                    step=10,
+                    key="crowded_uptrend_top_n",
+                )
+            )
+            crowded_uptrend_df = _crowded_short_uptrend_candidates(
+                all_df,
+                min_short_pct=min_short_pct,
+                min_short_roc_1h_pp=min_short_roc_pp,
+                min_funding_pct=min_funding_pct,
+            )
+            best_score = float(pd.to_numeric(crowded_uptrend_df.get("crowded_short_uptrend_score", pd.Series(dtype="float64")), errors="coerce").max()) if not crowded_uptrend_df.empty else float("nan")
+            median_short = float(pd.to_numeric(crowded_uptrend_df.get("short_account_pct", pd.Series(dtype="float64")), errors="coerce").median()) if not crowded_uptrend_df.empty else float("nan")
+            median_funding = float(pd.to_numeric(crowded_uptrend_df.get("crowded_short_uptrend_effective_funding_pct", pd.Series(dtype="float64")), errors="coerce").median()) if not crowded_uptrend_df.empty else float("nan")
+            late_heat_count = int(
+                (
+                    pd.to_numeric(
+                        crowded_uptrend_df.get("crowded_short_uptrend_late_heat_score", pd.Series(dtype="float64")),
+                        errors="coerce",
+                    ).fillna(0.0)
+                    >= 55.0
+                ).sum()
+            ) if not crowded_uptrend_df.empty else 0
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Candidates", int(len(crowded_uptrend_df)))
+            metric_cols[1].metric("Best score", f"{best_score:.1f}" if math.isfinite(best_score) else "n/a")
+            metric_cols[2].metric("Median shorts", f"{median_short:.1f}%" if math.isfinite(median_short) else "n/a")
+            metric_cols[3].metric("Median funding", f"{median_funding:.4f}%" if math.isfinite(median_funding) else "n/a")
+            st.metric("Late-heat candidates", late_heat_count)
+
+            st.subheader("Positive Funding + Crowded Shorts + Uptrend")
+            if crowded_uptrend_df.empty:
+                st.info("No coins currently clear the crowded-short uptrend filter. Lower the thresholds or run a wider/deeper scan if you want more coverage.")
+            else:
+                st.dataframe(
+                    _display_frame(crowded_uptrend_df.head(top_n), crowded_uptrend_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show every gate-scored row"):
+                scored_all = _crowded_short_uptrend_candidates(
+                    all_df,
+                    min_short_pct=0.0,
+                    min_short_roc_1h_pp=0.0,
+                    min_funding_pct=-1.0,
+                    return_all=True,
+                )
+                if scored_all.empty:
+                    st.info("No gate-scored crypto rows are available in this scan.")
+                else:
+                    st.dataframe(
+                        _display_frame(scored_all.head(150), crowded_uptrend_cols),
                         use_container_width=True,
                         hide_index=True,
                         column_config=breakout_column_config,
