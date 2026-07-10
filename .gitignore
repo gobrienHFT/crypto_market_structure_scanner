@@ -14,4 +14,11 @@ short_account_roc_output*/
 inx_hourly_monitor_output*/
 coai_hourly_monitor_output*/
 evaa_hourly_monitor_output*/
+m_hourly_monitor_output*/
+lab_hourly_monitor_output*/
+short_roc_close_output*/
+lab_short_roc_close_output*/
+auto_short_roc_close_output*/
+evaa_short_roc_close_output*/
+ticker_short_roc_close_output*/
 *.sqlite

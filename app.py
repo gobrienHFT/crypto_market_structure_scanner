@@ -29,6 +29,7 @@ from discord_flag_formatter import (
     join_discord_flag_cards,
 )
 from early_pump_radar import EARLY_PUMP_RADAR_COLUMNS, apply_early_pump_radar
+from event_study import EVENT_STUDY_COLUMNS, build_case_study_event_frame
 from external_markets import (
     fetch_coinbase_spot_bases,
     fetch_dwf_labs_portfolio_members,
@@ -37,6 +38,7 @@ from external_markets import (
 )
 from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
 from market_structure_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
+from mechanism_engine import MECHANISM_SCORE_COLUMNS, apply_mechanism_model
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
 from pre_activity_radar import PRE_ACTIVITY_RADAR_COLUMNS, apply_pre_activity_radar
 from proof_engine import archive_alerts
@@ -3825,6 +3827,7 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         *CEX_DEPOSIT_FLOW_COLUMNS,
         *TERMINAL_SCORE_COLUMNS,
         *TIMING_SCORE_COLUMNS,
+        *MECHANISM_SCORE_COLUMNS,
     ]
     cache_frame = _discord_convex_candidates(all_df).head(max(50, DISCORD_CONVEX_ALERT_TOP_N)).copy()
     if cache_frame.empty:
@@ -5281,6 +5284,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 *ARCHETYPE_SCORE_COLUMNS,
                 *EARLY_PUMP_RADAR_COLUMNS,
                 *PRE_ACTIVITY_RADAR_COLUMNS,
+                *MECHANISM_SCORE_COLUMNS,
                 "trade_bucket",
                 "trade_bucket_score",
                 "raw_convex_long_signal",
@@ -5351,6 +5355,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
     all_df = _score_trade_buckets(all_df)
     all_df = apply_early_pump_radar(all_df)
     all_df = apply_pre_activity_radar(all_df)
+    all_df = apply_mechanism_model(all_df)
     range_events_df = all_df[pd.to_numeric(all_df["range_breakout_score"], errors="coerce").fillna(0.0) > 0.0].copy()
     range_events_df = range_events_df.sort_values(
         ["range_breakout_score", "range_high_break_count", "range_low_break_count", "carry_funding_pct", "symbol"],
@@ -5903,6 +5908,47 @@ def render_breakout_dashboard() -> None:
                 format="%.1f",
                 help="Penalty from exhaustion, late-risk, blowoff/unwind flags, low breaks, or sharp downside tape.",
             ),
+            "mechanism_score": st.column_config.NumberColumn(
+                "Mechanism",
+                format="%.1f",
+                help="Best dominant reflexive-loop score across float, CEX inventory, short-uptrend, compression, and runway mechanisms.",
+            ),
+            "mechanism_primary": st.column_config.TextColumn("Primary Mechanism"),
+            "mechanism_stage": st.column_config.TextColumn("Stage"),
+            "mechanism_reflexivity_loop": st.column_config.TextColumn("Reflexivity Loop"),
+            "mechanism_playbook_label": st.column_config.TextColumn("Playbook"),
+            "mechanism_playbook_rule": st.column_config.TextColumn("Playbook Rule"),
+            "mechanism_evidence_note": st.column_config.TextColumn("Mechanism Evidence"),
+            "mechanism_next_check": st.column_config.TextColumn("Next Check"),
+            "mechanism_invalidation": st.column_config.TextColumn("Invalidation"),
+            "mechanism_hidden_float_score": st.column_config.NumberColumn("Hidden Float", format="%.1f"),
+            "mechanism_inventory_squeeze_score": st.column_config.NumberColumn("CEX Inventory", format="%.1f"),
+            "mechanism_crowded_short_uptrend_score": st.column_config.NumberColumn("Short Uptrend Loop", format="%.1f"),
+            "mechanism_compression_ignition_score": st.column_config.NumberColumn("Compression Ignition", format="%.1f"),
+            "mechanism_runway_breakout_score": st.column_config.NumberColumn("Runway Breakout", format="%.1f"),
+            "mechanism_late_failure_score": st.column_config.NumberColumn("Late Failure", format="%.1f"),
+            "local_snapshot_count": st.column_config.NumberColumn("Local Rows", format="%d"),
+            "best_snapshot_file": st.column_config.TextColumn("Best Snapshot"),
+            "best_snapshot_time": st.column_config.TextColumn("Snapshot Time"),
+            "local_evidence_status": st.column_config.TextColumn("Evidence Status"),
+            "observed_phase": st.column_config.TextColumn("Observed Phase"),
+            "contract_hint_status": st.column_config.TextColumn("Contract Hint"),
+            "contract_hint_chain": st.column_config.TextColumn("Contract Chain"),
+            "contract_hint_address": st.column_config.TextColumn("Contract Address"),
+            "price_path_status": st.column_config.TextColumn("Price Path"),
+            "price_event_date": st.column_config.TextColumn("Price Date"),
+            "price_event_date_source": st.column_config.TextColumn("Date Source"),
+            "event_day_return_pct": st.column_config.NumberColumn("Event Day", format="%.1f%%"),
+            "event_break_prior_20d_high": st.column_config.CheckboxColumn("Broke 20D High"),
+            "post_7d_high_return_pct": st.column_config.NumberColumn("Post 7D High", format="%.1f%%"),
+            "post_7d_low_drawdown_pct": st.column_config.NumberColumn("Post 7D Low", format="%.1f%%"),
+            "mechanism_hypothesis": st.column_config.TextColumn("Mechanism Hypothesis"),
+            "mechanism_read": st.column_config.TextColumn("Mechanism Read"),
+            "mechanism_verdict": st.column_config.TextColumn("Mechanism Verdict"),
+            "scanner_lesson": st.column_config.TextColumn("Scanner Lesson"),
+            "evidence_gap_severity": st.column_config.TextColumn("Gap Severity"),
+            "next_data_action": st.column_config.TextColumn("Next Data Action"),
+            "evidence_gaps": st.column_config.TextColumn("Evidence Gaps"),
             "last_settled_funding_pct": st.column_config.NumberColumn(
                 "Prev Funding",
                 format="%.4f%%",
@@ -7026,6 +7072,7 @@ def render_breakout_dashboard() -> None:
                 "RAVE/LAB Radar",
                 "Pump Radar",
                 "Pre-Activity Radar",
+                "Convex Mechanisms",
                 "Shorts Fighting Uptrend",
             ]
         )
@@ -9119,6 +9166,166 @@ def render_breakout_dashboard() -> None:
                     )
 
         with screener_tabs[16]:
+            st.caption(
+                "Mechanism map for convex structures: the table ranks the dominant reflexive loop instead of only listing raw signals. "
+                "The crowded-short uptrend score is the positive-funding, high-shorts, rising-shorts, advancing-price structure you called out."
+            )
+            mechanism_cols = [
+                "symbol",
+                "base_asset",
+                "mechanism_score",
+                "mechanism_primary",
+                "mechanism_stage",
+                "mechanism_playbook_label",
+                "mechanism_playbook_rule",
+                "mechanism_reflexivity_loop",
+                "mechanism_evidence_note",
+                "mechanism_next_check",
+                "mechanism_invalidation",
+                "mechanism_crowded_short_uptrend_score",
+                "mechanism_hidden_float_score",
+                "mechanism_inventory_squeeze_score",
+                "mechanism_compression_ignition_score",
+                "mechanism_runway_breakout_score",
+                "mechanism_late_failure_score",
+                "crowded_short_uptrend_score",
+                "crowded_short_uptrend_note",
+                "short_account_pct",
+                "short_account_roc_1h_pp",
+                "short_account_change_max_pp",
+                "carry_funding_pct",
+                "predicted_funding_pct",
+                "broke_high_5d",
+                "broke_high_20d",
+                "broke_high_90d",
+                "broke_high_180d",
+                "range_high_break_count",
+                "day_return_pct",
+                "hour_return_pct",
+                "oi_delta_pct",
+                "terminal_edge_score",
+                "terminal_short_pressure_score",
+                "terminal_float_score",
+                "terminal_exchange_flow_score",
+                "cex_deposit_flow_score",
+                "cex_deposit_inventory_stress_score",
+                "top10_holder_pct",
+                "top100_holder_pct",
+                "trade_bucket",
+                "trade_bucket_score",
+            ]
+            mechanism_df = all_df.copy()
+            if "market_type" in mechanism_df.columns:
+                mechanism_df = mechanism_df[~mechanism_df["market_type"].astype(str).str.upper().isin(TRADFI_ALWAYS_INCLUDE_TYPES)].copy()
+            if "mechanism_score" in mechanism_df.columns:
+                mechanism_df = mechanism_df.sort_values(
+                    [
+                        "mechanism_score",
+                        "mechanism_crowded_short_uptrend_score",
+                        "mechanism_inventory_squeeze_score",
+                        "mechanism_hidden_float_score",
+                        "symbol",
+                    ],
+                    ascending=[False, False, False, False, True],
+                )
+            active_mechanisms = mechanism_df[
+                pd.to_numeric(mechanism_df.get("mechanism_score", pd.Series(dtype="float64")), errors="coerce").fillna(0.0) >= 45.0
+            ].copy()
+            crowded_mechanisms = mechanism_df[
+                pd.to_numeric(
+                    mechanism_df.get("mechanism_crowded_short_uptrend_score", pd.Series(dtype="float64")),
+                    errors="coerce",
+                ).fillna(0.0)
+                >= 45.0
+            ].copy()
+            late_risk_mechanisms = mechanism_df[
+                pd.to_numeric(mechanism_df.get("mechanism_late_failure_score", pd.Series(dtype="float64")), errors="coerce").fillna(0.0)
+                >= 70.0
+            ].copy()
+            m1, m2, m3, m4 = st.columns(4)
+            top_mechanism = float(pd.to_numeric(mechanism_df.get("mechanism_score", pd.Series(dtype="float64")), errors="coerce").max()) if not mechanism_df.empty else float("nan")
+            m1.metric("Active mechanisms", int(len(active_mechanisms)))
+            m2.metric("Best mechanism", f"{top_mechanism:.1f}" if math.isfinite(top_mechanism) else "n/a")
+            m3.metric("Short-uptrend loops", int(len(crowded_mechanisms)))
+            m4.metric("Late-risk rows", int(len(late_risk_mechanisms)))
+
+            st.subheader("Dominant Convex Mechanisms")
+            if active_mechanisms.empty:
+                st.info("No rows currently have a dominant mechanism score above 45.")
+            else:
+                st.dataframe(
+                    _display_frame(active_mechanisms.head(60), mechanism_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Crowded-short uptrend continuation only"):
+                if crowded_mechanisms.empty:
+                    st.info("No positive-funding, high-shorts, rising-shorts uptrend loops are active in this scan.")
+                else:
+                    st.dataframe(
+                        _display_frame(crowded_mechanisms.head(80), mechanism_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+            with st.expander("Case-study event evidence"):
+                fetch_case_price_paths = st.checkbox(
+                    "Fetch Binance daily price paths",
+                    value=False,
+                    key="mechanism_case_study_fetch_price_paths",
+                )
+                try:
+                    case_client = BinanceFuturesPublic(requests_per_second=2.0, retries=2) if fetch_case_price_paths else None
+                    case_df = build_case_study_event_frame(root=APP_DIR, kline_client=case_client)
+                except Exception as exc:
+                    st.warning(f"Case-study evidence could not be loaded: {exc}")
+                    case_df = pd.DataFrame(columns=EVENT_STUDY_COLUMNS)
+                case_cols = [
+                    "symbol",
+                    "event_date",
+                    "mechanism_hypothesis",
+                    "local_snapshot_count",
+                    "best_snapshot_file",
+                    "observed_phase",
+                    "contract_hint_status",
+                    "contract_hint_chain",
+                    "contract_hint_address",
+                    "price_path_status",
+                    "price_event_date",
+                    "price_event_date_source",
+                    "event_day_return_pct",
+                    "event_break_prior_20d_high",
+                    "post_7d_high_return_pct",
+                    "post_7d_low_drawdown_pct",
+                    "mechanism_read",
+                    "mechanism_verdict",
+                    "scanner_lesson",
+                    "evidence_gap_severity",
+                    "next_data_action",
+                    "evidence_gaps",
+                ]
+                st.dataframe(
+                    _display_frame(case_df, case_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
+
+            with st.expander("Show full mechanism table"):
+                if mechanism_df.empty:
+                    st.info("No mechanism rows to show.")
+                else:
+                    st.dataframe(
+                        _display_frame(mechanism_df.head(200), mechanism_cols),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=breakout_column_config,
+                    )
+
+        with screener_tabs[17]:
             st.caption(
                 "Continuation lens for coins where shorts are still crowded and building while funding is positive and price structure is trending up. "
                 "Downside breaks and late heat stay visible as penalties because high-volatility trends can still be valid until the structure actually unwinds."

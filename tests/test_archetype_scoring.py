@@ -81,6 +81,8 @@ def test_siren_style_archetype_scores_short_fuse_pre_ignition() -> None:
 
     assert row["archetype_siren_score"] >= 70
     assert row["archetype_best_match"] == "SIREN-style short-fuse compression"
+    assert row["archetype_reference_symbol"] == "SIRENUSDT"
+    assert row["archetype_reference_date"] == "scanner-observed"
 
 
 def test_river_style_archetype_scores_runway_breakout() -> None:
@@ -106,6 +108,8 @@ def test_river_style_archetype_scores_runway_breakout() -> None:
 
     assert row["archetype_river_score"] >= 70
     assert row["archetype_best_match"] == "RIVER-style runway breakout"
+    assert row["archetype_reference_symbol"] == "RIVERUSDT"
+    assert row["archetype_reference_date"] == "scanner-observed"
 
 
 def test_sto_style_archetype_scores_target_venue_short_squeeze() -> None:
@@ -134,6 +138,8 @@ def test_sto_style_archetype_scores_target_venue_short_squeeze() -> None:
 
     assert row["archetype_sto_score"] >= 70
     assert row["archetype_best_match"] == "STO-style target-venue squeeze"
+    assert row["archetype_reference_symbol"] == "STOUSDT"
+    assert row["archetype_reference_date"] == "scanner-observed"
     assert "target-venue support" in row["archetype_match_note"]
 
 

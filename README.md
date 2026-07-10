@@ -82,6 +82,7 @@ It screens for conditions such as:
 - concentration-adjusted turnover
 - abnormal participation relative to recent baseline
 - structural squeeze conditions
+- dominant reflexivity-mechanism classification: hidden-float cap-table reflexivity, CEX inventory squeeze, crowded-short uptrend continuation, compression ignition, and runway breakout reflexivity
 - case-study analogue matching for RAVE/LAB/SIREN/RIVER/STO-style structures, with RAVEUSDT on 2026-04-18 and LABUSDT on 2026-05-11 treated as historical anchors
 - dashboard `Convex Long` buckets that only promote rows after the hard holder, Binance+Bitget, and 60D no-pump thesis gates pass; raw convex setup signals stay visible as watchlist context with the missing gate printed inline
 
@@ -158,10 +159,13 @@ Dashboard functionality includes:
 - holder composition summaries
 - token contract inspection
 - a distinct `1H Short ROC` grid for past-hour Binance global short-account share changes
+- a `Convex Mechanisms` board that explains the active reflexivity loop behind each candidate and includes a case-study evidence table for RAVE/LAB/VELVET/RIVER/SIREN/STO
 - a `Shorts Fighting Uptrend` board for positive-funding coins where short accounts are high/rising while price structure keeps trending up
 - cached scan comparison
 - local persistence of scanner outputs
 - discretionary review of structural market conditions
+
+See [Convex market-structure mechanism thesis](docs/mechanism-thesis.md), [Case-study event summary](docs/case-study-event-summary.md), and [Case-study evidence backfill checklist](docs/case-study-backfill-checklist.md) for the current mechanism map, evidence table, and backfill queue behind the RAVE/LAB/VELVET/RIVER/SIREN/STO research thread.
 
 The dashboard is intended for fast review, filtering, and monitoring of markets that show unusual activity or concentration patterns.
 

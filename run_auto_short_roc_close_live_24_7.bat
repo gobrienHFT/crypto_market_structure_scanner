@@ -1,0 +1,5 @@
+@echo off
+cd /d "%~dp0"
+set SHORT_ROC_CLOSE_LIVE=1
+python short_roc_position_close.py --symbol AUTO --live --trigger-short-roc-pct 2.5 --output-dir auto_short_roc_close_output
+pause

@@ -36,6 +36,39 @@ HISTORICAL_PUMP_EXEMPLARS = {
             "and violent repricing once flow arrived"
         ),
     ),
+    "siren_short_fuse": HistoricalPumpExemplar(
+        key="siren_short_fuse",
+        symbol="SIRENUSDT",
+        event_date="scanner-observed",
+        archetype_label="SIREN-style short-fuse compression",
+        pattern="Short-fuse compression setup: quiet tape, short/oi pressure, and pre-ignition structure before chase heat.",
+        pre_activity_fingerprint=(
+            "short crowding, low-volatility compression, silent OI accumulation, pre-ignition quality, "
+            "and no fully extended blowoff yet"
+        ),
+    ),
+    "river_runway_breakout": HistoricalPumpExemplar(
+        key="river_runway_breakout",
+        symbol="RIVERUSDT",
+        event_date="scanner-observed",
+        archetype_label="RIVER-style runway breakout",
+        pattern="Runway breakout setup: high-break structure with significant distance to prior extremes and persistent venue support.",
+        pre_activity_fingerprint=(
+            "open ATH runway, range-high breakout stack, constructive close location, venue support, "
+            "and short/oi fuel that has not fully exhausted"
+        ),
+    ),
+    "sto_target_venue_squeeze": HistoricalPumpExemplar(
+        key="sto_target_venue_squeeze",
+        symbol="STOUSDT",
+        event_date="scanner-observed",
+        archetype_label="STO-style target-venue squeeze",
+        pattern="Target-venue squeeze setup: whale/control pressure, supported venues, and short crowding before late-stage chase.",
+        pre_activity_fingerprint=(
+            "target exchange support, concentrated/whale control evidence, short crowding, early timing, "
+            "and high-break confirmation without exhaustion"
+        ),
+    ),
 }
 
 EXEMPLARS_BY_ARCHETYPE = {
