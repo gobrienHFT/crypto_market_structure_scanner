@@ -53,6 +53,9 @@ class BinanceFuturesPublic:
         self.api_key = (api_key or "").strip()
         self.api_secret = (api_secret or "").strip()
         self.recv_window = int(recv_window)
+        self._server_time_offset_ms = 0
+        self._last_time_sync_monotonic = 0.0
+        self._time_sync_interval_seconds = 15.0 * 60.0
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "simple-breakout-dashboard/1.0"})
 
@@ -62,6 +65,42 @@ class BinanceFuturesPublic:
         if gap < self.min_gap:
             time.sleep(self.min_gap - gap)
         self._last_at = time.monotonic()
+
+    def _timestamp_ms(self) -> int:
+        return int(time.time() * 1000) + int(self._server_time_offset_ms)
+
+    def sync_server_time(self) -> int:
+        """Synchronize signed-request timestamps with Binance Futures server time."""
+        started_ms = int(time.time() * 1000)
+        payload = self._request("GET", "/fapi/v1/time")
+        finished_ms = int(time.time() * 1000)
+        if not isinstance(payload, dict) or "serverTime" not in payload:
+            raise RuntimeError("Binance server-time response did not include serverTime.")
+        server_time_ms = int(payload["serverTime"])
+        local_midpoint_ms = (started_ms + finished_ms) // 2
+        self._server_time_offset_ms = server_time_ms - local_midpoint_ms
+        self._last_time_sync_monotonic = time.monotonic()
+        return self._server_time_offset_ms
+
+    def _ensure_server_time(self) -> None:
+        elapsed = time.monotonic() - self._last_time_sync_monotonic
+        if self._last_time_sync_monotonic and elapsed < self._time_sync_interval_seconds:
+            return
+        try:
+            self.sync_server_time()
+        except (BinanceHTTPError, requests.RequestException, RuntimeError, TypeError, ValueError):
+            # The signed request still gets a chance with local time; a -1021 response
+            # below forces another synchronization and retry.
+            return
+
+    @staticmethod
+    def _is_timestamp_error(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        try:
+            return int(payload.get("code")) == -1021
+        except (TypeError, ValueError):
+            return False
 
     def _request(
         self,
@@ -75,8 +114,13 @@ class BinanceFuturesPublic:
         url = path if absolute_url else f"{self.base_url}{path}"
         last_exc: Exception | None = None
         base_params = dict(params or {})
+        timestamp_retry_used = False
 
-        for attempt in range(1, self.retries + 1):
+        if signed:
+            self._ensure_server_time()
+
+        attempt = 1
+        while attempt <= self.retries:
             req_params = dict(base_params)
             headers: dict[str, str] = {}
             request_url = url
@@ -85,7 +129,7 @@ class BinanceFuturesPublic:
                 if not self.api_key or not self.api_secret:
                     raise BinanceAuthenticationError("Binance API key/secret are required for signed futures endpoints.")
                 req_params["recvWindow"] = int(req_params.get("recvWindow", self.recv_window))
-                req_params["timestamp"] = int(time.time() * 1000)
+                req_params["timestamp"] = self._timestamp_ms()
                 query_string = urlencode(req_params, doseq=True)
                 signature = hmac.new(
                     self.api_secret.encode("utf-8"),
@@ -115,14 +159,23 @@ class BinanceFuturesPublic:
                 except Exception:
                     payload = {"text": response.text[:400]}
 
+                if signed and self._is_timestamp_error(payload) and not timestamp_retry_used:
+                    try:
+                        self.sync_server_time()
+                    except (BinanceHTTPError, requests.RequestException, RuntimeError, TypeError, ValueError):
+                        raise BinanceHTTPError(response.status_code, payload, url)
+                    timestamp_retry_used = True
+                    continue
                 if response.status_code in (418, 429, 500, 502, 503, 504) and attempt < self.retries:
                     time.sleep(min(8.0, 0.8 * (2 ** (attempt - 1))))
+                    attempt += 1
                     continue
                 raise BinanceHTTPError(response.status_code, payload, url)
             except requests.RequestException as exc:
                 last_exc = exc
                 if attempt < self.retries:
                     time.sleep(min(8.0, 0.8 * (2 ** (attempt - 1))))
+                    attempt += 1
                 else:
                     break
 
@@ -170,9 +223,14 @@ class BinanceFuturesPublic:
         data = self._get("/fapi/v1/exchangeInfo")
         return data if isinstance(data, dict) else {}
 
-    def ticker_24hr(self) -> list[dict[str, Any]]:
-        data = self._get("/fapi/v1/ticker/24hr")
-        return data if isinstance(data, list) else []
+    def ticker_24hr(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        params = {"symbol": symbol.upper()} if symbol else None
+        data = self._get("/fapi/v1/ticker/24hr", params)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []
 
     def mark_price(self, symbol: str | None = None) -> list[dict[str, Any]]:
         params = {"symbol": symbol.upper()} if symbol else None
@@ -552,6 +610,7 @@ class BinanceFuturesPublic:
     def income_history(
         self,
         *,
+        symbol: str | None = None,
         start_time: int | None = None,
         end_time: int | None = None,
         income_type: str | None = None,
@@ -559,6 +618,8 @@ class BinanceFuturesPublic:
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": int(limit)}
+        if symbol:
+            params["symbol"] = str(symbol).upper()
         if start_time is not None:
             params["startTime"] = int(start_time)
         if end_time is not None:

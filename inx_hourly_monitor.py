@@ -15,6 +15,7 @@ import requests
 
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic
 from discord_flag_formatter import DISCORD_FOOTER
+from volume_metrics import append_csv_row_schema_safe, closed_hour_volume_metrics
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -192,6 +193,8 @@ def _last_closed_hour_volume(klines_5m: list[list[Any]], *, bars: int = 12) -> d
         return {
             "volume_base_60m": float("nan"),
             "volume_quote_60m": float("nan"),
+            "volume_quote_previous_60m": float("nan"),
+            "hour_volume_roc_1h_pct": float("nan"),
             "trades_60m": float("nan"),
             "price_open_60m": float("nan"),
             "price_close_60m": float("nan"),
@@ -203,6 +206,7 @@ def _last_closed_hour_volume(klines_5m: list[list[Any]], *, bars: int = 12) -> d
         }
 
     closed_rows = klines_5m[:-1] if len(klines_5m) > 1 else klines_5m
+    volume_roc = closed_hour_volume_metrics(klines_5m, bars_per_hour=max(1, int(bars)))
     sample = closed_rows[-max(1, int(bars)) :]
     quote_volume = sum(_to_float(row[7]) for row in sample if len(row) > 7 and math.isfinite(_to_float(row[7])))
     base_volume = sum(_to_float(row[5]) for row in sample if len(row) > 5 and math.isfinite(_to_float(row[5])))
@@ -218,6 +222,8 @@ def _last_closed_hour_volume(klines_5m: list[list[Any]], *, bars: int = 12) -> d
     return {
         "volume_base_60m": base_volume,
         "volume_quote_60m": quote_volume,
+        "volume_quote_previous_60m": volume_roc["hour_quote_volume_previous_1h"],
+        "hour_volume_roc_1h_pct": volume_roc["hour_volume_roc_1h_pct"],
         "trades_60m": trades,
         "price_open_60m": open_price,
         "price_close_60m": close_price,
@@ -269,7 +275,7 @@ def fetch_inx_hourly_snapshot(client: BinanceFuturesPublic, config: InxHourlyCon
     ratio_rows = fetch("short account ratio", lambda: client.global_long_short_account_ratio(symbol, period="1h", limit=2))
     oi_rows = fetch("open interest history", lambda: client.open_interest_statistics(symbol, period="1h", limit=2))
     live_oi = fetch("live open interest", lambda: client.open_interest(symbol))
-    klines_5m = fetch("5m klines", lambda: client.klines(symbol, interval="5m", limit=13))
+    klines_5m = fetch("5m klines", lambda: client.klines(symbol, interval="5m", limit=25))
     mark_rows = fetch("mark price", lambda: client.mark_price(symbol))
 
     return (
@@ -302,7 +308,8 @@ def _payload_lines(row: dict[str, Any], errors: list[str]) -> list[str]:
         ),
         (
             f"60m volume {_format_number(row.get('volume_base_60m'))} {base} | "
-            f"quote ${_format_number(row.get('volume_quote_60m'))} | trades {_format_number(row.get('trades_60m'))}"
+            f"quote ${_format_number(row.get('volume_quote_60m'))} | previous ${_format_number(row.get('volume_quote_previous_60m'))} | "
+            f"ROC {_format_pct(row.get('hour_volume_roc_1h_pct'))} | trades {_format_number(row.get('trades_60m'))}"
         ),
         (
             f"60m px {_format_number(row.get('price_open_60m'))} -> {_format_number(row.get('price_close_60m'))} "
@@ -324,7 +331,7 @@ def build_discord_payload(row: dict[str, Any], errors: list[str] | None = None) 
     description = (
         f"{base} one-hour perp monitor\n"
         f"Source: {row.get('source') or 'Binance Futures public data'} | Detected: {_now_label()}\n"
-        f"Posts every cycle; metrics are the latest 1h short-account point, 1h OI point, and last 12 closed 5m volume bars.\n\n"
+        f"Posts every cycle; metrics are the latest 1h short-account point, 1h OI point, and two completed 1h volume windows.\n\n"
         + "\n".join(_payload_lines(row, errors))
     )
     return {
@@ -361,13 +368,11 @@ def _write_outputs(row: dict[str, Any], errors: list[str], config: InxHourlyConf
     error_path = config.output_dir / f"{prefix}_hourly_errors_latest.txt"
 
     fieldnames = list(row.keys())
-    for path, mode in ((latest_path, "w"), (history_path, "a")):
-        file_exists = path.exists()
-        with path.open(mode, newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
-            if mode == "w" or not file_exists:
-                writer.writeheader()
-            writer.writerow(row)
+    with latest_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
+    append_csv_row_schema_safe(history_path, row)
 
     if errors:
         error_path.write_text("\n".join(errors), encoding="utf-8")
@@ -387,7 +392,8 @@ def run_once(config: InxHourlyConfig) -> tuple[dict[str, Any], list[str]]:
     print(
         f"[{_now_label()}] {config.symbol.upper()} short={_format_pct(row.get('short_account_pct'), signed=False)} "
         f"delta={_format_pp(row.get('short_account_roc_1h_pp'))} oi={_format_number(row.get('open_interest'))} "
-        f"vol60=${_format_number(row.get('volume_quote_60m'))} errors={len(errors)}",
+        f"vol60=${_format_number(row.get('volume_quote_60m'))} "
+        f"vol_roc_1h={_format_pct(row.get('hour_volume_roc_1h_pct'))} errors={len(errors)}",
         flush=True,
     )
     _post_webhook(row, errors, config)

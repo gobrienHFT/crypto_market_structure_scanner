@@ -16,6 +16,7 @@ import requests
 
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic, FuturesSymbol
 from discord_flag_formatter import DISCORD_EMBED_DESCRIPTION_LIMIT, DISCORD_FOOTER, DISCORD_PRODUCT_IDENTITY
+from volume_metrics import closed_hour_volume_metrics
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = APP_DIR / "breakout_monitor_output"
@@ -111,6 +112,7 @@ def build_monitor_row(
     *,
     futures_symbol: FuturesSymbol,
     klines: list[list[Any]],
+    hourly_klines: list[list[Any]] | None = None,
     ticker: dict[str, Any] | None = None,
     scanned_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -137,6 +139,7 @@ def build_monitor_row(
         "quote_volume_24h": _to_float(ticker.get("quoteVolume")),
         "history_days": len(closed),
     }
+    row.update(closed_hour_volume_metrics(hourly_klines or [], bars_per_hour=1))
 
     active_flags: list[str] = []
     for window in BREAKOUT_WINDOWS:
@@ -224,10 +227,16 @@ def scan_breakout_universe(
     for index, futures_symbol in enumerate(selected, start=1):
         try:
             klines = client.klines_1d(futures_symbol.symbol, limit=KLINE_LIMIT)
+            try:
+                hourly_klines = client.klines(futures_symbol.symbol, interval="1h", limit=3) if hasattr(client, "klines") else []
+            except (BinanceHTTPError, requests.RequestException, RuntimeError, ValueError) as exc:
+                errors.append(f"{futures_symbol.symbol} 1h volume ROC: {exc}")
+                hourly_klines = []
             rows.append(
                 build_monitor_row(
                     futures_symbol=futures_symbol,
                     klines=klines,
+                    hourly_klines=hourly_klines,
                     ticker=tickers.get(futures_symbol.symbol),
                     scanned_at=scanned_at,
                 )
@@ -403,7 +412,8 @@ def _format_alert_line(row: pd.Series) -> str:
     flags = _clip_text(row.get("flags", ""), 130)
     return (
         f"/{symbol} | {signals} | px {_format_number(row.get('last_price'))} | "
-        f"vol24 ${_format_number(row.get('quote_volume_24h'))} | hist {_format_int(row.get('history_days'))}D | "
+        f"vol24 ${_format_number(row.get('quote_volume_24h'))} | vol ROC 1h {_format_pct(row.get('hour_volume_roc_1h_pct'))} | "
+        f"hist {_format_int(row.get('history_days'))}D | "
         f"MA200 {_format_pct(row.get('distance_to_ma_200d_pct'))} | active {flags or 'n/a'}"
     )
 
@@ -509,7 +519,7 @@ def run_once(config: MonitorConfig) -> tuple[pd.DataFrame, list[str], set[str]]:
         flush=True,
     )
     if not flagged.empty:
-        preview_columns = ["symbol", "last_price", "flag_count", "flags"]
+        preview_columns = ["symbol", "last_price", "hour_volume_roc_1h_pct", "flag_count", "flags"]
         print(flagged[preview_columns].head(25).to_string(index=False), flush=True)
     return frame, errors, active_signals
 

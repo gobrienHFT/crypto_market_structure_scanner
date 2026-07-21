@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import os
@@ -16,6 +15,7 @@ import requests
 
 from binance_futures import BinanceHTTPError, BinanceFuturesPublic, FuturesSymbol
 from discord_flag_formatter import DISCORD_EMBED_DESCRIPTION_LIMIT, DISCORD_FOOTER, DISCORD_PRODUCT_IDENTITY
+from volume_metrics import append_csv_row_schema_safe, closed_hour_volume_metrics
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -183,6 +183,7 @@ def build_short_account_roc_row(
     *,
     futures_symbol: FuturesSymbol,
     ratio_rows: list[dict[str, Any]],
+    hourly_klines: list[list[Any]] | None = None,
     ticker: dict[str, Any] | None = None,
     scanned_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -190,7 +191,7 @@ def build_short_account_roc_row(
     scanned_at = scanned_at or _now_utc()
     latest = ratio_rows[-1] if ratio_rows else {}
     stats = short_account_history_stats(ratio_rows, windows=(1,))
-    return {
+    row = {
         "scanned_at": scanned_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
         "symbol": futures_symbol.symbol,
         "base_asset": futures_symbol.base_asset,
@@ -207,6 +208,8 @@ def build_short_account_roc_row(
         "short_account_roc_1h_direction": str(stats.get("short_account_roc_1h_direction", "") or ""),
         "short_account_history_points": int(stats.get("short_account_history_points", 0) or 0),
     }
+    row.update(closed_hour_volume_metrics(hourly_klines or [], bars_per_hour=1))
+    return row
 
 
 def _ticker_lookup(client: BinanceFuturesPublic) -> dict[str, dict[str, Any]]:
@@ -255,10 +258,16 @@ def scan_short_account_roc(
                 period=period,
                 limit=max(2, int(history_limit)),
             )
+            try:
+                hourly_klines = client.klines(futures_symbol.symbol, interval="1h", limit=3) if hasattr(client, "klines") else []
+            except (BinanceHTTPError, requests.RequestException, RuntimeError, ValueError) as exc:
+                errors.append(f"{futures_symbol.symbol} 1h volume ROC: {exc}")
+                hourly_klines = []
             rows.append(
                 build_short_account_roc_row(
                     futures_symbol=futures_symbol,
                     ratio_rows=ratio_rows,
+                    hourly_klines=hourly_klines,
                     ticker=ticker,
                     scanned_at=scanned_at,
                 )
@@ -356,7 +365,6 @@ def _append_alerts(path: Path, rows: pd.DataFrame) -> None:
     if rows.empty:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    file_exists = path.exists()
     fieldnames = [
         "timestamp_utc",
         "symbol",
@@ -366,24 +374,25 @@ def _append_alerts(path: Path, rows: pd.DataFrame) -> None:
         "short_account_roc_1h_pp",
         "short_account_roc_1h_pct",
         "quote_volume_24h",
+        "hour_quote_volume_previous_1h",
+        "hour_quote_volume",
+        "hour_volume_roc_1h_pct",
     ]
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        for row in rows.to_dict("records"):
-            writer.writerow(
-                {
-                    "timestamp_utc": _now_label(),
-                    "symbol": str(row.get("symbol", "")).upper(),
-                    "direction": row.get("short_account_roc_1h_direction", ""),
-                    "short_account_pct": row.get("short_account_pct", ""),
-                    "short_account_previous_1h_pct": row.get("short_account_previous_1h_pct", ""),
-                    "short_account_roc_1h_pp": row.get("short_account_roc_1h_pp", ""),
-                    "short_account_roc_1h_pct": row.get("short_account_roc_1h_pct", ""),
-                    "quote_volume_24h": row.get("quote_volume_24h", ""),
-                }
-            )
+    for row in rows.to_dict("records"):
+        alert_row = {
+            "timestamp_utc": _now_label(),
+            "symbol": str(row.get("symbol", "")).upper(),
+            "direction": row.get("short_account_roc_1h_direction", ""),
+            "short_account_pct": row.get("short_account_pct", ""),
+            "short_account_previous_1h_pct": row.get("short_account_previous_1h_pct", ""),
+            "short_account_roc_1h_pp": row.get("short_account_roc_1h_pp", ""),
+            "short_account_roc_1h_pct": row.get("short_account_roc_1h_pct", ""),
+            "quote_volume_24h": row.get("quote_volume_24h", ""),
+            "hour_quote_volume_previous_1h": row.get("hour_quote_volume_previous_1h", ""),
+            "hour_quote_volume": row.get("hour_quote_volume", ""),
+            "hour_volume_roc_1h_pct": row.get("hour_volume_roc_1h_pct", ""),
+        }
+        append_csv_row_schema_safe(path, {key: alert_row.get(key, "") for key in fieldnames})
 
 
 def _format_number(value: Any, suffix: str = "") -> str:
@@ -408,7 +417,8 @@ def _format_alert_line(row: pd.Series) -> str:
         f"/{symbol} | {arrow} {direction} | short {_format_number(row.get('short_account_previous_1h_pct'), '%')} -> "
         f"{_format_number(row.get('short_account_pct'), '%')} | "
         f"delta {_format_number(row.get('short_account_roc_1h_pp'), 'pp')} / {_format_number(row.get('short_account_roc_1h_pct'), '%')} | "
-        f"vol24 ${_format_number(row.get('quote_volume_24h'))}"
+        f"vol24 ${_format_number(row.get('quote_volume_24h'))} | "
+        f"vol ROC 1h {_format_number(row.get('hour_volume_roc_1h_pct'), '%')}"
     )
 
 
@@ -512,7 +522,12 @@ def run_once(config: ShortAccountRocConfig) -> tuple[pd.DataFrame, pd.DataFrame,
         flush=True,
     )
     if not flagged.empty:
-        print(flagged[["symbol", "short_account_pct", "short_account_roc_1h_pp", "short_account_roc_1h_pct"]].to_string(index=False), flush=True)
+        print(
+            flagged[
+                ["symbol", "short_account_pct", "short_account_roc_1h_pp", "short_account_roc_1h_pct", "hour_volume_roc_1h_pct"]
+            ].to_string(index=False),
+            flush=True,
+        )
     return frame, flagged, errors
 
 

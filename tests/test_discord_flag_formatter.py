@@ -236,6 +236,14 @@ def test_recent_cex_flow_line_is_included_when_concentration_gate_triggers() -> 
     assert "inventory stress 66/100" in card
 
 
+def test_discord_card_includes_hour_volume_roc_when_available() -> None:
+    card = build_discord_flag_card(
+        pd.Series({"symbol": "AKEUSDT", "trade_bucket_score": 72, "hour_volume_roc_1h_pct": 125.5})
+    )
+
+    assert "1H volume ROC: +125.50%" in card
+
+
 def test_accumulation_absorption_line_uses_neutral_language() -> None:
     row = pd.Series(
         {

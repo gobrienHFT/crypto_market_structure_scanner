@@ -676,10 +676,13 @@ def build_discord_flag_card(
     accumulation_read = infer_accumulation_read(row)
     case_study_analogue = infer_case_study_analogue(row)
     early_radar = infer_early_radar(row)
+    hour_volume_roc = _first_float(row, ("hour_volume_roc_1h_pct",))
+    hour_volume_lines = [f"1H volume ROC: {hour_volume_roc:+.2f}%"] if hour_volume_roc is not None else []
     lines = [
         f"/{symbol}",
         "",
         f"Convex Score: {score:.0f}/100",
+        *hour_volume_lines,
         f"Structure: {infer_structure(row, holder_text)}",
         f"Convex thesis: {_clip_sentence(infer_convex_thesis(row, holder_text), 190)}",
         f"Evidence stack: {infer_evidence_stack(row, holder_text)}",

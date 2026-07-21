@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -8,6 +9,49 @@ import pandas as pd
 os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
 
 import app
+
+
+def test_all_crypto_perp_universe_keeps_new_crypto_symbols_and_excludes_tradfi() -> None:
+    ticker = pd.DataFrame(
+        [
+            {"symbol": "BTCUSDT", "quoteVolume": 1_000_000},
+            {"symbol": "AKEUSDT", "quoteVolume": 25_000},
+            {"symbol": "SKHYNIXUSDT", "quoteVolume": 2_000_000},
+        ]
+    )
+    symbol_meta = {
+        "BTCUSDT": SimpleNamespace(underlying_type="COIN"),
+        "AKEUSDT": SimpleNamespace(underlying_type="COIN"),
+        "SKHYNIXUSDT": SimpleNamespace(underlying_type="EQUITY"),
+    }
+
+    selected = app._crypto_perp_ticker(ticker, symbol_meta)
+
+    assert selected["symbol"].tolist() == ["BTCUSDT", "AKEUSDT"]
+
+
+def test_display_frame_injects_sortable_hour_volume_roc_into_every_table() -> None:
+    frame = pd.DataFrame([{"symbol": "AKEUSDT", "trade_bucket": "Watch", "hour_volume_roc_1h_pct": 125.0}])
+
+    displayed = app._display_frame(frame, ["symbol", "trade_bucket"])
+
+    assert displayed.columns.tolist() == ["symbol", "hour_volume_roc_1h_pct", "trade_bucket"]
+    assert displayed.iloc[0]["hour_volume_roc_1h_pct"] == 125.0
+
+
+def test_daily_quote_volume_30d_context_uses_prior_completed_days() -> None:
+    rows = [
+        [index, "0", "0", "0", "0", "0", index + 1, str((index + 1) * 1000)]
+        for index in range(32)
+    ]
+    rows.append([33, "0", "0", "0", "0", "0", 34, "999999999"])
+
+    metrics = app._daily_quote_volume_30d_context(rows, 49_500)
+
+    assert metrics["quote_volume_prior_30d_days"] == 30
+    assert metrics["quote_volume_prior_30d_total"] == sum(range(3, 33)) * 1000
+    assert metrics["quote_volume_prior_30d_daily_avg"] == 17_500
+    assert round(metrics["quote_volume_24h_vs_prior_30d_avg_ratio"], 6) == round(49_500 / 17_500, 6)
 
 
 def test_dashboard_holder_chain_options_include_arbitrum() -> None:

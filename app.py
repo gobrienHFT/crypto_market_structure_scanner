@@ -56,6 +56,7 @@ from venue_gate import (
     apply_thesis_alert_gate,
     thesis_alert_header,
 )
+from volume_metrics import closed_hour_volume_metrics
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
@@ -320,6 +321,10 @@ def _display_frame(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     """Return only available display columns so optional enrichments cannot crash a table."""
     source = df.loc[:, ~df.columns.duplicated()].copy()
     requested = list(columns)
+    if "hour_volume_roc_1h_pct" in source.columns and "hour_volume_roc_1h_pct" not in requested:
+        insert_after = "hour_quote_volume" if "hour_quote_volume" in requested else "symbol"
+        insert_at = requested.index(insert_after) + 1 if insert_after in requested else 0
+        requested.insert(insert_at, "hour_volume_roc_1h_pct")
     if {"long_account_pct", "short_account_pct"}.issubset(source.columns) and "symbol" in requested:
         missing_account_cols = [
             column for column in ("long_account_pct", "short_account_pct")
@@ -657,6 +662,8 @@ def _hourly_market_stats(klines: list[list[Any]]) -> dict[str, float]:
             "hour_return_z": float("nan"),
             "day_return_pct": float("nan"),
             "hour_quote_volume": float("nan"),
+            "hour_quote_volume_previous_1h": float("nan"),
+            "hour_volume_roc_1h_pct": float("nan"),
             "hour_volume_multiple": float("nan"),
             "hour_trade_count_multiple": float("nan"),
             "hour_upper_wick_pct": float("nan"),
@@ -676,6 +683,8 @@ def _hourly_market_stats(klines: list[list[Any]]) -> dict[str, float]:
             "hour_return_z": float("nan"),
             "day_return_pct": float("nan"),
             "hour_quote_volume": float("nan"),
+            "hour_quote_volume_previous_1h": float("nan"),
+            "hour_volume_roc_1h_pct": float("nan"),
             "hour_volume_multiple": float("nan"),
             "hour_trade_count_multiple": float("nan"),
             "hour_upper_wick_pct": float("nan"),
@@ -705,6 +714,7 @@ def _hourly_market_stats(klines: list[list[Any]]) -> dict[str, float]:
         day_return_pct = float("nan")
 
     latest_hour_quote_volume = quote_volumes[-1]
+    hour_volume_roc = closed_hour_volume_metrics(klines, bars_per_hour=1)
     volume_baseline = pd.Series(quote_volumes[:-1], dtype="float64").tail(24)
     baseline_avg_quote_volume = float(volume_baseline.mean()) if not volume_baseline.empty else float("nan")
     if math.isnan(latest_hour_quote_volume) or math.isnan(baseline_avg_quote_volume) or baseline_avg_quote_volume < 1e-12:
@@ -737,6 +747,8 @@ def _hourly_market_stats(klines: list[list[Any]]) -> dict[str, float]:
         "hour_return_z": hour_return_z,
         "day_return_pct": day_return_pct,
         "hour_quote_volume": latest_hour_quote_volume,
+        "hour_quote_volume_previous_1h": hour_volume_roc["hour_quote_volume_previous_1h"],
+        "hour_volume_roc_1h_pct": hour_volume_roc["hour_volume_roc_1h_pct"],
         "hour_volume_multiple": hour_volume_multiple,
         "hour_trade_count_multiple": hour_trade_count_multiple,
         "hour_upper_wick_pct": hour_upper_wick_pct,
@@ -765,6 +777,34 @@ def _daily_quote_volume_multiple(klines: list[list[Any]], quote_volume_24h: floa
     if math.isnan(float(baseline)) or float(baseline) <= 0:
         return float("nan")
     return current_volume / float(baseline)
+
+
+def _daily_quote_volume_30d_context(klines: list[list[Any]], quote_volume_24h: float) -> dict[str, float | int]:
+    """Compare rolling 24h quote volume with up to 30 completed UTC daily candles."""
+    closed_only = klines[:-1] if len(klines) > 1 else []
+    quote_volumes: list[float] = []
+    for row in closed_only:
+        if len(row) <= 7:
+            continue
+        quote_volume = _float_nan(row[7])
+        if not math.isnan(quote_volume) and quote_volume >= 0:
+            quote_volumes.append(quote_volume)
+
+    sample = quote_volumes[-30:]
+    prior_total = float(sum(sample)) if sample else float("nan")
+    prior_average = prior_total / len(sample) if sample else float("nan")
+    current_volume = _float_nan(quote_volume_24h)
+    ratio = (
+        current_volume / prior_average
+        if not math.isnan(current_volume) and not math.isnan(prior_average) and prior_average > 0
+        else float("nan")
+    )
+    return {
+        "quote_volume_prior_30d_total": prior_total,
+        "quote_volume_prior_30d_daily_avg": prior_average,
+        "quote_volume_prior_30d_days": len(sample),
+        "quote_volume_24h_vs_prior_30d_avg_ratio": ratio,
+    }
 
 
 def _distance_to_level_pct(level: float, last_price: float) -> float:
@@ -3098,6 +3138,8 @@ def _empty_hourly_stats() -> dict[str, float]:
         "hour_return_z": float("nan"),
         "day_return_pct": float("nan"),
         "hour_quote_volume": float("nan"),
+        "hour_quote_volume_previous_1h": float("nan"),
+        "hour_volume_roc_1h_pct": float("nan"),
         "hour_volume_multiple": float("nan"),
         "hour_trade_count_multiple": float("nan"),
         "hour_upper_wick_pct": float("nan"),
@@ -3809,6 +3851,10 @@ def _write_latest_convex_longs_cache(all_df: pd.DataFrame, *, scan_mode: str) ->
         "short_account_pct",
         "long_account_pct",
         "long_short_account_ratio",
+        "hour_quote_volume_previous_1h",
+        "hour_quote_volume",
+        "hour_volume_roc_1h_pct",
+        "hour_volume_multiple",
         "oi_delta_pct",
         "oi_value_change_since_scan_pct",
         "convexity_entry_score",
@@ -4581,10 +4627,24 @@ def _apply_ath_runway(all_df: pd.DataFrame) -> pd.DataFrame:
     return all_df
 
 
+def _crypto_perp_ticker(ticker: pd.DataFrame, symbol_meta: dict[str, Any]) -> pd.DataFrame:
+    if ticker.empty:
+        return ticker.copy()
+    market_types = ticker["symbol"].map(
+        lambda symbol: str(getattr(symbol_meta.get(str(symbol).upper()), "underlying_type", "") or "").upper()
+    )
+    return (
+        ticker[~market_types.isin(TRADFI_ALWAYS_INCLUDE_TYPES)]
+        .sort_values(["quoteVolume", "symbol"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+
 @_cache_data(ttl=60)
 def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame, pd.DataFrame]:
     _ = (refresh_nonce, scan_mode)
     normalized_scan_mode = str(scan_mode).strip().lower()
+    all_crypto_scan = normalized_scan_mode in {"all crypto perps", "all crypto", "all perps", "full universe"}
     full_ath_scan = normalized_scan_mode in {"full ath", "full ath runway", "ath"}
     deep_scan = normalized_scan_mode in {"deep", "full ath", "full ath runway", "ath"}
     scan_max_symbols = FULL_ATH_MAX_SYMBOLS_TO_SCAN if full_ath_scan else MAX_SYMBOLS_TO_SCAN if deep_scan else FAST_MAX_SYMBOLS
@@ -4671,6 +4731,8 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         + ticker["coinbase_spot_seed"].astype(float) * 11.0
     ).clip(lower=0.0, upper=100.0)
     ticker = ticker.sort_values("quoteVolume", ascending=False)
+    available_crypto_ticker = _crypto_perp_ticker(ticker, symbol_meta)
+    available_crypto_perp_count = len(available_crypto_ticker)
 
     top_ticker = ticker.head(scan_max_symbols)
     crime_pool = ticker[
@@ -4746,6 +4808,16 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         for symbol in set(ALWAYS_SCAN_SYMBOLS)
         if symbol in symbol_meta and (INCLUDE_TRADFI_BREAKOUTS or symbol_meta[symbol].underlying_type not in TRADFI_ALWAYS_INCLUDE_TYPES)
     }
+    if BINANCE_API_KEY and BINANCE_API_SECRET:
+        signed_client = _client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+        open_positions = _safe_public_fetch([], signed_client.position_information_v3, None)
+        forced_symbols |= {
+            str(position.get("symbol") or "").upper()
+            for position in open_positions
+            if abs(_float_nan(position.get("positionAmt"))) > 0
+            and str(position.get("symbol") or "").upper() in symbol_meta
+            and symbol_meta[str(position.get("symbol") or "").upper()].underlying_type not in TRADFI_ALWAYS_INCLUDE_TYPES
+        }
     if INCLUDE_TRADFI_BREAKOUTS:
         forced_symbols |= tradfi_symbols
     forced_ticker = ticker[ticker["symbol"].isin(forced_symbols)]
@@ -4765,7 +4837,9 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         )
         .drop_duplicates(subset=["symbol"], keep="first")
     )
-    if full_ath_scan:
+    if all_crypto_scan:
+        ticker = available_crypto_ticker.copy()
+    elif full_ath_scan:
         forced_full_mask = selected_ticker["symbol"].isin(set(CRIME_FORCE_SYMBOLS) | set(forced_symbols))
         forced_selected = selected_ticker[forced_full_mask].copy().head(max(0, FULL_ATH_MAX_SYMBOLS_TO_SCAN))
         remaining_budget = max(0, FULL_ATH_MAX_SYMBOLS_TO_SCAN - len(forced_selected))
@@ -4871,10 +4945,8 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         symbol = str(t["symbol"])
         compute_crime_detail = symbol in crime_symbols
         klines = _safe_public_fetch([], client.klines_1d, symbol, limit=DAILY_KLINE_LIMIT)
-        hourly_klines = (
-            _safe_public_fetch([], client.klines, symbol, interval="1h", limit=max(10, CRIME_HOURLY_LOOKBACK))
-            if compute_crime_detail
-            else []
+        hourly_klines = _safe_public_fetch(
+            [], client.klines, symbol, interval="1h", limit=max(10, CRIME_HOURLY_LOOKBACK)
         )
         levels = levels_from_klines(klines)
         recent_pump = recent_pump_stats_from_klines(klines, lookback_days=NO_LARGE_PUMP_LOOKBACK_DAYS)
@@ -5004,7 +5076,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         long_account_pct = _share_to_pct(long_short_snapshot.get("longAccount"))
         short_account_pct = _share_to_pct(long_short_snapshot.get("shortAccount"))
         short_account_history_stats = _short_account_history_stats(long_short_rows)
-        hourly_stats = _hourly_market_stats(hourly_klines) if compute_crime_detail else _empty_hourly_stats()
+        hourly_stats = _hourly_market_stats(hourly_klines)
 
         oi_rows = (
             _safe_public_fetch(
@@ -5123,6 +5195,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         last_price = float(t["lastPrice"])
         quote_volume_24h = float(t["quoteVolume"])
         daily_quote_volume_multiple = _daily_quote_volume_multiple(klines, quote_volume_24h)
+        volume_30d = _daily_quote_volume_30d_context(klines, quote_volume_24h)
         upside_to_ath_pct = (
             max(0.0, levels.ath_scanned / last_price - 1.0) * 100.0
             if not math.isnan(levels.ath_scanned) and last_price > 0
@@ -5139,6 +5212,10 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 binance_perp_universe=True,
                 last_price=last_price,
                 quote_volume_24h=quote_volume_24h,
+                quote_volume_prior_30d_total=float(volume_30d["quote_volume_prior_30d_total"]),
+                quote_volume_prior_30d_daily_avg=float(volume_30d["quote_volume_prior_30d_daily_avg"]),
+                quote_volume_prior_30d_days=int(volume_30d["quote_volume_prior_30d_days"]),
+                quote_volume_24h_vs_prior_30d_avg_ratio=float(volume_30d["quote_volume_24h_vs_prior_30d_avg_ratio"]),
                 history_days=max(0, len(klines) - 1),
                 recent_max_pump_60d_pct=recent_pump.max_pump_pct,
                 recent_pump_60d_days=recent_pump.used_days,
@@ -5201,6 +5278,8 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 day_return_pct=hourly_stats["day_return_pct"],
                 daily_quote_volume_multiple=daily_quote_volume_multiple,
                 hour_quote_volume=hourly_stats["hour_quote_volume"],
+                hour_quote_volume_previous_1h=hourly_stats["hour_quote_volume_previous_1h"],
+                hour_volume_roc_1h_pct=hourly_stats["hour_volume_roc_1h_pct"],
                 hour_volume_multiple=hourly_stats["hour_volume_multiple"],
                 hour_trade_count_multiple=hourly_stats["hour_trade_count_multiple"],
                 hour_upper_wick_pct=hourly_stats["hour_upper_wick_pct"],
@@ -5308,6 +5387,12 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         return pd.DataFrame(columns=empty_cols), pd.DataFrame(columns=empty_cols)
 
     all_df = pd.DataFrame([r.__dict__ for r in rows]).sort_values("symbol")
+    all_df["scan_mode"] = str(scan_mode)
+    all_df["available_crypto_perp_count"] = available_crypto_perp_count
+    all_df["scanned_symbol_count"] = len(all_df)
+    all_df["crypto_perp_coverage_pct"] = (
+        len(all_df) / available_crypto_perp_count * 100.0 if available_crypto_perp_count else float("nan")
+    )
     ticker_meta = ticker.set_index("symbol")
     all_df["normalized_base_asset"] = all_df["base_asset"].map(normalize_base_asset)
     all_df["crime_excluded_major"] = all_df["normalized_base_asset"].isin(CRIME_EXCLUDED_BASE_ASSETS)
@@ -5388,11 +5473,13 @@ def render_breakout_dashboard() -> None:
     st.caption("Single-click scan for 5D/20D/90D/180D highs and lows plus funding/carry, crowding, and structural diagnostics.")
     scan_mode = st.radio(
         "Scan Mode",
-        ("Fast", "Deep", "Full ATH"),
+        ("Fast", "Deep", "All Crypto Perps", "Full ATH"),
         horizontal=True,
         help=(
             "Fast scans the top crypto perps with Binance est funding and breakout data first. "
-            "Deep adds heavier market-structure diagnostics. Full ATH also scans the wider non-major perp universe for 20x+ ATH runway, "
+            "Deep adds heavier market-structure diagnostics. All Crypto Perps walks every currently trading Binance USDT crypto perpetual "
+            "and can take substantially longer. Open signed-account positions are always forced into Fast and Deep scans. "
+            "Full ATH scans a wider ranked non-major universe for 20x+ ATH runway, "
             f"capped at {FULL_ATH_MAX_SYMBOLS_TO_SCAN} symbols and {FULL_ATH_EXTERNAL_SYMBOLS_TO_SCAN} external enrichments to avoid hammering public APIs."
         ),
         key="breakout_scan_mode",
@@ -5401,6 +5488,9 @@ def render_breakout_dashboard() -> None:
     if st.button("Scan now", type="primary", key="scan_breakouts"):
         st.session_state["breakout_refresh_nonce"] = st.session_state.get("breakout_refresh_nonce", 0) + 1
         spinner_label = (
+            "Walking every currently trading Binance USDT crypto perpetual; this can take several minutes..."
+            if scan_mode == "All Crypto Perps"
+            else
             "Running full ATH runway scan with throttled external enrichment..."
             if scan_mode == "Full ATH"
             else
@@ -5483,6 +5573,26 @@ def render_breakout_dashboard() -> None:
                 "24H Quote Vol",
                 format="$%.0f",
                 help="24-hour quote volume used as a rough size/liquidity proxy.",
+            ),
+            "quote_volume_prior_30d_total": st.column_config.NumberColumn(
+                "Prior 30D Vol",
+                format="$%.0f",
+                help="Total Binance futures quote volume across up to 30 completed UTC daily candles.",
+            ),
+            "quote_volume_prior_30d_daily_avg": st.column_config.NumberColumn(
+                "Prior 30D Avg",
+                format="$%.0f",
+                help="Average daily Binance futures quote volume across the completed prior-day sample.",
+            ),
+            "quote_volume_prior_30d_days": st.column_config.NumberColumn(
+                "Prior Days",
+                format="%d",
+                help="Completed daily candles in the baseline, capped at 30.",
+            ),
+            "quote_volume_24h_vs_prior_30d_avg_ratio": st.column_config.NumberColumn(
+                "24H / 30D Avg",
+                format="%.2fx",
+                help="Rolling 24-hour quote volume divided by the prior completed-day average.",
             ),
             "crime_microstructure_score": st.column_config.NumberColumn(
                 "Microstructure",
@@ -6471,6 +6581,12 @@ def render_breakout_dashboard() -> None:
             ),
             "day_return_pct": st.column_config.NumberColumn("24H Return", format="%.2f%%"),
             "hour_quote_volume": st.column_config.NumberColumn("1H Quote Vol", format="$%.0f"),
+            "hour_quote_volume_previous_1h": st.column_config.NumberColumn("Prev 1H Quote Vol", format="$%.0f"),
+            "hour_volume_roc_1h_pct": st.column_config.NumberColumn(
+                "1H Volume ROC",
+                format="%.2f%%",
+                help="Quote-volume rate of change from the preceding closed 1-hour window to the latest closed 1-hour window.",
+            ),
             "hour_volume_multiple": st.column_config.NumberColumn(
                 "1H Vol x",
                 format="%.2fx",
@@ -6769,7 +6885,17 @@ def render_breakout_dashboard() -> None:
             "timing_liquidity_warning": st.column_config.TextColumn("Timing Liquidity"),
         }
         scan_mode_label = str(scan_mode)
-        if scan_mode_label == "Full ATH":
+        available_crypto_count = int(
+            pd.to_numeric(all_df.get("available_crypto_perp_count"), errors="coerce").dropna().max()
+        ) if "available_crypto_perp_count" in all_df.columns and not all_df.empty else 0
+        scanned_symbol_count = int(len(all_df))
+        coverage_pct = scanned_symbol_count / available_crypto_count * 100.0 if available_crypto_count else float("nan")
+        if scan_mode_label == "All Crypto Perps":
+            universe_label = (
+                f"all {available_crypto_count} currently trading Binance USDT crypto perps; "
+                f"returned {scanned_symbol_count} rows ({coverage_pct:.1f}% coverage)"
+            )
+        elif scan_mode_label == "Full ATH":
             universe_label = (
                 f"up to {FULL_ATH_MAX_SYMBOLS_TO_SCAN} non-major ATH-runway candidates; "
                 f"top {FULL_ATH_EXTERNAL_SYMBOLS_TO_SCAN} externally enriched"
@@ -6782,7 +6908,9 @@ def render_breakout_dashboard() -> None:
                 f"{min(ATH_RUNWAY_SYMBOLS_TO_SCAN, DEEP_ATH_SYMBOLS_TO_SCAN)} ATH-runway candidates"
             )
         else:
-            universe_label = f"top {FAST_MAX_SYMBOLS} crypto USDT perps by 24h quote volume"
+            universe_label = (
+                f"top {FAST_MAX_SYMBOLS} crypto USDT perps by 24h quote volume, plus any open signed-account positions"
+            )
         st.caption(
             f"Last scan: {_now_utc()} | Scan mode: {scan_mode_label} | "
             f"Universe scanned: {universe_label} | "
@@ -7074,6 +7202,7 @@ def render_breakout_dashboard() -> None:
                 "Pre-Activity Radar",
                 "Convex Mechanisms",
                 "Shorts Fighting Uptrend",
+                "Volume Spikes",
             ]
         )
 
@@ -9477,6 +9606,44 @@ def render_breakout_dashboard() -> None:
                         hide_index=True,
                         column_config=breakout_column_config,
                     )
+
+        with screener_tabs[18]:
+            volume_spike_cols = [
+                "symbol",
+                "base_asset",
+                "market_type",
+                "last_price",
+                "quote_volume_24h",
+                "quote_volume_prior_30d_total",
+                "quote_volume_prior_30d_daily_avg",
+                "quote_volume_prior_30d_days",
+                "quote_volume_24h_vs_prior_30d_avg_ratio",
+                "day_return_pct",
+                "hour_return_pct",
+                "hour_volume_multiple",
+                "oi_delta_pct",
+                "short_account_pct",
+                "short_account_roc_1h_pct",
+                "carry_funding_pct",
+                "trade_bucket",
+            ]
+            volume_ratio = pd.to_numeric(
+                all_df["quote_volume_24h_vs_prior_30d_avg_ratio"],
+                errors="coerce",
+            )
+            volume_spikes_df = all_df[volume_ratio.notna()].sort_values(
+                ["quote_volume_24h_vs_prior_30d_avg_ratio", "quote_volume_24h", "symbol"],
+                ascending=[False, False, True],
+            )
+            if volume_spikes_df.empty:
+                st.info("No prior daily-volume baseline is available in this scan.")
+            else:
+                st.dataframe(
+                    _display_frame(volume_spikes_df, volume_spike_cols),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=breakout_column_config,
+                )
 
         if INCLUDE_TRADFI_BREAKOUTS:
             st.subheader("Tracked commodities")

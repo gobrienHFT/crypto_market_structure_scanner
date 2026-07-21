@@ -31,6 +31,10 @@ class BreakoutRow:
     binance_perp_universe: bool
     last_price: float
     quote_volume_24h: float
+    quote_volume_prior_30d_total: float
+    quote_volume_prior_30d_daily_avg: float
+    quote_volume_prior_30d_days: int
+    quote_volume_24h_vs_prior_30d_avg_ratio: float
     history_days: int
     recent_max_pump_60d_pct: float
     recent_pump_60d_days: int
@@ -89,6 +93,8 @@ class BreakoutRow:
     day_return_pct: float
     daily_quote_volume_multiple: float
     hour_quote_volume: float
+    hour_quote_volume_previous_1h: float
+    hour_volume_roc_1h_pct: float
     hour_volume_multiple: float
     hour_trade_count_multiple: float
     hour_upper_wick_pct: float
