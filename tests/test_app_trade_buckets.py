@@ -30,6 +30,67 @@ def test_all_crypto_perp_universe_keeps_new_crypto_symbols_and_excludes_tradfi()
     assert selected["symbol"].tolist() == ["BTCUSDT", "AKEUSDT"]
 
 
+def test_all_crypto_short_account_frame_only_returns_pair_and_short_pct() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, int]] = []
+
+        def perpetual_usdt_symbols(self):
+            return [
+                SimpleNamespace(symbol="BTCUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="AKEUSDT", underlying_type="COIN"),
+                SimpleNamespace(symbol="NEWUSDT", underlying_type=""),
+                SimpleNamespace(symbol="NVDAUSDT", underlying_type="EQUITY"),
+            ]
+
+        def global_long_short_account_ratio(self, symbol: str, *, period: str, limit: int):
+            self.calls.append((symbol, period, limit))
+            if symbol == "AKEUSDT":
+                return [{"shortAccount": "0.72"}]
+            if symbol == "BTCUSDT":
+                return [{"shortAccount": "0.48"}]
+            return []
+
+    client = Client()
+    frame = app._all_crypto_short_account_frame(client)
+
+    assert frame.columns.tolist() == ["symbol", "short_account_pct"]
+    assert frame["symbol"].tolist() == ["AKEUSDT", "BTCUSDT", "NEWUSDT"]
+    assert frame["short_account_pct"].iloc[:2].tolist() == [72.0, 48.0]
+    assert pd.isna(frame["short_account_pct"].iloc[2])
+    assert client.calls == [
+        ("AKEUSDT", app.LONG_SHORT_RATIO_PERIOD, 1),
+        ("BTCUSDT", app.LONG_SHORT_RATIO_PERIOD, 1),
+        ("NEWUSDT", app.LONG_SHORT_RATIO_PERIOD, 1),
+    ]
+
+
+def test_all_crypto_run_scan_bypasses_the_heavy_breakout_pipeline(monkeypatch) -> None:
+    constructor_kwargs = {}
+
+    class Client:
+        def perpetual_usdt_symbols(self):
+            return [SimpleNamespace(symbol="AKEUSDT", underlying_type="COIN")]
+
+        def global_long_short_account_ratio(self, symbol: str, *, period: str, limit: int):
+            assert symbol == "AKEUSDT"
+            assert period == app.LONG_SHORT_RATIO_PERIOD
+            assert limit == 1
+            return [{"shortAccount": "0.68"}]
+
+    def client_factory(**kwargs):
+        constructor_kwargs.update(kwargs)
+        return Client()
+
+    monkeypatch.setattr(app, "BinanceFuturesPublic", client_factory)
+
+    highs, all_pairs = app.run_scan(987_654_321, "All Short Account %")
+
+    assert highs.empty
+    assert all_pairs.to_dict("records") == [{"symbol": "AKEUSDT", "short_account_pct": 68.0}]
+    assert constructor_kwargs["requests_per_second"] == app.ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND
+
+
 def test_display_frame_injects_sortable_hour_volume_roc_into_every_table() -> None:
     frame = pd.DataFrame([{"symbol": "AKEUSDT", "trade_bucket": "Watch", "hour_volume_roc_1h_pct": 125.0}])
 

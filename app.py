@@ -21,6 +21,10 @@ from concentration_scanner.perp_universe import DEFAULT_SEED_PATH, BinancePerpUn
 from concentration_scanner.presentation import cache_rows_to_frame
 from convexity_scoring import CONVEXITY_SCORE_COLUMNS, apply_convexity_model
 from cex_flow_scanner import CEX_DEPOSIT_FLOW_COLUMNS, build_cex_flow_discord_block, enrich_cex_deposit_flows
+from crypto_market_structure.reflexivity import (
+    SIGNAL_VERSION as REFLEXIVITY_SIGNAL_VERSION,
+)
+from crypto_market_structure.reporting import project_reflexivity_assessments
 from discord_flag_formatter import (
     DISCORD_EMBED_DESCRIPTION_LIMIT,
     DISCORD_FOOTER,
@@ -36,7 +40,11 @@ from external_markets import (
     fetch_external_crime_metrics,
     normalize_base_asset,
 )
-from holder_composition import fetch_holder_composition, format_holder_composition_for_discord
+from holder_composition import (
+    fetch_holder_composition,
+    format_holder_composition_for_discord,
+    resolve_contract_hint,
+)
 from market_structure_scoring import LIFECYCLE_SCORE_COLUMNS, apply_lifecycle_model
 from mechanism_engine import MECHANISM_SCORE_COLUMNS, apply_mechanism_model
 from pnl import PnLDashboardResult, build_pnl_dashboard_data
@@ -44,6 +52,13 @@ from pre_activity_radar import PRE_ACTIVITY_RADAR_COLUMNS, apply_pre_activity_ra
 from proof_engine import archive_alerts
 from short_account_roc import short_account_history_stats
 from short_squeeze_scoring import SHORT_SQUEEZE_SCORE_COLUMNS, apply_short_squeeze_model
+from squeeze_radar import (
+    SQUEEZE_RADAR_PROFILES,
+    attach_squeeze_history_features,
+    oi_history_stats,
+    score_squeeze_radar,
+    select_squeeze_candidates,
+)
 from screener import ScreenerData, build_screener_data
 from terminal_engine import TERMINAL_SCORE_COLUMNS, apply_terminal_model, build_setup_dossier
 from timing_engine import TIMING_SCORE_COLUMNS, apply_timing_model, build_timing_card
@@ -56,13 +71,20 @@ from venue_gate import (
     apply_thesis_alert_gate,
     thesis_alert_header,
 )
-from volume_metrics import closed_hour_volume_metrics
+from volume_metrics import closed_daily_anchored_vwap_metrics, closed_hour_volume_metrics
 
 APP_DIR = Path(__file__).resolve().parent
 IMPORT_ONLY = os.environ.get("CRYPTO_SCANNER_IMPORT_ONLY") == "1"
 USD_LIKE_ASSETS = {"USDT", "USDC", "BUSD", "FDUSD", "TUSD", "USDP"}
 RANGE_PRESETS = ("7D", "30D", "90D", "YTD", "1Y", "3Y", "ITD", "Custom")
-TRADFI_ALWAYS_INCLUDE_TYPES = {"COMMODITY", "EQUITY"}
+TRADFI_ALWAYS_INCLUDE_TYPES = {
+    "COMMODITY",
+    "EQUITY",
+    "HK_EQUITY",
+    "KR_EQUITY",
+    "INDEX",
+    "PREMARKET",
+}
 DEFAULT_CRIME_EXCLUDED_BASES = (
     "BTC,ETH,XRP,BNB,SOL,DOGE,ADA,TRX,LINK,LTC,BCH,DOT,AVAX,TON,SHIB,HBAR,XLM,ETC,ICP,NEAR,APT,ARB,OP"
 )
@@ -3420,9 +3442,65 @@ PNL_BENCHMARKS = [s.strip().upper() for s in _env_value("PNL_BENCHMARKS", defaul
 FUNDING_BACKTEST_WINDOWS = int(_env_value("FUNDING_BACKTEST_WINDOWS", default="4"))
 FUNDING_STREAM_SAMPLE_SECONDS = float(_env_value("FUNDING_STREAM_SAMPLE_SECONDS", default="1.0"))
 LONG_SHORT_RATIO_PERIOD = _env_value("LONG_SHORT_RATIO_PERIOD", default="1h")
+ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND = float(
+    _env_value("ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND", default="8.0")
+)
+SQUEEZE_RADAR_REQUESTS_PER_SECOND = _parse_env_float(
+    _env_value("SQUEEZE_RADAR_REQUESTS_PER_SECOND", default="6.0"),
+    default=6.0,
+    minimum=1.0,
+)
+SQUEEZE_RADAR_DEFAULT_SYMBOLS = _parse_env_int(
+    _env_value("SQUEEZE_RADAR_DEFAULT_SYMBOLS", default="24"),
+    default=24,
+    minimum=12,
+)
+SQUEEZE_RADAR_PREFILTER_SYMBOLS = _parse_env_int(
+    _env_value("SQUEEZE_RADAR_PREFILTER_SYMBOLS", default="72"),
+    default=72,
+    minimum=24,
+)
+SQUEEZE_RADAR_LATEST_PATH = Path(
+    _env_value(
+        "SQUEEZE_RADAR_LATEST_PATH",
+        default=str(APP_DIR / "data" / "squeeze_radar_latest.csv"),
+    )
+)
+SQUEEZE_RADAR_HISTORY_PATH = Path(
+    _env_value(
+        "SQUEEZE_RADAR_HISTORY_PATH",
+        default=str(APP_DIR / "data" / "squeeze_radar_history.csv"),
+    )
+)
+SQUEEZE_RADAR_HISTORY_RETENTION_DAYS = _parse_env_int(
+    _env_value("SQUEEZE_RADAR_HISTORY_RETENTION_DAYS", default="30"),
+    default=30,
+    minimum=7,
+)
+SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH = Path(
+    _env_value(
+        "SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH",
+        default=str(APP_DIR / "data" / "squeeze_radar_structural_evidence.csv"),
+    )
+)
+SQUEEZE_RADAR_STRUCTURAL_REFRESH_MAX_SYMBOLS = _parse_env_int(
+    _env_value("SQUEEZE_RADAR_STRUCTURAL_REFRESH_MAX_SYMBOLS", default="4"),
+    default=4,
+    minimum=1,
+)
+SQUEEZE_RADAR_CROWD_DIAGNOSTIC_MAX_SYMBOLS = _parse_env_int(
+    _env_value("SQUEEZE_RADAR_CROWD_DIAGNOSTIC_MAX_SYMBOLS", default="12"),
+    default=12,
+    minimum=0,
+)
+SQUEEZE_RADAR_SHORT_SEED_PATHS = (
+    APP_DIR / "short_account_roc_output" / "short_account_roc_full_scan_latest.csv",
+    APP_DIR / "data" / "latest_short_account_roc.csv",
+    APP_DIR / "data" / "latest_short_account_trend.csv",
+)
 SHORT_ACCOUNT_CHANGE_WINDOWS = _parse_positive_ints(
-    _env_value("SHORT_ACCOUNT_CHANGE_WINDOWS", default="1,3,6,12,24"),
-    default=(1, 3, 6, 12, 24),
+    _env_value("SHORT_ACCOUNT_CHANGE_WINDOWS", default="1,3,4,6,12,24"),
+    default=(1, 3, 4, 6, 12, 24),
 )
 LONG_SHORT_RATIO_HISTORY_LIMIT = max(
     int(_env_value("LONG_SHORT_RATIO_HISTORY_LIMIT", default="25")),
@@ -3461,7 +3539,7 @@ CRIME_FORCE_SYMBOLS = tuple(
 CRIME_MM_PROXIMITY_PATH = _env_value(
     "MARKET_MAKER_PROXIMITY_PATH",
     "CRIME_MM_PROXIMITY_PATH",
-    default=str(APP_DIR / "crime_mm_proximity.csv"),
+    default=str(APP_DIR / "crypto_market_structure" / "fixtures" / "crime_mm_proximity.csv"),
 )
 CRIME_MM_PROXIMITY_SIGNALS = _env_value("MARKET_MAKER_PROXIMITY_SIGNALS", "CRIME_MM_PROXIMITY_SIGNALS", default="")
 COINMARKETCAP_API_KEY = _env_value("COINMARKETCAP_API_KEY", "CMC_API_KEY", default="")
@@ -3571,13 +3649,59 @@ CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS = _parse_env_int(
 )
 
 if not IMPORT_ONLY:
-    st.set_page_config(page_title="Binance Breakouts + PnL", layout="wide")
+    st.set_page_config(page_title="Convex Squeeze Radar", layout="wide")
     st.markdown(
         """
         <style>
-        .stApp { background: linear-gradient(180deg, #0b1020 0%, #111827 100%); color: #f3f4f6; }
-        h1, h2, h3, p, label, .stMarkdown, .stCaption { color: #f9fafb !important; }
-        .card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 14px; }
+        :root {
+            --radar-bg: #0d1014;
+            --radar-panel: #151a20;
+            --radar-panel-2: #1b2129;
+            --radar-border: #303741;
+            --radar-text: #f2f5f7;
+            --radar-muted: #a8b0ba;
+            --radar-cyan: #59c3d8;
+            --radar-green: #4bc487;
+            --radar-amber: #f0b44d;
+            --radar-coral: #f06b67;
+        }
+        .stApp { background: var(--radar-bg); color: var(--radar-text); }
+        .block-container { max-width: 1600px; padding-top: 1.35rem; padding-bottom: 3rem; }
+        h1, h2, h3, p, label, .stMarkdown, .stCaption { color: var(--radar-text) !important; letter-spacing: 0 !important; }
+        h1 { font-size: 2.15rem !important; line-height: 1.08 !important; margin-bottom: 0.2rem !important; }
+        h2 { font-size: 1.35rem !important; margin-top: 1.35rem !important; }
+        h3 { font-size: 1.05rem !important; }
+        [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p { color: var(--radar-muted) !important; }
+        [data-testid="stMetric"] {
+            background: var(--radar-panel);
+            border: 1px solid var(--radar-border);
+            border-radius: 6px;
+            padding: 0.75rem 0.85rem;
+            min-height: 96px;
+        }
+        [data-testid="stMetricLabel"] { color: var(--radar-muted) !important; }
+        [data-testid="stMetricValue"] { color: var(--radar-text) !important; font-size: 1.55rem !important; }
+        div[data-testid="stDataFrame"] { border: 1px solid var(--radar-border); border-radius: 6px; overflow: hidden; }
+        .stTabs [data-baseweb="tab-list"] { gap: 0; border-bottom: 1px solid var(--radar-border); }
+        .stTabs [data-baseweb="tab"] { border-radius: 0; padding-left: 1rem; padding-right: 1rem; }
+        .stTabs [aria-selected="true"] { color: var(--radar-cyan) !important; border-bottom: 2px solid var(--radar-cyan); }
+        .stButton button { border-radius: 6px !important; min-height: 2.6rem; }
+        .stButton button[kind="primary"] { background: var(--radar-coral); border-color: var(--radar-coral); color: #111417; }
+        .stButton button[kind="primary"]:hover { background: #ff817c; border-color: #ff817c; }
+        button[data-testid="stBaseButton-segmented_control"] {
+            background: var(--radar-panel) !important;
+            border-color: var(--radar-border) !important;
+        }
+        button[data-testid="stBaseButton-segmented_control"] p { color: var(--radar-muted) !important; }
+        button[data-testid="stBaseButton-segmented_controlActive"] {
+            background: var(--radar-panel-2) !important;
+            border-color: var(--radar-cyan) !important;
+        }
+        button[data-testid="stBaseButton-segmented_controlActive"] p { color: var(--radar-text) !important; }
+        [data-testid="stAlert"] { border-radius: 6px; border-width: 1px; }
+        div[data-baseweb="select"] > div, div[role="radiogroup"] { border-radius: 6px !important; }
+        hr { border-color: var(--radar-border) !important; }
+        .card { background: var(--radar-panel); border: 1px solid var(--radar-border); border-radius: 6px; padding: 12px; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -4640,13 +4764,63 @@ def _crypto_perp_ticker(ticker: pd.DataFrame, symbol_meta: dict[str, Any]) -> pd
     )
 
 
+def _all_crypto_short_account_frame(client: BinanceFuturesPublic) -> pd.DataFrame:
+    crypto_symbols = sorted(
+        item.symbol
+        for item in client.perpetual_usdt_symbols()
+        if item.symbol and str(item.underlying_type or "").upper() not in TRADFI_ALWAYS_INCLUDE_TYPES
+    )
+    rows: list[dict[str, Any]] = []
+    for symbol in crypto_symbols:
+        ratio_rows = _safe_public_fetch(
+            [],
+            client.global_long_short_account_ratio,
+            symbol,
+            period=LONG_SHORT_RATIO_PERIOD,
+            limit=1,
+        )
+        latest = ratio_rows[-1] if ratio_rows else {}
+        rows.append(
+            {
+                "symbol": symbol,
+                "short_account_pct": _share_to_pct(latest.get("shortAccount")),
+            }
+        )
+
+    frame = pd.DataFrame(rows, columns=["symbol", "short_account_pct"])
+    if frame.empty:
+        return frame
+    frame["short_account_pct"] = pd.to_numeric(frame["short_account_pct"], errors="coerce")
+    return frame.sort_values(
+        ["short_account_pct", "symbol"],
+        ascending=[False, True],
+        na_position="last",
+    ).reset_index(drop=True)
+
+
 @_cache_data(ttl=60)
 def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame, pd.DataFrame]:
     _ = (refresh_nonce, scan_mode)
     normalized_scan_mode = str(scan_mode).strip().lower()
-    all_crypto_scan = normalized_scan_mode in {"all crypto perps", "all crypto", "all perps", "full universe"}
+    all_crypto_scan = normalized_scan_mode in {
+        "all short account %",
+        "all short accounts",
+        "all crypto perps",
+        "all crypto",
+        "all perps",
+        "full universe",
+    }
     full_ath_scan = normalized_scan_mode in {"full ath", "full ath runway", "ath"}
     deep_scan = normalized_scan_mode in {"deep", "full ath", "full ath runway", "ath"}
+    if all_crypto_scan:
+        census_client = BinanceFuturesPublic(
+            base_url=BASE_URL,
+            timeout=TIMEOUT,
+            requests_per_second=ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND,
+            retries=RETRIES,
+        )
+        return pd.DataFrame(), _all_crypto_short_account_frame(census_client)
+
     scan_max_symbols = FULL_ATH_MAX_SYMBOLS_TO_SCAN if full_ath_scan else MAX_SYMBOLS_TO_SCAN if deep_scan else FAST_MAX_SYMBOLS
     crime_symbol_limit = CRIME_SYMBOLS_TO_SCAN if deep_scan else 0
     modeled_funding_enabled = ENABLE_MODELED_FUNDING and deep_scan and not full_ath_scan
@@ -4837,9 +5011,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         )
         .drop_duplicates(subset=["symbol"], keep="first")
     )
-    if all_crypto_scan:
-        ticker = available_crypto_ticker.copy()
-    elif full_ath_scan:
+    if full_ath_scan:
         forced_full_mask = selected_ticker["symbol"].isin(set(CRIME_FORCE_SYMBOLS) | set(forced_symbols))
         forced_selected = selected_ticker[forced_full_mask].copy().head(max(0, FULL_ATH_MAX_SYMBOLS_TO_SCAN))
         remaining_budget = max(0, FULL_ATH_MAX_SYMBOLS_TO_SCAN - len(forced_selected))
@@ -5196,6 +5368,11 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
         quote_volume_24h = float(t["quoteVolume"])
         daily_quote_volume_multiple = _daily_quote_volume_multiple(klines, quote_volume_24h)
         volume_30d = _daily_quote_volume_30d_context(klines, quote_volume_24h)
+        anchored_vwap_30d = closed_daily_anchored_vwap_metrics(
+            klines,
+            last_price=last_price,
+            lookback_days=30,
+        )
         upside_to_ath_pct = (
             max(0.0, levels.ath_scanned / last_price - 1.0) * 100.0
             if not math.isnan(levels.ath_scanned) and last_price > 0
@@ -5216,6 +5393,11 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 quote_volume_prior_30d_daily_avg=float(volume_30d["quote_volume_prior_30d_daily_avg"]),
                 quote_volume_prior_30d_days=int(volume_30d["quote_volume_prior_30d_days"]),
                 quote_volume_24h_vs_prior_30d_avg_ratio=float(volume_30d["quote_volume_24h_vs_prior_30d_avg_ratio"]),
+                anchored_vwap_30d=float(anchored_vwap_30d["anchored_vwap_30d"]),
+                price_vs_anchored_vwap_30d_pct=float(
+                    anchored_vwap_30d["price_vs_anchored_vwap_30d_pct"]
+                ),
+                anchored_vwap_30d_days=int(anchored_vwap_30d["anchored_vwap_30d_days"]),
                 history_days=max(0, len(klines) - 1),
                 recent_max_pump_60d_pct=recent_pump.max_pump_pct,
                 recent_pump_60d_days=recent_pump.used_days,
@@ -5259,8 +5441,28 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 short_account_roc_1h_pp=_float_nan(short_account_history_stats.get("short_account_roc_1h_pp")),
                 short_account_roc_1h_abs_pp=_float_nan(short_account_history_stats.get("short_account_roc_1h_abs_pp")),
                 short_account_roc_1h_direction=str(short_account_history_stats.get("short_account_roc_1h_direction", "") or ""),
+                short_account_roc_smoothed_3p_pp=_float_nan(
+                    short_account_history_stats.get("short_account_roc_smoothed_3p_pp")
+                ),
+                short_account_roc_smoothed_3p_pct=_float_nan(
+                    short_account_history_stats.get("short_account_roc_smoothed_3p_pct")
+                ),
+                short_account_acceleration_1h_pp=_float_nan(
+                    short_account_history_stats.get("short_account_acceleration_1h_pp")
+                ),
+                short_account_acceleration_smoothed_3p_pp=_float_nan(
+                    short_account_history_stats.get("short_account_acceleration_smoothed_3p_pp")
+                ),
+                short_account_roc_zscore=_float_nan(
+                    short_account_history_stats.get("short_account_roc_zscore")
+                ),
+                short_account_direction_persistence=int(
+                    short_account_history_stats.get("short_account_direction_persistence", 0) or 0
+                ),
                 short_account_change_3p_pct=_float_nan(short_account_history_stats.get("short_account_change_3p_pct")),
                 short_account_change_3p_pp=_float_nan(short_account_history_stats.get("short_account_change_3p_pp")),
+                short_account_change_4p_pct=_float_nan(short_account_history_stats.get("short_account_change_4p_pct")),
+                short_account_change_4p_pp=_float_nan(short_account_history_stats.get("short_account_change_4p_pp")),
                 short_account_change_6p_pct=_float_nan(short_account_history_stats.get("short_account_change_6p_pct")),
                 short_account_change_6p_pp=_float_nan(short_account_history_stats.get("short_account_change_6p_pp")),
                 short_account_change_12p_pct=_float_nan(short_account_history_stats.get("short_account_change_12p_pct")),
@@ -5286,6 +5488,7 @@ def run_scan(refresh_nonce: int, scan_mode: str = "Fast") -> tuple[pd.DataFrame,
                 hour_close_location_pct=hourly_stats["hour_close_location_pct"],
                 oi_value_usdt=oi_value_usdt,
                 oi_delta_pct=oi_delta_pct,
+                oi_acceleration_1h_pct=_float_nan(oi_stats.get("oi_acceleration_1h_pct")),
                 oi_to_24h_volume_pct=oi_to_24h_volume_pct,
                 taker_buy_sell_ratio=taker_buy_sell_ratio,
                 taker_buy_share_pct=taker_buy_share_pct,
@@ -5468,17 +5671,17 @@ def load_screener_cached(refresh_nonce: int) -> ScreenerData:
     return build_screener_data(_client())
 
 
-def render_breakout_dashboard() -> None:
+def render_legacy_breakout_dashboard() -> None:
     st.title("Binance USDT Perp Breakout Dashboard")
     st.caption("Single-click scan for 5D/20D/90D/180D highs and lows plus funding/carry, crowding, and structural diagnostics.")
     scan_mode = st.radio(
         "Scan Mode",
-        ("Fast", "Deep", "All Crypto Perps", "Full ATH"),
+        ("Fast", "Deep", "All Short Account %", "Full ATH"),
         horizontal=True,
         help=(
             "Fast scans the top crypto perps with Binance est funding and breakout data first. "
-            "Deep adds heavier market-structure diagnostics. All Crypto Perps walks every currently trading Binance USDT crypto perpetual "
-            "and can take substantially longer. Open signed-account positions are always forced into Fast and Deep scans. "
+            "Deep adds heavier market-structure diagnostics. All Short Account % returns only each currently trading Binance USDT crypto pair "
+            "and its latest global short-account percentage. Open signed-account positions are always forced into Fast and Deep scans. "
             "Full ATH scans a wider ranked non-major universe for 20x+ ATH runway, "
             f"capped at {FULL_ATH_MAX_SYMBOLS_TO_SCAN} symbols and {FULL_ATH_EXTERNAL_SYMBOLS_TO_SCAN} external enrichments to avoid hammering public APIs."
         ),
@@ -5488,8 +5691,8 @@ def render_breakout_dashboard() -> None:
     if st.button("Scan now", type="primary", key="scan_breakouts"):
         st.session_state["breakout_refresh_nonce"] = st.session_state.get("breakout_refresh_nonce", 0) + 1
         spinner_label = (
-            "Walking every currently trading Binance USDT crypto perpetual; this can take several minutes..."
-            if scan_mode == "All Crypto Perps"
+            "Loading the latest short-account percentage for every Binance USDT crypto perpetual..."
+            if scan_mode == "All Short Account %"
             else
             "Running full ATH runway scan with throttled external enrichment..."
             if scan_mode == "Full ATH"
@@ -5507,6 +5710,31 @@ def render_breakout_dashboard() -> None:
                 "API issue or a column-shape regression; the app caught it instead of leaving the page stuck."
             )
             st.exception(exc)
+            return
+
+        if scan_mode == "All Short Account %":
+            available_short_values = int(
+                pd.to_numeric(all_df.get("short_account_pct"), errors="coerce").notna().sum()
+            ) if not all_df.empty else 0
+            st.caption(
+                f"Latest Binance global account ratio ({LONG_SHORT_RATIO_PERIOD}) | "
+                f"{len(all_df)} crypto perp pairs | {available_short_values} short-account values returned"
+            )
+            if all_df.empty:
+                st.warning("Binance did not return any currently trading crypto perpetual pairs.")
+                return
+            st.dataframe(
+                all_df.loc[:, ["symbol", "short_account_pct"]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "symbol": st.column_config.TextColumn("Coin Pair"),
+                    "short_account_pct": st.column_config.NumberColumn(
+                        "Short Accounts",
+                        format="%.2f%%",
+                    ),
+                },
+            )
             return
 
         breakout_column_config = {
@@ -5593,6 +5821,21 @@ def render_breakout_dashboard() -> None:
                 "24H / 30D Avg",
                 format="%.2fx",
                 help="Rolling 24-hour quote volume divided by the prior completed-day average.",
+            ),
+            "anchored_vwap_30d": st.column_config.NumberColumn(
+                "30D AVWAP",
+                format="%.8f",
+                help="Perpetual-market VWAP anchored to the start of up to 30 completed UTC daily candles.",
+            ),
+            "price_vs_anchored_vwap_30d_pct": st.column_config.NumberColumn(
+                "Price vs 30D AVWAP",
+                format="%.2f%%",
+                help="Current price distance above or below the completed-day 30D anchored VWAP.",
+            ),
+            "anchored_vwap_30d_days": st.column_config.NumberColumn(
+                "AVWAP Days",
+                format="%d",
+                help="Completed daily candles used by the anchored VWAP calculation.",
             ),
             "crime_microstructure_score": st.column_config.NumberColumn(
                 "Microstructure",
@@ -6543,6 +6786,36 @@ def render_breakout_dashboard() -> None:
                 help="Absolute percentage-point move in short-account share over the last 1h account-ratio step.",
             ),
             "short_account_roc_1h_direction": st.column_config.TextColumn("1h Direction"),
+            "short_account_roc_smoothed_3p_pp": st.column_config.NumberColumn(
+                "Short ROC Smooth",
+                format="%.2f pp",
+                help="Mean one-step short-account percentage-point change across the latest three observations.",
+            ),
+            "short_account_roc_smoothed_3p_pct": st.column_config.NumberColumn(
+                "Short ROC Smooth %",
+                format="%.2f%%",
+                help="Mean relative short-account change across the latest three observations.",
+            ),
+            "short_account_acceleration_1h_pp": st.column_config.NumberColumn(
+                "Short Accel 1h",
+                format="%.2f pp",
+                help="Latest change in the one-step short-account percentage-point rate of change.",
+            ),
+            "short_account_acceleration_smoothed_3p_pp": st.column_config.NumberColumn(
+                "Short Accel Smooth",
+                format="%.2f pp",
+                help="Three-observation mean of short-account acceleration to reduce single-print noise.",
+            ),
+            "short_account_roc_zscore": st.column_config.NumberColumn(
+                "Short ROC Z",
+                format="%.2f",
+                help="Latest one-step short-account move standardized against the token's prior observed changes.",
+            ),
+            "short_account_direction_persistence": st.column_config.NumberColumn(
+                "Short Persist",
+                format="%d",
+                help="Consecutive observations in the current short-account build or cover direction.",
+            ),
             "short_account_change_3p_pct": st.column_config.NumberColumn("Short Δ 3p", format="%.2f%%"),
             "short_account_change_3p_pp": st.column_config.NumberColumn("Short Δ 3p pp", format="%.2f pp"),
             "short_account_change_6p_pct": st.column_config.NumberColumn("Short Δ 6p", format="%.2f%%"),
@@ -6890,7 +7163,7 @@ def render_breakout_dashboard() -> None:
         ) if "available_crypto_perp_count" in all_df.columns and not all_df.empty else 0
         scanned_symbol_count = int(len(all_df))
         coverage_pct = scanned_symbol_count / available_crypto_count * 100.0 if available_crypto_count else float("nan")
-        if scan_mode_label == "All Crypto Perps":
+        if scan_mode_label == "All Short Account %":
             universe_label = (
                 f"all {available_crypto_count} currently trading Binance USDT crypto perps; "
                 f"returned {scanned_symbol_count} rows ({coverage_pct:.1f}% coverage)"
@@ -8583,6 +8856,12 @@ def render_breakout_dashboard() -> None:
                 "short_account_roc_1h_pp",
                 "short_account_roc_1h_pct",
                 "short_account_roc_1h_abs_pp",
+                "short_account_roc_smoothed_3p_pp",
+                "short_account_roc_smoothed_3p_pct",
+                "short_account_acceleration_1h_pp",
+                "short_account_acceleration_smoothed_3p_pp",
+                "short_account_roc_zscore",
+                "short_account_direction_persistence",
                 "long_account_pct",
                 "long_short_account_ratio",
                 "short_account_history_points",
@@ -9475,11 +9754,17 @@ def render_breakout_dashboard() -> None:
                 "short_account_previous_1h_pct",
                 "short_account_roc_1h_pp",
                 "short_account_roc_1h_pct",
+                "short_account_roc_smoothed_3p_pp",
+                "short_account_acceleration_smoothed_3p_pp",
+                "short_account_roc_zscore",
+                "short_account_direction_persistence",
                 "short_account_change_max_pp",
                 "short_account_change_max_pct",
                 "short_account_change_max_window",
                 "long_short_account_ratio",
                 "last_price",
+                "anchored_vwap_30d",
+                "price_vs_anchored_vwap_30d_pct",
                 "day_return_pct",
                 "hour_return_pct",
                 "range_high_break_count",
@@ -9618,6 +9903,9 @@ def render_breakout_dashboard() -> None:
                 "quote_volume_prior_30d_daily_avg",
                 "quote_volume_prior_30d_days",
                 "quote_volume_24h_vs_prior_30d_avg_ratio",
+                "anchored_vwap_30d",
+                "price_vs_anchored_vwap_30d_pct",
+                "anchored_vwap_30d_days",
                 "day_return_pct",
                 "hour_return_pct",
                 "hour_volume_multiple",
@@ -10687,18 +10975,1380 @@ def render_concentration_dashboard() -> None:
         st.dataframe(pd.DataFrame(cache.queue_rows()), use_container_width=True, hide_index=True)
 
 
-def main_dashboard() -> None:
-    st.caption("Switch between the breakout scanner, the cross-asset screener, Binance PnL, and on-chain concentration tooling.")
-    dashboard_mode = st.radio("Dashboard", ("Breakouts", "Screener", "PnL", "On-Chain Concentration"), horizontal=True)
+def _read_optional_csv(path: Path) -> pd.DataFrame:
+    try:
+        if not path.exists() or path.stat().st_size <= 1:
+            return pd.DataFrame()
+        return pd.read_csv(path, low_memory=False)
+    except (OSError, ValueError, pd.errors.ParserError):
+        return pd.DataFrame()
 
-    if dashboard_mode == "Breakouts":
-        render_breakout_dashboard()
-    elif dashboard_mode == "Screener":
-        render_screener_dashboard()
-    elif dashboard_mode == "PnL":
-        render_pnl_dashboard()
+
+def _latest_symbol_rows(frame: pd.DataFrame, timestamp_columns: tuple[str, ...]) -> pd.DataFrame:
+    if frame.empty or "symbol" not in frame.columns:
+        return pd.DataFrame()
+    out = frame.copy()
+    out["symbol"] = out["symbol"].astype(str).str.upper().str.strip()
+    timestamp_column = next((column for column in timestamp_columns if column in out.columns), None)
+    if timestamp_column:
+        out["_radar_timestamp"] = pd.to_datetime(out[timestamp_column], errors="coerce", utc=True)
+        out = out.sort_values("_radar_timestamp", na_position="first")
+    return out.drop_duplicates(subset=["symbol"], keep="last").reset_index(drop=True)
+
+
+def _squeeze_seed_frames() -> list[pd.DataFrame]:
+    frames = [_read_optional_csv(path) for path in SQUEEZE_RADAR_SHORT_SEED_PATHS]
+    memory = _read_optional_csv(PRE_PUMP_SNAPSHOT_PATH)
+    if not memory.empty:
+        frames.append(_latest_symbol_rows(memory, ("snapshot_ts",)))
+    latest_deep = _read_optional_csv(DISCORD_CONVEX_CACHE_PATH)
+    if not latest_deep.empty:
+        frames.append(_latest_symbol_rows(latest_deep, ("scanned_at_utc",)))
+    return [frame for frame in frames if not frame.empty]
+
+
+def _set_evidence_value(record: dict[str, Any], key: str, value: Any, *, overwrite: bool = True) -> None:
+    if value is None:
+        return
+    try:
+        if pd.isna(value):
+            return
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str) and not value.strip():
+        return
+    if overwrite or key not in record:
+        record[key] = value
+
+
+def _mark_squeeze_evidence(
+    record: dict[str, Any],
+    *,
+    source: str,
+    level: str,
+    timestamp: Any,
+) -> None:
+    """Track proxy and verified evidence separately; proxy must never replace verified age."""
+    sources = record.setdefault("structural_evidence_sources", set())
+    sources.add(source)
+    normalized_level = str(level or "NONE").upper().strip() or "NONE"
+    priority = {"NONE": 0, "PROXY": 1, "VERIFIED": 2}
+    previous_level = str(record.get("structural_evidence_level") or "NONE").upper().strip()
+    if priority.get(normalized_level, 0) >= priority.get(previous_level, 0):
+        record["structural_evidence_level"] = normalized_level
+    if normalized_level == "PROXY":
+        _set_evidence_value(record, "structural_proxy_updated_at", timestamp)
+    elif normalized_level == "VERIFIED":
+        _set_evidence_value(record, "structural_evidence_updated_at", timestamp)
+
+
+def _attach_cached_squeeze_evidence(live_frame: pd.DataFrame) -> pd.DataFrame:
+    if live_frame.empty:
+        return live_frame.copy()
+
+    evidence: dict[str, dict[str, Any]] = {}
+
+    memory = _latest_symbol_rows(_read_optional_csv(PRE_PUMP_SNAPSHOT_PATH), ("snapshot_ts",))
+    memory_columns = (
+        "centralized_ownership_score",
+        "low_float_score",
+        "rave_lab_setup_score",
+        "pre_pump_precision_score",
+        "dormant_short_fuse_score",
+        "target_cex_volume_share_pct",
+    )
+    for _, row in memory.iterrows():
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        record = evidence.setdefault(symbol, {"structural_evidence_sources": set()})
+        for column in memory_columns:
+            _set_evidence_value(record, column, row.get(column))
+        _mark_squeeze_evidence(
+            record,
+            source="scan memory",
+            level="PROXY",
+            timestamp=row.get("snapshot_ts"),
+        )
+
+    concentration_path = APP_DIR / "data" / "concentration_scanner.sqlite"
+    if concentration_path.exists():
+        try:
+            concentration = cache_rows_to_frame(ScanCache(concentration_path).list_rows())
+        except (OSError, ValueError, TypeError):
+            concentration = pd.DataFrame()
+        concentration_mapping = {
+            "raw_top_10_pct": "top10_holder_pct",
+            "raw_top_100_pct": "top100_holder_pct",
+            "adjusted_top_10_pct": "adjusted_top_10_pct",
+            "controlled_float_squeeze_score": "controlled_float_squeeze_score",
+            "ravedao_archetype_score": "ravedao_archetype_score",
+            "risk_score": "structural_risk_score",
+            "protocol_storage_score": "protocol_storage_score",
+            "cex_storage_supply_pct": "cex_storage_supply_pct",
+            "holder_table_not_global_supply": "holder_table_not_global_supply",
+            "wrapped_representation_warning": "wrapped_representation_warning",
+        }
+        for _, row in concentration.iterrows():
+            binance_symbol = str(row.get("binance_symbol") or "").upper().strip()
+            token_symbol = str(row.get("symbol") or "").upper().strip()
+            symbol = binance_symbol or (f"{token_symbol}USDT" if token_symbol else "")
+            if not symbol:
+                continue
+            record = evidence.setdefault(symbol, {"structural_evidence_sources": set()})
+            for source, target in concentration_mapping.items():
+                _set_evidence_value(record, target, row.get(source))
+            contract = row.get("contract")
+            _set_evidence_value(record, "token_contract", contract)
+            contract_text = str(contract or "").strip().lower()
+            _set_evidence_value(
+                record,
+                "structural_storage_checked",
+                bool(contract_text and contract_text not in {"nan", "none", "null"}),
+            )
+            _mark_squeeze_evidence(
+                record,
+                source="holder cache",
+                level="VERIFIED" if str(row.get("contract") or "").strip() else "PROXY",
+                timestamp=row.get("updated_at"),
+            )
+
+    deep = _latest_symbol_rows(_read_optional_csv(DISCORD_CONVEX_CACHE_PATH), ("scanned_at_utc",))
+    deep_columns = (
+        "top10_holder_pct",
+        "top100_holder_pct",
+        "adjusted_top_10_pct",
+        "owner_holder_pct",
+        "creator_holder_pct",
+        "controlled_float_squeeze_score",
+        "low_float_score",
+        "centralized_ownership_score",
+        "ravedao_archetype_score",
+        "rave_lab_setup_score",
+        "pre_pump_precision_score",
+        "bitget_volume_share_pct",
+        "gate_volume_share_pct",
+        "binance_volume_share_pct",
+        "target_cex_volume_share_pct",
+        "protocol_storage_score",
+        "cex_storage_supply_pct",
+        "holder_table_not_global_supply",
+        "wrapped_representation_warning",
+    )
+    for _, row in deep.iterrows():
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        record = evidence.setdefault(symbol, {"structural_evidence_sources": set()})
+        has_holder_measure = any(
+            _float_nan(row.get(column)) == _float_nan(row.get(column))
+            for column in ("top10_holder_pct", "top100_holder_pct", "adjusted_top_10_pct")
+        )
+        has_contract_hint = any(
+            str(row.get(column) or "").strip()
+            for column in ("token_contract", "contract", "contract_address", "source_url", "holder_source")
+        )
+        deep_level = "VERIFIED" if has_holder_measure and has_contract_hint else "PROXY"
+        preserve_verified = str(record.get("structural_evidence_level") or "NONE").upper() == "VERIFIED" and deep_level != "VERIFIED"
+        for column in deep_columns:
+            _set_evidence_value(record, column, row.get(column), overwrite=not preserve_verified)
+        _mark_squeeze_evidence(
+            record,
+            source="deep scan",
+            level=deep_level,
+            timestamp=row.get("scanned_at_utc"),
+        )
+
+        storage_columns_present = any(
+            _float_nan(row.get(column)) == _float_nan(row.get(column))
+            for column in (
+                "protocol_storage_score",
+                "cex_storage_supply_pct",
+                "holder_table_not_global_supply",
+                "wrapped_representation_warning",
+            )
+        )
+        if storage_columns_present:
+            _set_evidence_value(record, "structural_storage_checked", True)
+
+    refreshed_structure = _latest_symbol_rows(
+        _read_optional_csv(SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH),
+        ("structural_evidence_updated_at",),
+    )
+    structural_columns = (
+        "top10_holder_pct",
+        "top100_holder_pct",
+        "adjusted_top_10_pct",
+        "controlled_float_squeeze_score",
+        "low_float_score",
+        "centralized_ownership_score",
+        "ravedao_archetype_score",
+        "protocol_storage_score",
+        "cex_storage_supply_pct",
+        "holder_table_not_global_supply",
+        "wrapped_representation_warning",
+        "structural_storage_checked",
+        "token_contract",
+        "token_chain",
+        "structural_evidence_source",
+        "structural_evidence_updated_at",
+    )
+    for _, row in refreshed_structure.iterrows():
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        record = evidence.setdefault(symbol, {"structural_evidence_sources": set()})
+        for column in structural_columns:
+            _set_evidence_value(record, column, row.get(column))
+        _mark_squeeze_evidence(
+            record,
+            source="live structural refresh",
+            level=str(row.get("structural_evidence_level") or "VERIFIED"),
+            timestamp=row.get("structural_evidence_updated_at"),
+        )
+
+    rows: list[dict[str, Any]] = []
+    for symbol, record in evidence.items():
+        copied = dict(record)
+        sources = copied.pop("structural_evidence_sources", set())
+        copied["structural_evidence_source"] = ", ".join(sorted(sources))
+        copied.setdefault("structural_evidence_level", "NONE")
+        copied["symbol"] = symbol
+        rows.append(copied)
+    if not rows:
+        out = live_frame.copy()
+        out["structural_evidence_source"] = ""
+        out["structural_evidence_level"] = "NONE"
+        out["structural_evidence_updated_at"] = ""
+        out["structural_proxy_updated_at"] = ""
+        out["structural_storage_checked"] = False
+        out["structural_evidence_age_days"] = float("nan")
+        out["structural_proxy_age_days"] = float("nan")
+        return out
+
+    evidence_frame = pd.DataFrame(rows)
+    out = live_frame.merge(evidence_frame, on="symbol", how="left")
+    if "structural_evidence_level" not in out.columns:
+        out["structural_evidence_level"] = "NONE"
+    out["structural_evidence_level"] = (
+        out["structural_evidence_level"].fillna("NONE").astype(str).str.upper().str.strip()
+    )
+    if "structural_storage_checked" not in out.columns:
+        out["structural_storage_checked"] = False
+    out["structural_storage_checked"] = out["structural_storage_checked"].map(_truthy_value).fillna(False)
+    evidence_time = pd.to_datetime(
+        out["structural_evidence_updated_at"]
+        if "structural_evidence_updated_at" in out.columns
+        else pd.Series(pd.NaT, index=out.index),
+        errors="coerce",
+        utc=True,
+    )
+    proxy_time = pd.to_datetime(
+        out["structural_proxy_updated_at"]
+        if "structural_proxy_updated_at" in out.columns
+        else pd.Series(pd.NaT, index=out.index),
+        errors="coerce",
+        utc=True,
+    )
+    out["structural_evidence_age_days"] = (
+        pd.Timestamp.now(tz="UTC") - evidence_time
+    ).dt.total_seconds() / 86400.0
+    out["structural_proxy_age_days"] = (
+        pd.Timestamp.now(tz="UTC") - proxy_time
+    ).dt.total_seconds() / 86400.0
+    return out
+
+
+def _refresh_squeeze_structural_evidence(
+    frame: pd.DataFrame,
+    *,
+    max_symbols: int = SQUEEZE_RADAR_STRUCTURAL_REFRESH_MAX_SYMBOLS,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Run the heavier concentration engine only for a bounded review queue."""
+    if frame.empty or "symbol" not in frame.columns:
+        return frame.copy(), {"attempted": 0, "verified": 0, "errors": 0}
+
+    ranked = frame.copy()
+    for column in ("squeeze_market_trigger", "squeeze_entry_ready"):
+        if column in ranked.columns:
+            ranked[column] = ranked[column].map(_truthy_value)
+        else:
+            ranked[column] = False
+    for column in ("squeeze_score", "squeeze_market_confidence", "squeeze_fuel_remaining_score"):
+        if column not in ranked.columns:
+            ranked[column] = 0.0
+        ranked[column] = pd.to_numeric(ranked[column], errors="coerce").fillna(0.0)
+    ranked = ranked.sort_values(
+        ["squeeze_entry_ready", "squeeze_market_trigger", "squeeze_score", "squeeze_market_confidence", "squeeze_fuel_remaining_score"],
+        ascending=[False, False, False, False, False],
+    ).head(max(1, int(max_symbols)))
+
+    concentration_path = APP_DIR / "data" / "concentration_scanner.sqlite"
+    scanner = TokenConcentrationScanner(cache=ScanCache(concentration_path))
+    updated = frame.copy()
+    evidence_rows: list[dict[str, Any]] = []
+    attempted = 0
+    verified = 0
+    errors = 0
+    refresh_time = _utc_now().isoformat()
+
+    for _, row in ranked.iterrows():
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        attempted += 1
+        hint = resolve_contract_hint(row.to_dict(), hints_path=DISCORD_HOLDER_CONTRACTS_FILE)
+        if hint is None:
+            errors += 1
+            continue
+        try:
+            result = scanner.scan(
+                ScannerInput(
+                    symbol=str(row.get("base_asset") or symbol.removesuffix("USDT")),
+                    contract_address=hint.contract_address,
+                    chain=hint.chain,
+                    top_n=100,
+                )
+            )
+        except Exception:
+            errors += 1
+            continue
+
+        status = str(result.status.scanner_status or "").lower()
+        scanner_error = str(result.status.scanner_error or "").strip()
+        has_holder_measure = (
+            len(getattr(result, "holders", [])) >= 10
+            and math.isfinite(float(result.concentration.raw_top_10_pct))
+        )
+        level = "VERIFIED" if status == "complete" and not scanner_error and has_holder_measure else "PROXY"
+        if level != "VERIFIED":
+            errors += 1
+            continue
+
+        verified += 1
+        record: dict[str, Any] = {
+            "symbol": symbol,
+            "structural_evidence_level": level,
+            "structural_evidence_updated_at": refresh_time,
+            "structural_evidence_source": "live concentration scanner",
+            "structural_storage_checked": True,
+            "token_contract": hint.contract_address,
+            "token_chain": hint.chain,
+            "top10_holder_pct": float(result.concentration.raw_top_10_pct),
+            "top100_holder_pct": float(result.concentration.raw_top_100_pct),
+            "adjusted_top_10_pct": float(result.concentration.adjusted_top_10_pct),
+            "controlled_float_squeeze_score": float(result.master_score.controlled_float_squeeze_score),
+            "low_float_score": float(result.thin_float.squeeze_proxy_score),
+            "ravedao_archetype_score": float(result.scores.ravedao_archetype_score),
+            "protocol_storage_score": float(result.scores.protocol_storage_score),
+            "cex_storage_supply_pct": float(result.manipulable.cex_storage_supply_pct),
+            "holder_table_not_global_supply": bool(result.representation.holder_table_not_global_supply),
+            "wrapped_representation_warning": bool(result.representation.wrapped_representation_warning),
+        }
+        evidence_rows.append(record)
+
+        matches = updated["symbol"].astype(str).str.upper().eq(symbol)
+        for column, value in record.items():
+            if column != "symbol":
+                updated.loc[matches, column] = value
+
+    if evidence_rows:
+        persisted = pd.DataFrame(evidence_rows)
+        existing = _read_optional_csv(SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH)
+        combined = pd.concat([existing, persisted], ignore_index=True, sort=False)
+        combined["symbol"] = combined["symbol"].astype(str).str.upper().str.strip()
+        combined = combined.drop_duplicates(subset=["symbol"], keep="last")
+        SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_csv(SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH, index=False)
+
+    if "structural_evidence_updated_at" in updated.columns:
+        evidence_time = pd.to_datetime(updated["structural_evidence_updated_at"], errors="coerce", utc=True)
+        updated["structural_evidence_age_days"] = (
+            pd.Timestamp.now(tz="UTC") - evidence_time
+        ).dt.total_seconds() / 86400.0
+
+    return updated, {
+        "attempted": attempted,
+        "verified": verified,
+        "errors": errors,
+        "path": str(SQUEEZE_RADAR_STRUCTURAL_EVIDENCE_PATH),
+    }
+
+
+def _forced_open_position_symbols(client: BinanceFuturesPublic, valid_symbols: set[str]) -> set[str]:
+    if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+        return set()
+    signed_client = _client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+    positions = _safe_public_fetch([], signed_client.position_information_v3, None)
+    return {
+        str(position.get("symbol") or "").upper()
+        for position in positions
+        if str(position.get("symbol") or "").upper() in valid_symbols
+        and abs(_float_nan(position.get("positionAmt"))) > 0
+    }
+
+
+def _probe_current_short_account_pct(client: BinanceFuturesPublic, symbol: str) -> float:
+    """Fetch one current account-count observation for coarse squeeze preselection."""
+    rows = _safe_public_fetch(
+        [],
+        client.global_long_short_account_ratio,
+        symbol,
+        period=LONG_SHORT_RATIO_PERIOD,
+        limit=1,
+    )
+    if not rows:
+        return float("nan")
+    return _share_to_pct(rows[-1].get("shortAccount"))
+
+
+def _source_event_time_utc(*collections: Any) -> str:
+    """Return the newest explicit Binance source timestamp, if present.
+
+    A receipt time is kept separately on each radar row.  When an endpoint
+    provides no event timestamp, the canonical observation model records the
+    fallback as ``snapshot_time`` rather than pretending it is source-timed.
+    """
+
+    candidates: list[datetime] = []
+    for collection in collections:
+        if isinstance(collection, dict):
+            collection = [collection]
+        if isinstance(collection, (list, tuple)):
+            for item in collection:
+                value: Any = item.get("timestamp") or item.get("time") or item.get("T") if isinstance(item, dict) else None
+                if isinstance(item, (list, tuple)) and len(item) > 6:
+                    value = item[6]
+                try:
+                    numeric = float(value)
+                    if math.isfinite(numeric):
+                        if numeric > 10_000_000_000:
+                            numeric /= 1000.0
+                        candidates.append(datetime.fromtimestamp(numeric, tz=timezone.utc))
+                except (TypeError, ValueError, OverflowError, OSError):
+                    continue
+    if not candidates:
+        return ""
+    return max(candidates).isoformat().replace("+00:00", "Z")
+
+
+def _attach_reflexivity_assessments(frame: pd.DataFrame) -> pd.DataFrame:
+    """Adapt the canonical research projection to the live dashboard clock."""
+
+    return project_reflexivity_assessments(frame, as_of=_utc_now())
+
+
+@_cache_data(ttl=45, show_spinner=False)
+def run_squeeze_radar_scan(refresh_nonce: int, max_symbols: int = SQUEEZE_RADAR_DEFAULT_SYMBOLS) -> tuple[pd.DataFrame, dict[str, Any]]:
+    _ = refresh_nonce
+    started = _utc_now()
+    client = BinanceFuturesPublic(
+        base_url=BASE_URL,
+        timeout=TIMEOUT,
+        requests_per_second=SQUEEZE_RADAR_REQUESTS_PER_SECOND,
+        retries=RETRIES,
+    )
+    symbol_meta = {
+        item.symbol: item
+        for item in client.perpetual_usdt_symbols()
+        if str(item.underlying_type or "").upper() not in TRADFI_ALWAYS_INCLUDE_TYPES
+    }
+    ticker = pd.DataFrame(client.ticker_24hr())
+    if ticker.empty or not symbol_meta:
+        return pd.DataFrame(), {"error": "Binance returned no live USDT perpetual universe."}
+
+    ticker["symbol"] = ticker["symbol"].astype(str).str.upper()
+    ticker = ticker[ticker["symbol"].isin(symbol_meta)].copy()
+    for column in ("lastPrice", "highPrice", "lowPrice", "quoteVolume", "priceChangePercent", "count"):
+        ticker[column] = pd.to_numeric(ticker.get(column), errors="coerce")
+    ticker = ticker.dropna(subset=["lastPrice", "highPrice", "lowPrice", "quoteVolume"])
+    ticker["base_asset"] = ticker["symbol"].map(lambda symbol: symbol_meta[symbol].base_asset)
+    ticker["market_type"] = ticker["symbol"].map(lambda symbol: symbol_meta[symbol].underlying_type or "CRYPTO")
+
+    forced_symbols = set(ALWAYS_SCAN_SYMBOLS) & set(symbol_meta)
+    forced_symbols |= _forced_open_position_symbols(client, set(symbol_meta))
+    seed_frames = _squeeze_seed_frames()
+    prefilter_budget = min(
+        len(ticker),
+        max(int(max_symbols) * 3, SQUEEZE_RADAR_PREFILTER_SYMBOLS),
+    )
+    prefilter = select_squeeze_candidates(
+        ticker,
+        seed_frames=seed_frames,
+        forced_symbols=forced_symbols,
+        max_symbols=prefilter_budget,
+    )
+    if prefilter.empty:
+        return pd.DataFrame(), {"error": "No crypto candidates survived the bounded universe selector."}
+
+    short_probe_values: dict[str, float] = {}
+    for symbol in prefilter["symbol"].astype(str).str.upper():
+        short_probe_values[symbol] = _probe_current_short_account_pct(client, symbol)
+    prefilter["live_short_account_pct"] = prefilter["symbol"].map(short_probe_values)
+    selected = select_squeeze_candidates(
+        prefilter,
+        forced_symbols=forced_symbols,
+        max_symbols=max_symbols,
+    )
+    if selected.empty:
+        return pd.DataFrame(), {"error": "No candidates survived the live short-account prefilter."}
+
+    funding_by_symbol = {
+        str(item.get("symbol") or "").upper(): item
+        for item in _safe_public_fetch([], client.mark_price)
+        if str(item.get("symbol") or "").upper() in symbol_meta
+    }
+    funding_info_by_symbol = {
+        str(item.get("symbol") or "").upper(): item
+        for item in _safe_public_fetch([], client.funding_info)
+        if str(item.get("symbol") or "").upper() in symbol_meta
+    }
+
+    rows: list[dict[str, Any]] = []
+    incomplete_symbols = 0
+    crowd_diagnostic_symbols = set(selected["symbol"].astype(str).str.upper()).intersection(
+        set(selected.head(SQUEEZE_RADAR_CROWD_DIAGNOSTIC_MAX_SYMBOLS)["symbol"].astype(str).str.upper())
+    )
+    crowd_diagnostic_count = 0
+    scanned_at = _utc_now()
+    for _, ticker_row in selected.iterrows():
+        symbol = str(ticker_row["symbol"])
+        daily = _safe_public_fetch([], client.klines_1d, symbol, limit=62)
+        hourly = _safe_public_fetch([], client.klines, symbol, interval="1h", limit=27)
+        short_history = _safe_public_fetch(
+            [],
+            client.global_long_short_account_ratio,
+            symbol,
+            period=LONG_SHORT_RATIO_PERIOD,
+            limit=LONG_SHORT_RATIO_HISTORY_LIMIT,
+        )
+        oi_rows = _safe_public_fetch(
+            [],
+            client.open_interest_statistics,
+            symbol,
+            period="1h",
+            limit=7,
+        )
+
+        missing: list[str] = []
+        if len(daily) < 22:
+            missing.append("daily history")
+        if len(hourly) < 4:
+            missing.append("hourly history")
+        if not short_history:
+            missing.append("short accounts")
+        if len(oi_rows) < 2:
+            missing.append("OI history")
+        if missing:
+            incomplete_symbols += 1
+
+        levels = levels_from_klines(daily)
+        recent_pump = recent_pump_stats_from_klines(daily, lookback_days=NO_LARGE_PUMP_LOOKBACK_DAYS)
+        hourly_stats = _hourly_market_stats(hourly)
+        short_stats = _short_account_history_stats(short_history)
+        latest_short = short_history[-1] if short_history else {}
+        short_account_pct = _share_to_pct(latest_short.get("shortAccount"))
+        long_account_pct = _share_to_pct(latest_short.get("longAccount"))
+        short_values = [
+            value
+            for value in (_share_to_pct(item.get("shortAccount")) for item in short_history)
+            if math.isfinite(value)
+        ]
+        short_peak = max(short_values) if short_values else float("nan")
+        short_peak_drawdown = (
+            short_account_pct - short_peak
+            if math.isfinite(short_account_pct) and math.isfinite(short_peak)
+            else float("nan")
+        )
+
+        top_position_snapshot: dict[str, Any] = {}
+        top_account_snapshot: dict[str, Any] = {}
+        taker_snapshot: dict[str, Any] = {}
+        if symbol in crowd_diagnostic_symbols:
+            top_position_rows = _safe_public_fetch(
+                [],
+                client.top_trader_long_short_position_ratio,
+                symbol,
+                period="1h",
+                limit=1,
+            )
+            top_account_rows = _safe_public_fetch(
+                [],
+                client.top_trader_long_short_account_ratio,
+                symbol,
+                period="1h",
+                limit=1,
+            )
+            taker_rows = _safe_public_fetch(
+                [],
+                client.taker_buy_sell_volume,
+                symbol,
+                period="1h",
+                limit=1,
+            )
+            top_position_snapshot = top_position_rows[-1] if top_position_rows else {}
+            top_account_snapshot = top_account_rows[-1] if top_account_rows else {}
+            taker_snapshot = taker_rows[-1] if taker_rows else {}
+            if top_position_snapshot or top_account_snapshot or taker_snapshot:
+                crowd_diagnostic_count += 1
+
+        top_trader_long_position_pct = _share_to_pct(top_position_snapshot.get("longAccount"))
+        top_trader_short_position_pct = _share_to_pct(top_position_snapshot.get("shortAccount"))
+        top_trader_long_account_pct = _share_to_pct(top_account_snapshot.get("longAccount"))
+        top_trader_short_account_pct = _share_to_pct(top_account_snapshot.get("shortAccount"))
+        crowd_top_position_divergence_pct = (
+            long_account_pct - top_trader_long_position_pct
+            if math.isfinite(long_account_pct) and math.isfinite(top_trader_long_position_pct)
+            else float("nan")
+        )
+        crowd_top_account_divergence_pct = (
+            long_account_pct - top_trader_long_account_pct
+            if math.isfinite(long_account_pct) and math.isfinite(top_trader_long_account_pct)
+            else float("nan")
+        )
+        taker_buy_sell_ratio = _float_nan(taker_snapshot.get("buySellRatio"))
+        taker_buy_volume = _float_nan(taker_snapshot.get("buyVol"))
+        taker_sell_volume = _float_nan(taker_snapshot.get("sellVol"))
+        taker_total_volume = taker_buy_volume + taker_sell_volume
+        taker_buy_share_pct = (
+            taker_buy_volume / taker_total_volume * 100.0
+            if math.isfinite(taker_buy_volume) and math.isfinite(taker_sell_volume) and taker_total_volume > 0
+            else float("nan")
+        )
+
+        oi_stats = oi_history_stats(oi_rows)
+        oi_value = _float_nan(oi_stats.get("oi_current_usdt"))
+        oi_delta = _float_nan(oi_stats.get("oi_change_1h_pct"))
+        last_price = float(ticker_row["lastPrice"])
+        quote_volume = float(ticker_row["quoteVolume"])
+        received_at = _utc_now()
+        source_event_time = _source_event_time_utc(short_history, oi_rows, hourly[:-1] if len(hourly) > 1 else hourly)
+        volume_context = _daily_quote_volume_30d_context(daily, quote_volume)
+        anchored_vwap = closed_daily_anchored_vwap_metrics(
+            daily,
+            last_price=last_price,
+            lookback_days=30,
+        )
+        funding_snapshot = funding_by_symbol.get(symbol, {})
+        funding_info = funding_info_by_symbol.get(symbol, {})
+        funding_interval = _coerce_funding_interval_hours(funding_info.get("fundingIntervalHours"))
+        funding_pct = _funding_rate_to_pct(funding_snapshot.get("lastFundingRate"))
+        high_24h = float(ticker_row["highPrice"])
+        low_24h = float(ticker_row["lowPrice"])
+
+        row: dict[str, Any] = {
+            "scanned_at_utc": scanned_at.isoformat(),
+            "received_at_utc": received_at.isoformat().replace("+00:00", "Z"),
+            "event_time_utc": source_event_time,
+            "source": "Binance Futures public endpoints",
+            "venue": "Binance Futures",
+            "provenance": "bounded radar: ticker + klines + account-count ratio + OI + funding endpoints",
+            "signal_version": REFLEXIVITY_SIGNAL_VERSION,
+            "scan_universe_count": len(ticker),
+            "scan_candidate_count": len(selected),
+            "symbol": symbol,
+            "base_asset": symbol_meta[symbol].base_asset,
+            "market_type": symbol_meta[symbol].underlying_type or "CRYPTO",
+            "binance_perp_universe": True,
+            "candidate_seed_score": _float_nan(ticker_row.get("candidate_seed_score")),
+            "candidate_rank_score": _float_nan(ticker_row.get("candidate_rank_score")),
+            "prefilter_short_account_pct": _float_nan(ticker_row.get("live_short_account_pct")),
+            "short_account_source": "live Binance account-count ratio",
+            "last_price": last_price,
+            "price_change_24h_pct": _float_nan(ticker_row.get("priceChangePercent")),
+            "range_24h_pct": (high_24h / low_24h - 1.0) * 100.0 if low_24h > 0 else float("nan"),
+            "quote_volume_24h": quote_volume,
+            **volume_context,
+            "anchored_vwap_30d": float(anchored_vwap["anchored_vwap_30d"]),
+            "price_vs_anchored_vwap_30d_pct": float(anchored_vwap["price_vs_anchored_vwap_30d_pct"]),
+            "anchored_vwap_30d_days": int(anchored_vwap["anchored_vwap_30d_days"]),
+            "history_days": max(0, len(daily) - 1),
+            "recent_max_pump_60d_pct": recent_pump.max_pump_pct,
+            "recent_pump_60d_days": recent_pump.used_days,
+            "carry_funding_pct": funding_pct,
+            "carry_funding_annualized_pct": _annualized_funding_pct(
+                funding_snapshot.get("lastFundingRate"),
+                interval_hours=funding_interval,
+            ),
+            "funding_interval_hours": funding_interval,
+            "funding_countdown_hours": _funding_countdown_hours(funding_snapshot.get("nextFundingTime")),
+            "long_account_pct": long_account_pct,
+            "short_account_pct": short_account_pct,
+            "short_account_peak_pct": short_peak,
+            "short_account_peak_drawdown_pp": short_peak_drawdown,
+            "short_account_history_points": int(short_stats.get("short_account_history_points", 0) or 0),
+            "short_account_previous_1h_pct": _float_nan(short_stats.get("short_account_previous_1h_pct")),
+            "short_account_roc_1h_pct": _float_nan(short_stats.get("short_account_roc_1h_pct")),
+            "short_account_roc_1h_pp": _float_nan(short_stats.get("short_account_roc_1h_pp")),
+            "short_account_change_3p_pp": _float_nan(short_stats.get("short_account_change_3p_pp")),
+            "short_account_change_4p_pp": _float_nan(short_stats.get("short_account_change_4p_pp")),
+            "short_account_change_6p_pp": _float_nan(short_stats.get("short_account_change_6p_pp")),
+            "short_account_change_12p_pp": _float_nan(short_stats.get("short_account_change_12p_pp")),
+            "short_account_change_24p_pp": _float_nan(short_stats.get("short_account_change_24p_pp")),
+            "short_account_roc_smoothed_3p_pp": _float_nan(short_stats.get("short_account_roc_smoothed_3p_pp")),
+            "short_account_acceleration_1h_pp": _float_nan(short_stats.get("short_account_acceleration_1h_pp")),
+            "short_account_direction_persistence": int(short_stats.get("short_account_direction_persistence", 0) or 0),
+            "top_trader_long_position_pct": top_trader_long_position_pct,
+            "top_trader_short_position_pct": top_trader_short_position_pct,
+            "top_trader_long_account_pct": top_trader_long_account_pct,
+            "top_trader_short_account_pct": top_trader_short_account_pct,
+            "crowd_top_position_divergence_pct": crowd_top_position_divergence_pct,
+            "crowd_top_account_divergence_pct": crowd_top_account_divergence_pct,
+            "taker_buy_sell_ratio": taker_buy_sell_ratio,
+            "taker_buy_share_pct": taker_buy_share_pct,
+            **hourly_stats,
+            "oi_value_usdt": oi_value,
+            "oi_delta_pct": oi_delta,
+            "oi_acceleration_1h_pct": _float_nan(oi_stats.get("oi_acceleration_1h_pct")),
+            "oi_history_points": int(oi_stats.get("oi_history_points", 0) or 0),
+            "oi_change_3p_pct": _float_nan(oi_stats.get("oi_change_3p_pct")),
+            "oi_change_6p_pct": _float_nan(oi_stats.get("oi_change_6p_pct")),
+            "oi_build_persistence": int(oi_stats.get("oi_build_persistence", 0) or 0),
+            "oi_peak_drawdown_pct": _float_nan(oi_stats.get("oi_peak_drawdown_pct")),
+            "oi_to_24h_volume_pct": oi_value / quote_volume * 100.0 if math.isfinite(oi_value) and quote_volume > 0 else float("nan"),
+            "high_5d": levels.high_5d,
+            "high_20d": levels.high_20d,
+            "low_20d": levels.low_20d,
+            "broke_high_5d": _crossed_above(levels.high_5d, high_24h),
+            "broke_high_20d": _crossed_above(levels.high_20d, high_24h),
+            "broke_low_20d": _crossed_below(levels.low_20d, low_24h),
+            "scan_error": ", ".join(missing),
+        }
+        rows.append(row)
+
+    frame = _attach_cached_squeeze_evidence(pd.DataFrame(rows))
+    frame = _attach_reflexivity_assessments(frame)
+    elapsed = (_utc_now() - started).total_seconds()
+    metadata = {
+        "scanned_at_utc": scanned_at.isoformat(),
+        "universe_count": len(ticker),
+        "candidate_count": len(selected),
+        "prefilter_count": len(prefilter),
+        "short_probe_count": len(short_probe_values),
+        "short_probe_coverage_pct": (
+            sum(math.isfinite(value) for value in short_probe_values.values())
+            / len(short_probe_values)
+            * 100.0
+            if short_probe_values
+            else 0.0
+        ),
+        "crowd_diagnostic_count": crowd_diagnostic_count,
+        "crowd_diagnostic_coverage_pct": (
+            crowd_diagnostic_count / len(crowd_diagnostic_symbols) * 100.0
+            if crowd_diagnostic_symbols
+            else 0.0
+        ),
+        "returned_count": len(frame),
+        "incomplete_count": incomplete_symbols,
+        "elapsed_seconds": elapsed,
+    }
+    return frame, metadata
+
+
+def _load_latest_squeeze_radar() -> pd.DataFrame:
+    return _read_optional_csv(SQUEEZE_RADAR_LATEST_PATH)
+
+
+def _persist_latest_squeeze_radar(frame: pd.DataFrame) -> None:
+    if frame.empty:
+        return
+    SQUEEZE_RADAR_LATEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(SQUEEZE_RADAR_LATEST_PATH, index=False)
+
+
+SQUEEZE_RADAR_HISTORY_COLUMNS = [
+    "symbol",
+    "scanned_at_utc",
+    "last_price",
+    "short_account_pct",
+    "short_account_roc_1h_pp",
+    "short_account_change_3p_pp",
+    "short_account_change_4p_pp",
+    "oi_delta_pct",
+    "oi_acceleration_1h_pct",
+    "oi_change_3p_pct",
+    "day_return_pct",
+    "hour_volume_roc_1h_pct",
+    "squeeze_stage",
+    "squeeze_score",
+    "squeeze_market_trigger",
+    "squeeze_entry_ready",
+]
+
+
+def _squeeze_radar_history_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "symbol" not in frame.columns or "scanned_at_utc" not in frame.columns:
+        return pd.DataFrame(columns=SQUEEZE_RADAR_HISTORY_COLUMNS)
+    snapshot = pd.DataFrame(index=frame.index)
+    for column in SQUEEZE_RADAR_HISTORY_COLUMNS:
+        if column in frame.columns:
+            snapshot[column] = frame[column]
+        else:
+            snapshot[column] = "" if column in {"symbol", "scanned_at_utc", "squeeze_stage"} else float("nan")
+    snapshot["symbol"] = snapshot["symbol"].astype(str).str.upper().str.strip()
+    snapshot["scanned_at_utc"] = pd.to_datetime(snapshot["scanned_at_utc"], errors="coerce", utc=True)
+    snapshot = snapshot[
+        snapshot["symbol"].ne("") & snapshot["scanned_at_utc"].notna()
+    ].copy()
+    return snapshot
+
+
+def _persist_squeeze_radar_history(frame: pd.DataFrame) -> None:
+    snapshot = _squeeze_radar_history_snapshot(frame)
+    if snapshot.empty:
+        return
+    existing = _read_optional_csv(SQUEEZE_RADAR_HISTORY_PATH)
+    if not existing.empty:
+        existing = _squeeze_radar_history_snapshot(existing)
+    history = pd.concat([existing, snapshot], ignore_index=True)
+    history["scanned_at_utc"] = pd.to_datetime(history["scanned_at_utc"], errors="coerce", utc=True)
+    cutoff = _utc_now() - timedelta(days=SQUEEZE_RADAR_HISTORY_RETENTION_DAYS)
+    history = history[history["scanned_at_utc"] >= cutoff].copy()
+    history = history.drop_duplicates(subset=["symbol", "scanned_at_utc"], keep="last")
+    history = history.sort_values(["scanned_at_utc", "symbol"]).tail(25000)
+    SQUEEZE_RADAR_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    history["scanned_at_utc"] = history["scanned_at_utc"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    history.to_csv(SQUEEZE_RADAR_HISTORY_PATH, index=False)
+
+
+def _attach_saved_squeeze_history(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    history = _read_optional_csv(SQUEEZE_RADAR_HISTORY_PATH)
+    return attach_squeeze_history_features(frame, history, lookback_hours=24.0)
+
+
+SQUEEZE_RADAR_TABLE_COLUMNS = [
+    "squeeze_rank",
+    "symbol",
+    "reflexivity_state",
+    "reflexivity_score",
+    "reflexivity_data_quality_pct",
+    "reflexivity_market_trigger",
+    "reflexivity_funding_regime",
+    "squeeze_stage",
+    "squeeze_score",
+    "squeeze_market_trigger",
+    "squeeze_entry_ready",
+    "squeeze_evidence_tier",
+    "structural_evidence_level",
+    "short_account_pct",
+    "short_account_roc_1h_pp",
+    "short_account_change_3p_pp",
+    "short_account_change_4p_pp",
+    "short_account_roc_smoothed_3p_pp",
+    "squeeze_fuel_remaining_score",
+    "carry_funding_pct",
+    "hour_volume_roc_1h_pct",
+    "quote_volume_24h_vs_prior_30d_avg_ratio",
+    "oi_delta_pct",
+    "oi_acceleration_1h_pct",
+    "oi_change_3p_pct",
+    "crowd_top_position_divergence_pct",
+    "taker_buy_share_pct",
+    "price_vs_anchored_vwap_30d_pct",
+    "radar_confirmation_label",
+    "broke_high_20d",
+    "squeeze_late_score",
+    "squeeze_gate_failures",
+]
+
+
+def _squeeze_radar_column_config() -> dict[str, Any]:
+    return {
+        "squeeze_rank": st.column_config.NumberColumn("Rank", format="%d", width="small"),
+        "symbol": st.column_config.TextColumn("Symbol", width="small"),
+        "reflexivity_state": st.column_config.TextColumn(
+            "Research State",
+            width="medium",
+            help="Point-in-time rule state: discovery, building, active reflexivity, accelerating, exhaustion risk, or invalidated.",
+        ),
+        "reflexivity_score": st.column_config.ProgressColumn(
+            "Mechanism Score",
+            min_value=0,
+            max_value=100,
+            format="%.1f",
+            help="Small, explicit mechanism model. This is not a probability or expected return.",
+        ),
+        "reflexivity_data_quality_pct": st.column_config.NumberColumn(
+            "Data Quality",
+            format="%.0f%%",
+            help="Coverage of the required live fields; missing or stale data is not silently scored as neutral.",
+        ),
+        "reflexivity_market_trigger": st.column_config.CheckboxColumn(
+            "Reflexivity Trigger",
+            help="Short crowding/build, participation, OI, price confirmation, and no-exhaustion gates agree at the observation time.",
+        ),
+        "reflexivity_funding_regime": st.column_config.TextColumn(
+            "Funding Regime",
+            width="medium",
+            help="Positive means longs pay shorts; negative means shorts pay longs. The label is context, not a causal claim.",
+        ),
+        "squeeze_stage": st.column_config.TextColumn("Stage", width="small"),
+        "squeeze_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
+        "squeeze_market_trigger": st.column_config.CheckboxColumn(
+            "Market Trigger",
+            help="Live price/volume/OI/funding agreement; this is not entry-ready without structural proof.",
+        ),
+        "squeeze_entry_ready": st.column_config.CheckboxColumn(
+            "Entry Ready",
+            help="Market trigger plus fresh verified holder concentration and venue evidence.",
+        ),
+        "squeeze_evidence_tier": st.column_config.TextColumn("Evidence", width="medium"),
+        "structural_evidence_level": st.column_config.TextColumn("Proof Level", width="small"),
+        "structural_storage_checked": st.column_config.CheckboxColumn(
+            "Storage Checked",
+            help="Holder proof also includes custody/storage/representation controls.",
+        ),
+        "short_account_pct": st.column_config.NumberColumn(
+            "Short Accts",
+            format="%.2f%%",
+            help="Global short-account share by account count, not short dollar notional.",
+        ),
+        "short_account_roc_1h_pp": st.column_config.NumberColumn("1H Short d", format="%+.2fpp"),
+        "short_account_change_3p_pp": st.column_config.NumberColumn(
+            "3H Short d",
+            format="%+.2fpp",
+            help="Net short-account-share change over the last three closed hourly observations.",
+        ),
+        "short_account_change_4p_pp": st.column_config.NumberColumn(
+            "4H Short d",
+            format="%+.2fpp",
+            help="Net short-account-share change over the last four closed hourly observations.",
+        ),
+        "short_account_roc_smoothed_3p_pp": st.column_config.NumberColumn("3H Smooth", format="%+.2fpp"),
+        "squeeze_fuel_remaining_score": st.column_config.ProgressColumn("Fuel", min_value=0, max_value=100, format="%.0f"),
+        "carry_funding_pct": st.column_config.NumberColumn("Funding", format="%+.4f%%"),
+        "hour_volume_roc_1h_pct": st.column_config.NumberColumn("1H Vol ROC", format="%+.1f%%"),
+        "quote_volume_24h_vs_prior_30d_avg_ratio": st.column_config.NumberColumn("24H / 30D", format="%.2fx"),
+        "oi_delta_pct": st.column_config.NumberColumn("1H OI", format="%+.2f%%"),
+        "oi_acceleration_1h_pct": st.column_config.NumberColumn(
+            "OI Accel",
+            format="%+.2fpp",
+            help="Change in one-hour open-interest growth versus the prior closed hour.",
+        ),
+        "oi_change_3p_pct": st.column_config.NumberColumn(
+            "3H OI",
+            format="%+.2f%%",
+            help="Net open-interest change over the last three closed hourly observations.",
+        ),
+        "crowd_top_position_divergence_pct": st.column_config.NumberColumn(
+            "Crowd - Top Pos",
+            format="%+.1fpp",
+            help="Overall account long share minus top-trader long position share. Negative values mean the broad account crowd is shorter than top traders.",
+        ),
+        "taker_buy_share_pct": st.column_config.NumberColumn(
+            "Taker Buy",
+            format="%.1f%%",
+            help="Taker buy volume share in the sampled hourly window.",
+        ),
+        "price_vs_anchored_vwap_30d_pct": st.column_config.NumberColumn("vs 30D AVWAP", format="%+.1f%%"),
+        "radar_confirmation_label": st.column_config.TextColumn(
+            "Scan Repeat",
+            width="small",
+            help="NEW, REPEATED, or PERSISTENT based on prior radar snapshots in the last 24 hours.",
+        ),
+        "broke_high_20d": st.column_config.CheckboxColumn("20D High"),
+        "squeeze_late_score": st.column_config.ProgressColumn("Late", min_value=0, max_value=100, format="%.0f"),
+        "squeeze_gate_failures": st.column_config.TextColumn("Missing / Veto", width="large"),
+        "reflexivity_gate_summary": st.column_config.TextColumn("Mechanism Gates", width="large"),
+        "reflexivity_missing_fields": st.column_config.TextColumn("Research Gaps", width="large"),
+        "reflexivity_explanation": st.column_config.TextColumn("Mechanism Read", width="large"),
+        "reflexivity_event_time_utc": st.column_config.TextColumn("Event Time (UTC)", width="medium"),
+        "reflexivity_received_at_utc": st.column_config.TextColumn("Received (UTC)", width="medium"),
+        "reflexivity_source": st.column_config.TextColumn("Source", width="medium"),
+        "reflexivity_venue": st.column_config.TextColumn("Venue", width="medium"),
+        "reflexivity_signal_version": st.column_config.TextColumn("Signal Version", width="small"),
+        "quote_volume_24h": st.column_config.NumberColumn("24H Vol", format="$%.0f"),
+        "hour_quote_volume": st.column_config.NumberColumn("1H Vol", format="$%.0f"),
+        "squeeze_market_confidence": st.column_config.ProgressColumn("Live Coverage", min_value=0, max_value=100, format="%.0f%%"),
+        "squeeze_structure_score": st.column_config.ProgressColumn("Structure", min_value=0, max_value=100, format="%.0f"),
+        "top10_holder_pct": st.column_config.NumberColumn("Top 10", format="%.1f%%"),
+        "top100_holder_pct": st.column_config.NumberColumn("Top 100", format="%.1f%%"),
+        "bitget_volume_share_pct": st.column_config.NumberColumn("Bitget Share", format="%.2f%%"),
+        "gate_volume_share_pct": st.column_config.NumberColumn("Gate Share", format="%.2f%%"),
+        "structural_evidence_age_days": st.column_config.NumberColumn("Evidence Age", format="%.1fD"),
+        "structural_proxy_age_days": st.column_config.NumberColumn("Proxy Age", format="%.1fD"),
+        "structural_evidence_source": st.column_config.TextColumn("Evidence Source"),
+        "squeeze_snapshot_age_minutes": st.column_config.NumberColumn("Snapshot Age", format="%.0fm"),
+        "scan_error": st.column_config.TextColumn("Coverage Gaps"),
+    }
+
+
+def _render_squeeze_table(frame: pd.DataFrame, *, columns: list[str] | None = None, height: int = 430) -> None:
+    if frame.empty:
+        st.info("No symbols currently clear this state.")
+        return
+    requested = columns or SQUEEZE_RADAR_TABLE_COLUMNS
+    available = [column for column in requested if column in frame.columns]
+    st.dataframe(
+        frame.loc[:, available],
+        use_container_width=True,
+        hide_index=True,
+        height=height,
+        column_config=_squeeze_radar_column_config(),
+    )
+
+
+def _scan_age_text(frame: pd.DataFrame) -> str:
+    if frame.empty or "scanned_at_utc" not in frame.columns:
+        return "no saved scan"
+    timestamps = pd.to_datetime(frame["scanned_at_utc"], errors="coerce", utc=True).dropna()
+    if timestamps.empty:
+        return "timestamp unavailable"
+    age_seconds = max(0.0, (pd.Timestamp.now(tz="UTC") - timestamps.max()).total_seconds())
+    if age_seconds < 120:
+        return f"{int(age_seconds)}s old"
+    if age_seconds < 7200:
+        return f"{age_seconds / 60.0:.0f}m old"
+    return f"{age_seconds / 3600.0:.1f}h old"
+
+
+def _short_seed_age_text() -> str:
+    modified = [
+        path.stat().st_mtime
+        for path in SQUEEZE_RADAR_SHORT_SEED_PATHS
+        if path.exists() and path.stat().st_size > 1
+    ]
+    if not modified:
+        return "missing"
+    latest = datetime.fromtimestamp(max(modified), tz=timezone.utc)
+    age_seconds = max(0.0, (_utc_now() - latest).total_seconds())
+    if age_seconds < 7200:
+        return f"{age_seconds / 60.0:.0f}m old"
+    if age_seconds < 172800:
+        return f"{age_seconds / 3600.0:.1f}h old"
+    return f"{age_seconds / 86400.0:.0f}D old"
+
+
+def render_breakout_dashboard() -> None:
+    header_left, header_right = st.columns([4.5, 1.5], vertical_alignment="bottom")
+    with header_left:
+        st.title("Convex Squeeze Radar")
+        st.caption("Forced-flow setups in Binance USDT crypto perps | short accounts are account count, not short notional")
+    with header_right:
+        st.caption("Live market mechanics + cached holder and venue evidence")
+
+    control_scan, control_profile, control_budget, control_status = st.columns([1.1, 1.6, 1.2, 3.1], vertical_alignment="bottom")
+    with control_profile:
+        profile_name = st.segmented_control(
+            "Sensitivity",
+            options=list(SQUEEZE_RADAR_PROFILES),
+            default="Primary",
+            key="squeeze_profile",
+        ) or "Primary"
+    with control_budget:
+        budget_options = [24, 36, 48]
+        default_budget = min(budget_options, key=lambda value: abs(value - SQUEEZE_RADAR_DEFAULT_SYMBOLS))
+        symbol_budget = st.selectbox(
+            "Live candidates",
+            options=budget_options,
+            index=budget_options.index(default_budget),
+            key="squeeze_candidate_budget",
+        )
+    with control_scan:
+        scan_clicked = st.button(
+            "Refresh live",
+            type="primary",
+            icon=":material/refresh:",
+            use_container_width=True,
+            key="refresh_squeeze_radar",
+        )
+
+    if "squeeze_radar_raw" not in st.session_state:
+        st.session_state["squeeze_radar_raw"] = _load_latest_squeeze_radar()
+    raw_frame = st.session_state.get("squeeze_radar_raw", pd.DataFrame())
+    if not raw_frame.empty and "market_type" in raw_frame.columns:
+        crypto_mask = ~raw_frame["market_type"].astype(str).str.upper().isin(TRADFI_ALWAYS_INCLUDE_TYPES)
+        raw_frame = raw_frame[crypto_mask].copy()
+    scan_metadata = st.session_state.get("squeeze_radar_metadata", {})
+
+    if scan_clicked:
+        nonce = int(st.session_state.get("squeeze_radar_nonce", 0)) + 1
+        st.session_state["squeeze_radar_nonce"] = nonce
+        try:
+            with st.spinner(f"Live-enriching {symbol_budget} candidates from the full crypto-perp universe..."):
+                refreshed, scan_metadata = run_squeeze_radar_scan(nonce, int(symbol_budget))
+            if refreshed.empty:
+                st.error(str(scan_metadata.get("error") or "The live radar returned no rows."))
+            else:
+                raw_frame = refreshed
+                st.session_state["squeeze_radar_raw"] = refreshed
+                st.session_state["squeeze_radar_metadata"] = scan_metadata
+                _persist_latest_squeeze_radar(refreshed)
+        except Exception as exc:
+            st.error("The bounded Binance scan failed. The last saved radar remains visible.")
+            st.exception(exc)
+
+    raw_frame = _attach_saved_squeeze_history(raw_frame)
+
+    with control_status:
+        if raw_frame.empty:
+            st.caption("No saved scan | refresh live to initialize")
+        else:
+            universe = int(pd.to_numeric(raw_frame.get("scan_universe_count"), errors="coerce").max()) if "scan_universe_count" in raw_frame.columns else 0
+            elapsed = _safe_float(scan_metadata.get("elapsed_seconds"))
+            elapsed_text = f" | {elapsed:.1f}s" if elapsed > 0 else ""
+            probe_count = int(_safe_float(scan_metadata.get("short_probe_count"))) if scan_metadata.get("short_probe_count") else 0
+            probe_coverage = _safe_float(scan_metadata.get("short_probe_coverage_pct"))
+            probe_text = f" | {probe_count} live short probes ({probe_coverage:.0f}%)" if probe_count else ""
+            crowd_count = int(_safe_float(scan_metadata.get("crowd_diagnostic_count"))) if scan_metadata.get("crowd_diagnostic_count") else 0
+            crowd_text = f" | {crowd_count} crowd-flow diagnostics" if crowd_count else ""
+            st.caption(f"{_scan_age_text(raw_frame)} | {len(raw_frame)}/{universe or '?'} live-enriched{probe_text}{crowd_text}{elapsed_text}")
+
+    if raw_frame.empty:
+        st.warning("No radar snapshot is available yet.")
+        return
+
+    scored = score_squeeze_radar(raw_frame, profile=profile_name)
+    scored = _attach_reflexivity_assessments(scored)
+    if scan_clicked and not scored.empty:
+        _persist_squeeze_radar_history(scored)
+    high_conviction = scored[scored["squeeze_high_conviction"]].copy()
+    market_triggers = scored[scored["squeeze_market_trigger"]].copy()
+    structural_watch = scored[scored["squeeze_structural_watch"]].copy()
+    armed = scored[scored["squeeze_stage"] == "ARMED"].copy()
+    late = scored[scored["squeeze_stage"] == "LATE"].copy()
+    stale = scored[scored["squeeze_snapshot_stale"]].copy()
+    best = scored.iloc[0] if not scored.empty else pd.Series(dtype="object")
+
+    if not stale.empty:
+        st.warning(
+            "This saved radar snapshot is stale. Refresh live before treating any row as current; stale rows are shown for context only."
+        )
+
+    active_reflexivity = scored[scored["reflexivity_state"].isin({"ACTIVE_REFLEXIVITY", "ACCELERATING"})].copy()
+    exhaustion_risk = scored[scored["reflexivity_state"] == "EXHAUSTION_RISK"].copy()
+    kpi_cols = st.columns(5)
+    kpi_cols[0].metric("Active reflexivity", len(active_reflexivity))
+    kpi_cols[1].metric("Building", int((scored["reflexivity_state"] == "BUILDING").sum()))
+    kpi_cols[2].metric("Entry-ready proof", len(high_conviction))
+    kpi_cols[3].metric("Exhaustion risk", len(exhaustion_risk))
+    best_symbol = str(best.get("symbol") or "n/a")
+    best_score = _safe_float(best.get("squeeze_score"))
+    kpi_cols[4].metric("Top ranked", best_symbol, f"score {best_score:.1f}" if best_score else None)
+
+    radar_tab, watch_tab, lifecycle_tab, evidence_tab = st.tabs(["Radar", "Watch", "Lifecycle", "Evidence"])
+
+    with radar_tab:
+        st.subheader("Entry-Ready Structures")
+        if high_conviction.empty:
+            st.info("No current row clears both live ignition and fresh verified holder plus Bitget/Gate evidence.")
+        else:
+            _render_squeeze_table(high_conviction, height=300)
+
+        st.subheader("Market Ignition, Evidence Pending")
+        if market_triggers.empty:
+            closest = scored[
+                (~scored["squeeze_stage"].isin({"LATE", "UNWIND", "STALE"}))
+            ].head(12)
+            st.caption("No current market trigger; nearest live structures are shown. Market ignition alone is not an entry signal.")
+            _render_squeeze_table(closest, height=380)
+        else:
+            _render_squeeze_table(market_triggers, height=380)
+
+        st.subheader("Mechanism Read")
+        mechanism_rows = scored[
+            scored["reflexivity_state"].isin({"ACTIVE_REFLEXIVITY", "ACCELERATING", "EXHAUSTION_RISK"})
+        ].copy()
+        _render_squeeze_table(
+            mechanism_rows,
+            columns=[
+                "squeeze_rank",
+                "symbol",
+                "reflexivity_state",
+                "reflexivity_score",
+                "reflexivity_data_quality_pct",
+                "reflexivity_gate_summary",
+                "reflexivity_explanation",
+                "reflexivity_invalidation",
+            ],
+            height=300,
+        )
+
+    with watch_tab:
+        st.subheader("Verified Structure Watch")
+        _render_squeeze_table(structural_watch, height=360)
+        st.subheader("Armed Before Ignition")
+        _render_squeeze_table(armed, height=360)
+        st.subheader("Fuel Watch")
+        fuel_watch = scored[
+            (pd.to_numeric(scored["short_account_pct"], errors="coerce") >= SQUEEZE_RADAR_PROFILES[profile_name].min_short_pct - 2.5)
+            & (~scored["squeeze_stage"].isin({"LATE", "UNWIND", "REFLEXIVE", "IGNITION"}))
+        ].sort_values(
+            ["squeeze_fuel_remaining_score", "squeeze_volume_score", "squeeze_score"],
+            ascending=[False, False, False],
+        )
+        _render_squeeze_table(fuel_watch, height=360)
+
+    with lifecycle_tab:
+        state_counts = (
+            scored["reflexivity_state"].value_counts()
+            .reindex(["ACCELERATING", "ACTIVE_REFLEXIVITY", "BUILDING", "DISCOVERY", "EXHAUSTION_RISK", "INVALIDATED"], fill_value=0)
+            .rename_axis("Research state")
+            .to_frame("Symbols")
+        )
+        st.bar_chart(state_counts, height=230)
+        lifecycle = scored[scored["squeeze_stage"].isin({"REFLEXIVE", "IGNITION", "UNWIND", "LATE", "STALE"})]
+        lifecycle_columns = SQUEEZE_RADAR_TABLE_COLUMNS + ["squeeze_invalidation", "reflexivity_invalidation"]
+        _render_squeeze_table(lifecycle, columns=lifecycle_columns, height=430)
+
+    with evidence_tab:
+        st.caption(
+            "Verified means contract-backed holder/venue evidence no more than 30 days old. "
+            "Proxy-only evidence can rank a row for investigation but can never make it entry-ready; "
+            "market snapshots older than 90 minutes are marked stale."
+        )
+        refresh_structure_col, refresh_note_col = st.columns([1.2, 3.0], vertical_alignment="center")
+        with refresh_structure_col:
+            refresh_structure = st.button(
+                "Refresh structural proof",
+                icon=":material/account_balance_wallet:",
+                help=(
+                    f"Run the heavier concentration scanner for the top {SQUEEZE_RADAR_STRUCTURAL_REFRESH_MAX_SYMBOLS} live candidates. "
+                    "This is deliberately separate from the fast market refresh."
+                ),
+                key="refresh_squeeze_structural_proof",
+            )
+        with refresh_note_col:
+            st.caption(
+                f"On-demand only: up to {SQUEEZE_RADAR_STRUCTURAL_REFRESH_MAX_SYMBOLS} candidates, cached locally in the concentration scanner."
+            )
+        if refresh_structure:
+            with st.spinner("Refreshing holder concentration and storage controls for the top live candidates..."):
+                refreshed_raw, refresh_metadata = _refresh_squeeze_structural_evidence(scored)
+            if refresh_metadata.get("verified", 0):
+                st.session_state["squeeze_radar_raw"] = refreshed_raw
+                _persist_latest_squeeze_radar(refreshed_raw)
+                st.success(
+                    f"Verified structural proof for {refresh_metadata['verified']} of {refresh_metadata['attempted']} candidates."
+                )
+                st.rerun()
+            else:
+                st.warning(
+                    f"No verified structural rows returned ({refresh_metadata.get('errors', 0)} coverage gaps). "
+                    "Market evidence remains visible, but the row stays non-actionable."
+                )
+        evidence_kpis = st.columns(4)
+        evidence_kpis[0].metric("Live metric coverage", f"{float(scored['squeeze_market_confidence'].median()):.0f}%")
+        evidence_kpis[1].metric("Fresh verified rows", int(scored["squeeze_structural_evidence_fresh"].sum()))
+        evidence_kpis[2].metric("Proxy-only rows", int((scored["structural_evidence_level"] == "PROXY").sum()) if "structural_evidence_level" in scored.columns else 0)
+        evidence_kpis[3].metric("Background short census", _short_seed_age_text())
+        evidence_columns = [
+            "squeeze_rank",
+            "symbol",
+            "squeeze_evidence_tier",
+            "structural_evidence_level",
+            "structural_storage_checked",
+            "squeeze_market_confidence",
+            "squeeze_structure_score",
+            "top10_holder_pct",
+            "top100_holder_pct",
+            "bitget_volume_share_pct",
+            "crowd_top_position_divergence_pct",
+            "crowd_top_account_divergence_pct",
+            "taker_buy_share_pct",
+            "structural_evidence_age_days",
+            "structural_proxy_age_days",
+            "structural_evidence_source",
+            "reflexivity_event_time_utc",
+            "reflexivity_received_at_utc",
+            "reflexivity_source",
+            "reflexivity_venue",
+            "reflexivity_signal_version",
+            "squeeze_snapshot_age_minutes",
+            "scan_error",
+            "squeeze_gate_failures",
+        ]
+        _render_squeeze_table(scored, columns=evidence_columns, height=520)
+
+    st.subheader("Setup Drilldown")
+    selected_symbol = st.selectbox(
+        "Symbol",
+        options=scored["symbol"].astype(str).tolist(),
+        key="squeeze_drilldown_symbol",
+        label_visibility="collapsed",
+    )
+    selected = scored[scored["symbol"] == selected_symbol].iloc[0]
+    detail_cols = st.columns(10)
+    detail_cols[0].metric("Stage", str(selected.get("squeeze_stage") or "n/a"))
+    detail_cols[1].metric("Score", f"{_safe_float(selected.get('squeeze_score')):.1f}")
+    detail_cols[2].metric("Short accounts", f"{_safe_float(selected.get('short_account_pct')):.2f}%")
+    detail_cols[3].metric("1H short change", f"{_safe_float(selected.get('short_account_roc_1h_pp')):+.2f}pp")
+    detail_cols[4].metric("Fuel", f"{_safe_float(selected.get('squeeze_fuel_remaining_score')):.0f}/100")
+    detail_cols[5].metric("Late heat", f"{_safe_float(selected.get('squeeze_late_score')):.0f}/100")
+    detail_cols[6].metric("3H short change", f"{_safe_float(selected.get('short_account_change_3p_pp')):+.2f}pp")
+    detail_cols[7].metric("4H short change", f"{_safe_float(selected.get('short_account_change_4p_pp')):+.2f}pp")
+    detail_cols[8].metric("3H OI change", f"{_safe_float(selected.get('oi_change_3p_pct')):+.2f}%")
+    detail_cols[9].metric("OI acceleration", f"{_safe_float(selected.get('oi_acceleration_1h_pct')):+.2f}pp")
+
+    st.markdown(
+        f"**Canonical research state:** `{selected.get('reflexivity_state') or 'n/a'}` | "
+        f"mechanism score `{_safe_float(selected.get('reflexivity_score')):.1f}` | "
+        f"data quality `{_safe_float(selected.get('reflexivity_data_quality_pct')):.0f}%`"
+    )
+
+    canonical_component_scores = selected.get("reflexivity_component_scores")
+    canonical_component_status = selected.get("reflexivity_component_status")
+    canonical_component_evidence = selected.get("reflexivity_component_evidence")
+    if isinstance(canonical_component_scores, dict):
+        component_rows = []
+        for component_name, score in canonical_component_scores.items():
+            evidence = canonical_component_evidence.get(component_name, []) if isinstance(canonical_component_evidence, dict) else []
+            component_rows.append(
+                {
+                    "Component": component_name.replace("_", " ").title(),
+                    "Score": float(score) if score is not None else float("nan"),
+                    "Status": canonical_component_status.get(component_name, "unknown") if isinstance(canonical_component_status, dict) else "unknown",
+                    "Evidence": "; ".join(str(item) for item in evidence),
+                }
+            )
+        component_detail_frame = pd.DataFrame(component_rows)
+        component_frame = component_detail_frame.set_index("Component")[["Score"]]
     else:
-        render_concentration_dashboard()
+        component_detail_frame = pd.DataFrame()
+        component_frame = pd.DataFrame(
+            {
+                "Component": ["Short level", "Current build", "Volume", "Trend", "OI", "Funding", "Structure", "Venue", "Late heat"],
+                "Score": [
+                    _safe_float(selected.get("squeeze_short_level_score")),
+                    _safe_float(selected.get("squeeze_short_build_score")),
+                    _safe_float(selected.get("squeeze_volume_score")),
+                    _safe_float(selected.get("squeeze_trend_score")),
+                    _safe_float(selected.get("squeeze_oi_score")),
+                    _safe_float(selected.get("squeeze_funding_score")),
+                    _safe_float(selected.get("squeeze_structure_score")),
+                    _safe_float(selected.get("squeeze_venue_score")),
+                    _safe_float(selected.get("squeeze_late_score")),
+                ],
+            }
+        ).set_index("Component")
+    chart_col, read_col = st.columns([1.35, 1.0])
+    with chart_col:
+        st.bar_chart(component_frame, height=290)
+        if not component_detail_frame.empty:
+            st.dataframe(
+                component_detail_frame,
+                use_container_width=True,
+                hide_index=True,
+                height=290,
+                column_config={
+                    "Component": st.column_config.TextColumn("Mechanism component"),
+                    "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                    "Status": st.column_config.TextColumn("Evidence status"),
+                    "Evidence": st.column_config.TextColumn("Observed evidence"),
+                },
+            )
+    with read_col:
+        st.markdown(f"**Mechanism read**\n\n{str(selected.get('reflexivity_explanation') or selected.get('squeeze_signal') or 'No complete signal.')}")
+        st.markdown(f"**Mechanism gates**\n\n{str(selected.get('reflexivity_gate_summary') or selected.get('squeeze_gate_failures') or 'None')}")
+        st.markdown(f"**Research gaps**\n\n{str(selected.get('reflexivity_missing_fields') or 'None')}")
+        st.markdown(f"**Invalidation**\n\n{str(selected.get('reflexivity_invalidation') or selected.get('squeeze_invalidation') or 'n/a')}")
+        st.caption("Research tooling only. Convexity still depends on small, predefined losses and rare outliers.")
+
+
+def main_dashboard() -> None:
+    render_breakout_dashboard()
 
 
 if not IMPORT_ONLY:

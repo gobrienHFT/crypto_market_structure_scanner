@@ -28,5 +28,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Audit tracked files for credentials
+        run: python scripts/security_audit.py
+
+      - name: Run deterministic reviewer demo
+        run: python -m crypto_market_structure.review_demo
+
       - name: Run tests
         run: python -m pytest

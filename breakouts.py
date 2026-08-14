@@ -35,6 +35,9 @@ class BreakoutRow:
     quote_volume_prior_30d_daily_avg: float
     quote_volume_prior_30d_days: int
     quote_volume_24h_vs_prior_30d_avg_ratio: float
+    anchored_vwap_30d: float
+    price_vs_anchored_vwap_30d_pct: float
+    anchored_vwap_30d_days: int
     history_days: int
     recent_max_pump_60d_pct: float
     recent_pump_60d_days: int
@@ -74,6 +77,12 @@ class BreakoutRow:
     short_account_roc_1h_pp: float
     short_account_roc_1h_abs_pp: float
     short_account_roc_1h_direction: str
+    short_account_roc_smoothed_3p_pp: float
+    short_account_roc_smoothed_3p_pct: float
+    short_account_acceleration_1h_pp: float
+    short_account_acceleration_smoothed_3p_pp: float
+    short_account_roc_zscore: float
+    short_account_direction_persistence: int
     short_account_change_3p_pct: float
     short_account_change_3p_pp: float
     short_account_change_6p_pct: float

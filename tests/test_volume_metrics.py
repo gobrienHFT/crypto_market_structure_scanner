@@ -4,7 +4,11 @@ import csv
 import math
 from pathlib import Path
 
-from volume_metrics import append_csv_row_schema_safe, closed_hour_volume_metrics
+from volume_metrics import (
+    append_csv_row_schema_safe,
+    closed_daily_anchored_vwap_metrics,
+    closed_hour_volume_metrics,
+)
 
 
 def _kline(open_time: int, quote_volume: float) -> list[object]:
@@ -37,6 +41,34 @@ def test_closed_hour_volume_roc_is_nan_without_two_complete_windows() -> None:
     metrics = closed_hour_volume_metrics([_kline(1, 100), _kline(2, 999)])
 
     assert math.isnan(metrics["hour_volume_roc_1h_pct"])
+
+
+def test_daily_anchored_vwap_uses_completed_base_and_quote_volume() -> None:
+    rows = [
+        [1, "0", "0", "0", "0", "10", 2, "100"],
+        [2, "0", "0", "0", "0", "20", 3, "300"],
+        [3, "0", "0", "0", "0", "999", 4, "999999"],
+    ]
+
+    metrics = closed_daily_anchored_vwap_metrics(rows, last_price=20)
+
+    assert round(float(metrics["anchored_vwap_30d"]), 6) == round(400 / 30, 6)
+    assert round(float(metrics["price_vs_anchored_vwap_30d_pct"]), 6) == 50.0
+    assert metrics["anchored_vwap_30d_days"] == 2
+
+
+def test_daily_anchored_vwap_uses_available_history_for_new_tokens() -> None:
+    rows = [[1, "0", "0", "0", "0", "5", 2, "50"]]
+
+    metrics = closed_daily_anchored_vwap_metrics(
+        rows,
+        last_price=12,
+        exclude_forming_bar=False,
+    )
+
+    assert metrics["anchored_vwap_30d"] == 10
+    assert math.isclose(float(metrics["price_vs_anchored_vwap_30d_pct"]), 20.0)
+    assert metrics["anchored_vwap_30d_days"] == 1
 
 
 def test_schema_safe_csv_append_adds_new_volume_columns_without_corrupting_history(tmp_path: Path) -> None:

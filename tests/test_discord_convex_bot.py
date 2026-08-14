@@ -281,6 +281,16 @@ def test_load_shorts_list_overlays_base_thesis_context(tmp_path, monkeypatch) ->
 
 
 def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> None:
+    def ratio_path(values: list[float]) -> list[dict[str, str]]:
+        return [
+            {
+                "timestamp": str(index),
+                "shortAccount": str(value / 100.0),
+                "longAccount": str(1.0 - value / 100.0),
+            }
+            for index, value in enumerate(values)
+        ]
+
     class FakeShortPctClient:
         def __init__(self, **_kwargs):
             pass
@@ -302,12 +312,12 @@ def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> N
 
         def global_long_short_account_ratio(self, symbol, *, period="1h", limit=2):
             assert period == "1h"
-            assert limit == 2
+            assert limit == 12
             assert symbol != "MSFTUSDT"
             rows = {
-                "FASTUSDT": [{"shortAccount": "0.40", "longAccount": "0.60"}, {"shortAccount": "0.50", "longAccount": "0.50"}],
-                "SLOWUSDT": [{"shortAccount": "0.50", "longAccount": "0.50"}, {"shortAccount": "0.55", "longAccount": "0.45"}],
-                "COVERUSDT": [{"shortAccount": "0.60", "longAccount": "0.40"}, {"shortAccount": "0.57", "longAccount": "0.43"}],
+                "FASTUSDT": ratio_path([35, 36, 37, 40, 50]),
+                "SLOWUSDT": ratio_path([48, 49, 49, 50, 55]),
+                "COVERUSDT": ratio_path([55, 57, 59, 60, 57]),
             }
             return rows[symbol]
 
@@ -321,8 +331,8 @@ def test_load_shortpct_list_ranks_positive_short_roc(tmp_path, monkeypatch) -> N
     output = "\n".join(chunks)
 
     assert title == "Short-account ROC leaderboard"
-    assert "/FASTUSDT | shortROC +10.00pp / +25.00% | shorts 40.0%->50.0% | vol 3.00M | 24h +5.5% | baseThesis ?" in output
-    assert "/SLOWUSDT | shortROC +5.00pp / +10.00% | shorts 50.0%->55.0% | vol 1.00M | 24h -1.2% | baseThesis ?" in output
+    assert "/FASTUSDT | shortROC +10.00pp / +25.00% | smooth +4.67pp | accel +3.00pp | z +8.84 | persist 4 | hist 5 | shorts 40.0%->50.0%" in output
+    assert "/SLOWUSDT | shortROC +5.00pp / +10.00% | smooth +2.00pp | accel +1.33pp | z +9.19 | persist 2 | hist 5 | shorts 50.0%->55.0%" in output
     assert "COVERUSDT" not in output
     assert output.index("/FASTUSDT") < output.index("/SLOWUSDT")
 
@@ -372,7 +382,8 @@ def test_load_shorttrend_list_ranks_persistent_short_builds(tmp_path, monkeypatc
     output = "\n".join(chunks)
 
     assert title == "Short-account trend leaderboard"
-    assert "/TRENDUSDT | trend 3/3 +10.00pp | shorts 47.0% | 1h +1.00pp, 3h +3.00pp, 6h +6.00pp | vol 5.00M | 24h +3.0% | baseThesis ?" in output
+    assert "/TRENDUSDT | trend 3/3 +10.00pp | smooth +1.00pp | accel +0.00pp | z n/a | persist 7 | shorts 47.0%" in output
+    assert "1h +1.00pp, 3h +3.00pp, 6h +6.00pp | vol 5.00M | 24h +3.0% | baseThesis ?" in output
     assert "BLIPUSDT" not in output
     assert "DOWNUSDT" not in output
 

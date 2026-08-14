@@ -42,6 +42,11 @@ def _config(**overrides):
         "volume_spike_confirmation_pct": 50.0,
         "confirmation_readings": 2,
         "short_rebound_tolerance_pp": 0.5,
+        "short_history_limit": 12,
+        "partial_close_fraction": 1.0,
+        "runner_confirmation_readings": 2,
+        "runner_oi_drop_pct": 3.0,
+        "runner_volume_deceleration_pct": 20.0,
         "min_profit_usdt": 0.0,
         "min_profit_pct": 0.0,
         "execution_profit_floor_pct": 0.25,
@@ -144,11 +149,12 @@ class _AutoClient:
         ]
 
     def income_history(self, **kwargs):
+        income_type = kwargs.get("income_type")
         return [
             {
                 "symbol": kwargs.get("symbol"),
-                "incomeType": "FUNDING_FEE",
-                "income": "1.25",
+                "incomeType": income_type,
+                "income": "1.25" if income_type == "FUNDING_FEE" else "-0.05",
                 "asset": "USDT",
                 "time": 2000,
             }
@@ -194,6 +200,27 @@ class _LiveExecutionClient:
     def depth(self, symbol, limit=5):
         return {"bids": [[self.best_bid, "1000"]], "asks": [[self.best_ask, "1000"]]}
 
+    def exchange_info(self):
+        return {
+            "symbols": [
+                {
+                    "symbol": str(self.position.get("symbol") or "LABUSDT"),
+                    "filters": [
+                        {
+                            "filterType": "LOT_SIZE",
+                            "stepSize": "0.1",
+                            "minQty": "0.1",
+                        },
+                        {
+                            "filterType": "MARKET_LOT_SIZE",
+                            "stepSize": "1",
+                            "minQty": "1",
+                        }
+                    ],
+                }
+            ]
+        }
+
     def new_futures_order(self, **params):
         self.submitted = params
         return self.order_result
@@ -216,6 +243,157 @@ def test_profitable_position_closes_when_short_roc_rolls_over() -> None:
         "quantity": "100",
         "reduceOnly": "true",
     }
+
+
+def test_first_confirmed_unwind_reduces_half_and_retains_runner() -> None:
+    decision = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(),
+        short_metrics=_metrics(short_account_sample_id="hour-1"),
+        config=_config(partial_close_fraction=0.5),
+    )
+
+    assert decision.should_close is True
+    assert decision.row["exit_action"] == "partial_reduce"
+    assert decision.row["close_fraction"] == 0.5
+    assert decision.order_params["quantity"] == "50"
+    assert "retain protected runner" in decision.reason
+
+
+def test_gradual_five_point_peak_drawdown_arms_without_single_hour_shock() -> None:
+    config = _config(partial_close_fraction=0.5, confirmation_readings=2)
+    state = {
+        "status": "open",
+        "symbol": "LABUSDT",
+        "position_side": "LONG",
+        "entry_price": 4.0,
+        "short_account_peak_pct": 80.0,
+    }
+    first = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(),
+        short_metrics=_unconfirmed_metrics(
+            short_account_previous_1h_pct=76.0,
+            short_account_pct=75.0,
+            short_account_roc_1h_pp=-1.0,
+            short_account_roc_1h_pct=-1.3158,
+            short_account_sample_id="hour-1",
+        ),
+        config=config,
+        signal_state=state,
+    )
+    second = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(),
+        short_metrics=_unconfirmed_metrics(
+            short_account_previous_1h_pct=75.0,
+            short_account_pct=74.8,
+            short_account_roc_1h_pp=-0.2,
+            short_account_roc_1h_pct=-0.2667,
+            short_account_sample_id="hour-2",
+        ),
+        config=config,
+        signal_state=_position_snapshot(first),
+    )
+
+    assert first.should_close is False
+    assert first.row["short_unwind_peak_drawdown_triggered"] is True
+    assert first.row["short_unwind_confirmation_count"] == 1
+    assert second.should_close is True
+    assert second.row["short_unwind_confirmation_count"] == 2
+    assert second.row["exit_action"] == "partial_reduce"
+
+
+def test_runner_waits_for_two_distinct_joint_exhaustion_samples() -> None:
+    config = _config(
+        partial_close_fraction=0.5,
+        runner_confirmation_readings=2,
+        runner_oi_drop_pct=3.0,
+        runner_volume_deceleration_pct=20.0,
+    )
+    initial = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(),
+        short_metrics=_metrics(short_account_sample_id="hour-1"),
+        config=config,
+    )
+    runner_state = _position_snapshot(initial)
+    runner_state.update(
+        {
+            "partial_exit_completed": True,
+            "partial_exit_completed_at": "2026-07-23 10:00:00 UTC",
+            "partial_exit_sample_id": "hour-1",
+            "partial_exit_executed_qty": 50.0,
+            "runner_active": True,
+            "runner_confirmation_count": 0,
+            "runner_last_counted_sample_id": "hour-1",
+        }
+    )
+    first = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(positionAmt="50", unRealizedProfit="50"),
+        short_metrics=_unconfirmed_metrics(
+            short_account_sample_id="hour-2",
+            hour_price_stopped_making_highs=True,
+            open_interest_change_pct=-4.0,
+            hour_volume_roc_1h_pct=-25.0,
+        ),
+        config=config,
+        signal_state=runner_state,
+    )
+    second = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(positionAmt="50", unRealizedProfit="50"),
+        short_metrics=_unconfirmed_metrics(
+            short_account_sample_id="hour-3",
+            hour_price_stopped_making_highs=True,
+            open_interest_change_pct=-4.0,
+            hour_volume_roc_1h_pct=-25.0,
+        ),
+        config=config,
+        signal_state=_position_snapshot(first),
+    )
+
+    assert first.should_close is False
+    assert first.row["runner_confirmation_count"] == 1
+    assert first.row["exit_signal_stage"] == "runner_active_wait_exhaustion"
+    assert second.should_close is True
+    assert second.row["runner_confirmation_count"] == 2
+    assert second.row["exit_action"] == "close_runner"
+    assert second.order_params["quantity"] == "50"
+
+
+def test_runner_holds_when_oi_remains_elevated_despite_short_unwind() -> None:
+    config = _config(partial_close_fraction=0.5)
+    state = {
+        "status": "open",
+        "symbol": "LABUSDT",
+        "position_side": "LONG",
+        "entry_price": 4.0,
+        "short_account_peak_pct": 72.0,
+        "partial_exit_completed": True,
+        "partial_exit_sample_id": "hour-1",
+        "partial_exit_executed_qty": 50.0,
+        "runner_active": True,
+        "runner_last_counted_sample_id": "hour-1",
+    }
+    decision = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(positionAmt="50", unRealizedProfit="50"),
+        short_metrics=_unconfirmed_metrics(
+            short_account_sample_id="hour-2",
+            hour_price_stopped_making_highs=True,
+            open_interest_change_pct=5.0,
+            hour_volume_roc_1h_pct=-25.0,
+        ),
+        config=config,
+        signal_state=state,
+    )
+
+    assert decision.should_close is False
+    assert decision.row["runner_active"] is True
+    assert decision.row["runner_oi_decline"] is False
+    assert decision.row["runner_confirmation_count"] == 0
 
 
 def test_bank_style_minus_3_point_6_percent_short_move_no_longer_arms_or_closes() -> None:
@@ -320,9 +498,9 @@ def test_short_rebound_beyond_tolerance_disarms_waiting_signal() -> None:
         position=_long_position(),
         short_metrics=_unconfirmed_metrics(
             short_account_previous_1h_pct=64.0,
-            short_account_pct=65.0,
-            short_account_roc_1h_pp=1.0,
-            short_account_roc_1h_pct=1.5625,
+            short_account_pct=65.6,
+            short_account_roc_1h_pp=1.6,
+            short_account_roc_1h_pct=2.5,
             short_account_sample_id="hour-2",
         ),
         config=config,
@@ -456,7 +634,12 @@ def test_roc_just_inside_arm_threshold_does_not_close() -> None:
     decision = evaluate_close_decision(
         symbol="LABUSDT",
         position=_long_position(),
-        short_metrics=_metrics(short_account_roc_1h_pct=-3.99, short_account_roc_1h_pp=0.0),
+        short_metrics=_metrics(
+            short_account_previous_1h_pct=66.0,
+            short_account_pct=63.3666,
+            short_account_roc_1h_pct=-3.99,
+            short_account_roc_1h_pp=-2.6334,
+        ),
         config=_config(),
     )
 
@@ -615,6 +798,37 @@ def test_live_close_uses_price_protected_ioc_reduce_only_order(monkeypatch) -> N
     }
 
 
+def test_live_partial_close_rounds_to_limit_step_and_leaves_runner(monkeypatch) -> None:
+    monkeypatch.setenv("SHORT_ROC_CLOSE_LIVE", "1")
+    config = _config(live=True, partial_close_fraction=0.5)
+    position = _long_position(positionAmt="101")
+    decision = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=position,
+        short_metrics=_metrics(),
+        config=config,
+    )
+    client = _LiveExecutionClient(
+        position,
+        best_bid="5.00",
+        best_ask="5.01",
+        order_result={
+            "status": "FILLED",
+            "orderId": 456,
+            "executedQty": "50.5",
+            "avgPrice": "5.00",
+        },
+    )
+
+    result = maybe_close_position(client, decision, config)
+
+    assert result["status"] == "FILLED"
+    assert result["exit_action"] == "partial_reduce"
+    assert result["close_fraction"] == 0.5
+    assert client.submitted["quantity"] == "50.5"
+    assert client.submitted["reduceOnly"] == "true"
+
+
 def test_live_short_close_uses_ask_as_max_buy_price(monkeypatch) -> None:
     monkeypatch.setenv("SHORT_ROC_CLOSE_LIVE", "1")
     short_position = _long_position(
@@ -728,22 +942,59 @@ def test_payload_reports_market_price_without_an_open_position() -> None:
     assert "Market price: $5.125" in description
 
 
-def test_realized_carry_metrics_sum_current_position_funding_only() -> None:
+def test_realized_carry_metrics_net_funding_and_trading_fees_for_current_position() -> None:
     metrics = _realized_carry_metrics(
         [
             {"symbol": "LABUSDT", "incomeType": "FUNDING_FEE", "income": "99", "asset": "USDT", "time": 999},
             {"symbol": "LABUSDT", "incomeType": "FUNDING_FEE", "income": "1.25", "asset": "USDT", "time": 1000},
             {"symbol": "LABUSDT", "incomeType": "FUNDING_FEE", "income": "-0.25", "asset": "USDT", "time": 2000},
             {"symbol": "OTHERUSDT", "incomeType": "FUNDING_FEE", "income": "50", "asset": "USDT", "time": 2000},
-            {"symbol": "LABUSDT", "incomeType": "COMMISSION", "income": "50", "asset": "USDT", "time": 2000},
+            {"symbol": "LABUSDT", "incomeType": "COMMISSION", "income": "-0.10", "asset": "USDT", "time": 2000},
+            {"symbol": "LABUSDT", "incomeType": "COMMISSION", "income": "-9", "asset": "USDT", "time": 999},
+            {"symbol": "LABUSDT", "incomeType": "REALIZED_PNL", "income": "50", "asset": "USDT", "time": 2000},
         ],
         symbol="LABUSDT",
         position_start_ms=1000,
     )
 
-    assert metrics["realized_carry_pnl"] == 1.0
+    assert metrics["realized_carry_pnl"] == 0.9
+    assert metrics["realized_funding_pnl"] == 1.0
+    assert metrics["realized_trading_fee_pnl"] == -0.1
     assert metrics["realized_carry_asset"] == "USDT"
     assert metrics["realized_carry_event_count"] == 2
+    assert metrics["realized_trading_fee_event_count"] == 1
+
+
+def test_realized_carry_includes_entry_commission_rounded_to_opening_second() -> None:
+    metrics = _realized_carry_metrics(
+        [
+            {
+                "symbol": "LABUSDT",
+                "incomeType": "COMMISSION",
+                "income": "-0.63",
+                "asset": "USDT",
+                "time": 1000,
+            }
+        ],
+        symbol="LABUSDT",
+        position_start_ms=1519,
+    )
+
+    assert metrics["realized_carry_pnl"] == -0.63
+    assert metrics["realized_trading_fee_pnl"] == -0.63
+    assert metrics["realized_carry_since_ms"] == 1000
+
+
+def test_position_snapshot_preserves_realized_carry_start() -> None:
+    decision = evaluate_close_decision(
+        symbol="LABUSDT",
+        position=_long_position(),
+        short_metrics=_metrics(),
+        config=_config(),
+    )
+    decision.row["realized_carry_since_ms"] = 1234000
+
+    assert _position_snapshot(decision)["realized_carry_since_ms"] == 1234000
 
 
 def test_payload_labels_realized_carry_pnl() -> None:
@@ -756,15 +1007,21 @@ def test_payload_labels_realized_carry_pnl() -> None:
     decision.row.update(
         {
             "realized_carry_pnl": 1.25,
+            "realized_funding_pnl": 1.50,
+            "realized_trading_fee_pnl": -0.25,
             "realized_carry_asset": "USDT",
             "realized_carry_event_count": 2,
+            "realized_trading_fee_event_count": 1,
         }
     )
 
     description = build_discord_payload(decision, [])["embeds"][0]["description"]
 
     assert "Unrealized PnL $100 / +25.00%" in description
-    assert "Realized Carry PnL $1.25 USDT | funding events 2" in description
+    assert (
+        "Realized Carry PnL $1.25 USDT | funding $1.5 | trading fees $-0.25 | "
+        "events 2 funding / 1 fee"
+    ) in description
 
 
 def test_triggered_close_appends_closed_trade_ledger(tmp_path: Path) -> None:
@@ -925,6 +1182,9 @@ def test_external_close_payload_is_explicit_about_detection_limits() -> None:
             "unrealized_profit": 100,
             "profit_pct": 25,
             "realized_carry_pnl": 1.25,
+            "realized_funding_pnl": 1.50,
+            "realized_trading_fee_pnl": -0.25,
+            "realized_carry_asset": "USDT",
             "short_account_pct": 68,
             "short_account_roc_1h_pct": -3,
             "last_seen_at": "2026-07-16 10:00:00 UTC",
@@ -938,3 +1198,4 @@ def test_external_close_payload_is_explicit_about_detection_limits() -> None:
     assert "manual/external position close detected" in description
     assert "another bot, by a stop, or by another exchange client" in description
     assert "Last Unrealized PnL $100 / +25.00%" in description
+    assert "Last Realized Carry PnL $1.25 USDT | funding $1.5 | trading fees $-0.25" in description

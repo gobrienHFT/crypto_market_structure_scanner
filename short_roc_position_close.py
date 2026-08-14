@@ -7,6 +7,7 @@ import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,12 @@ from inx_hourly_monitor import (
     _oi_metrics,
     _short_metrics,
 )
-from volume_metrics import append_csv_row_schema_safe, closed_hour_volume_metrics
+from short_account_roc import short_account_history_stats
+from volume_metrics import (
+    append_csv_row_schema_safe,
+    closed_daily_anchored_vwap_metrics,
+    closed_hour_volume_metrics,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -52,6 +58,11 @@ class ShortRocCloseConfig:
     volume_spike_confirmation_pct: float
     confirmation_readings: int
     short_rebound_tolerance_pp: float
+    short_history_limit: int
+    partial_close_fraction: float
+    runner_confirmation_readings: int
+    runner_oi_drop_pct: float
+    runner_volume_deceleration_pct: float
     min_profit_usdt: float
     min_profit_pct: float
     execution_profit_floor_pct: float
@@ -134,6 +145,12 @@ def _position_snapshot(decision: CloseDecision) -> dict[str, Any]:
         "unrealized_profit": row.get("unrealized_profit"),
         "profit_pct": row.get("profit_pct"),
         "realized_carry_pnl": row.get("realized_carry_pnl"),
+        "realized_funding_pnl": row.get("realized_funding_pnl"),
+        "realized_trading_fee_pnl": row.get("realized_trading_fee_pnl"),
+        "realized_carry_asset": row.get("realized_carry_asset"),
+        "realized_carry_event_count": row.get("realized_carry_event_count"),
+        "realized_trading_fee_event_count": row.get("realized_trading_fee_event_count"),
+        "realized_carry_since_ms": row.get("realized_carry_since_ms"),
         "short_account_pct": row.get("short_account_pct"),
         "short_account_roc_1h_pct": row.get("short_account_roc_1h_pct"),
         "short_account_sample_id": row.get("short_account_sample_id"),
@@ -145,6 +162,14 @@ def _position_snapshot(decision: CloseDecision) -> dict[str, Any]:
         "short_unwind_armed_short_pct": row.get("short_unwind_armed_short_pct"),
         "short_unwind_confirmation_count": row.get("short_unwind_confirmation_count"),
         "short_unwind_last_counted_sample_id": row.get("short_unwind_last_counted_sample_id"),
+        "partial_exit_completed": row.get("partial_exit_completed"),
+        "partial_exit_completed_at": row.get("partial_exit_completed_at"),
+        "partial_exit_sample_id": row.get("partial_exit_sample_id"),
+        "partial_exit_executed_qty": row.get("partial_exit_executed_qty"),
+        "partial_exit_fraction": row.get("partial_exit_fraction"),
+        "runner_active": row.get("runner_active"),
+        "runner_confirmation_count": row.get("runner_confirmation_count"),
+        "runner_last_counted_sample_id": row.get("runner_last_counted_sample_id"),
         "exit_signal_stage": row.get("exit_signal_stage"),
         "hour_volume_roc_1h_pct": row.get("hour_volume_roc_1h_pct"),
         "last_seen_at": row.get("scanned_at") or _now_utc().strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -234,6 +259,14 @@ def _empty_decision(symbol: str, reason: str, config: ShortRocCloseConfig, *, po
             "volume_spike_confirmation_pct": config.volume_spike_confirmation_pct,
             "confirmation_readings": config.confirmation_readings,
             "short_rebound_tolerance_pp": config.short_rebound_tolerance_pp,
+            "short_history_limit": config.short_history_limit,
+            "partial_exit_fraction": config.partial_close_fraction,
+            "partial_exit_completed": False,
+            "runner_active": False,
+            "runner_confirmation_readings": config.runner_confirmation_readings,
+            "runner_confirmation_count": 0,
+            "runner_oi_drop_pct": config.runner_oi_drop_pct,
+            "runner_volume_deceleration_pct": config.runner_volume_deceleration_pct,
             "short_unwind_armed": False,
             "short_unwind_confirmation_count": 0,
             "exit_signal_stage": "flat",
@@ -270,15 +303,31 @@ def _position_side(position: dict[str, Any]) -> str:
     return "FLAT"
 
 
-def _close_order_params(symbol: str, position: dict[str, Any]) -> dict[str, Any]:
+def _format_quantity(value: Decimal | float) -> str:
+    try:
+        parsed = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return ""
+    text = format(parsed, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _close_order_params(
+    symbol: str,
+    position: dict[str, Any],
+    *,
+    close_fraction: float = 1.0,
+    quantity: Decimal | float | None = None,
+) -> dict[str, Any]:
     amount = _to_float(position.get("positionAmt"))
     side = "SELL" if amount > 0 else "BUY"
-    quantity = format(abs(amount), "f").rstrip("0").rstrip(".")
+    fraction = min(1.0, max(0.0, float(close_fraction)))
+    close_quantity = abs(amount) * fraction if quantity is None else quantity
     params: dict[str, Any] = {
         "symbol": symbol.upper(),
         "side": side,
         "type": "MARKET",
-        "quantity": quantity,
+        "quantity": _format_quantity(close_quantity),
     }
     position_side = str(position.get("positionSide") or "BOTH").upper()
     if position_side and position_side != "BOTH":
@@ -286,6 +335,58 @@ def _close_order_params(symbol: str, position: dict[str, Any]) -> dict[str, Any]
     else:
         params["reduceOnly"] = "true"
     return params
+
+
+def _limit_quantity_rules(client: BinanceFuturesPublic, symbol: str) -> tuple[Decimal, Decimal]:
+    info = client.exchange_info()
+    symbols = info.get("symbols", []) if isinstance(info, dict) else []
+    symbol_info = next(
+        (row for row in symbols if str(row.get("symbol") or "").upper() == symbol.upper()),
+        {},
+    )
+    filters = {
+        str(row.get("filterType") or ""): row
+        for row in symbol_info.get("filters", [])
+        if isinstance(row, dict)
+    }
+    lot_filter = filters.get("LOT_SIZE") or {}
+    try:
+        step_size = Decimal(str(lot_filter.get("stepSize") or "0"))
+        min_qty = Decimal(str(lot_filter.get("minQty") or "0"))
+    except InvalidOperation as exc:
+        raise ValueError(f"invalid limit quantity rules for {symbol}") from exc
+    if step_size <= 0 or min_qty < 0:
+        raise ValueError(f"missing limit quantity rules for {symbol}")
+    return step_size, min_qty
+
+
+def _fractional_close_quantity(
+    client: BinanceFuturesPublic,
+    symbol: str,
+    position_amount: float,
+    fraction: float,
+) -> Decimal:
+    absolute_amount = Decimal(str(abs(position_amount)))
+    fraction_decimal = Decimal(str(min(1.0, max(0.0, float(fraction)))))
+    if fraction_decimal >= 1:
+        return absolute_amount
+    if fraction_decimal <= 0:
+        raise ValueError("partial close fraction must be greater than zero")
+
+    step_size, min_qty = _limit_quantity_rules(client, symbol)
+    raw_quantity = absolute_amount * fraction_decimal
+    close_quantity = (raw_quantity / step_size).to_integral_value(rounding=ROUND_DOWN) * step_size
+    remaining_quantity = absolute_amount - close_quantity
+    if close_quantity < min_qty:
+        raise ValueError(
+            f"partial quantity {_format_quantity(close_quantity)} is below minimum {_format_quantity(min_qty)}"
+        )
+    if remaining_quantity < min_qty:
+        raise ValueError(
+            f"partial close would leave runner {_format_quantity(remaining_quantity)} below minimum "
+            f"{_format_quantity(min_qty)}"
+        )
+    return close_quantity
 
 
 def _is_true(value: Any) -> bool:
@@ -328,16 +429,16 @@ def _volume_metrics(
 ) -> dict[str, Any]:
     now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     ticker = ticker or {}
-    completed_rows = []
+    completed_rows: list[tuple[int, list[Any]]] = []
     for row in daily_klines:
         if not isinstance(row, list) or len(row) <= 7:
             continue
         close_time = _to_float(row[6])
         quote_volume = _to_float(row[7])
         if math.isfinite(close_time) and close_time < now_ms and math.isfinite(quote_volume) and quote_volume >= 0:
-            completed_rows.append((int(close_time), quote_volume))
+            completed_rows.append((int(close_time), row))
     sample = sorted(completed_rows, key=lambda item: item[0])[-30:]
-    prior_total = sum(item[1] for item in sample) if sample else float("nan")
+    prior_total = sum(_to_float(item[1][7]) for item in sample) if sample else float("nan")
     prior_average = prior_total / len(sample) if sample else float("nan")
     volume_24h = _to_float(ticker.get("quoteVolume"))
     ratio = (
@@ -345,13 +446,22 @@ def _volume_metrics(
         if math.isfinite(volume_24h) and math.isfinite(prior_average) and prior_average > 0
         else float("nan")
     )
-    return {
+    metrics = {
         "quote_volume_24h_usdt": volume_24h,
         "quote_volume_prior_30d_total_usdt": prior_total,
         "quote_volume_prior_30d_daily_avg_usdt": prior_average,
         "quote_volume_prior_30d_days": len(sample),
         "quote_volume_24h_vs_prior_30d_avg_ratio": ratio,
     }
+    metrics.update(
+        closed_daily_anchored_vwap_metrics(
+            [item[1] for item in sample],
+            last_price=ticker.get("lastPrice"),
+            lookback_days=30,
+            exclude_forming_bar=False,
+        )
+    )
+    return metrics
 
 
 def _realized_carry_metrics(
@@ -362,32 +472,47 @@ def _realized_carry_metrics(
 ) -> dict[str, Any]:
     wanted_symbol = str(symbol or "").upper()
     start_ms = _to_float(position_start_ms)
+    income_start_ms = (
+        int(start_ms // 1000) * 1000
+        if math.isfinite(start_ms) and start_ms > 0
+        else 0
+    )
     funding_rows: list[dict[str, Any]] = []
+    commission_rows: list[dict[str, Any]] = []
     assets: set[str] = set()
-    total = 0.0
+    funding_total = 0.0
+    commission_total = 0.0
     for row in rows:
         if not isinstance(row, dict):
             continue
         if str(row.get("symbol") or "").upper() != wanted_symbol:
             continue
-        if str(row.get("incomeType") or "").upper() != "FUNDING_FEE":
+        income_type = str(row.get("incomeType") or "").upper()
+        if income_type not in {"FUNDING_FEE", "COMMISSION"}:
             continue
         row_time = _to_float(row.get("time"))
-        if math.isfinite(start_ms) and start_ms > 0 and math.isfinite(row_time) and row_time < start_ms:
+        if income_start_ms > 0 and math.isfinite(row_time) and row_time < income_start_ms:
             continue
         income = _to_float(row.get("income"))
         if not math.isfinite(income):
             continue
-        total += income
-        funding_rows.append(row)
+        if income_type == "FUNDING_FEE":
+            funding_total += income
+            funding_rows.append(row)
+        else:
+            commission_total += income
+            commission_rows.append(row)
         asset = str(row.get("asset") or "").upper().strip()
         if asset:
             assets.add(asset)
     return {
-        "realized_carry_pnl": total,
+        "realized_carry_pnl": funding_total + commission_total,
+        "realized_funding_pnl": funding_total,
+        "realized_trading_fee_pnl": commission_total,
         "realized_carry_asset": "/".join(sorted(assets)) or "USDT",
         "realized_carry_event_count": len(funding_rows),
-        "realized_carry_since_ms": int(start_ms) if math.isfinite(start_ms) and start_ms > 0 else 0,
+        "realized_trading_fee_event_count": len(commission_rows),
+        "realized_carry_since_ms": income_start_ms,
     }
 
 
@@ -521,15 +646,49 @@ def evaluate_close_decision(
         side=position_side,
         entry_price=entry_price,
     )
+    partial_enabled = config.partial_close_fraction < 1.0
+    partial_exit_completed = bool(previous_state.get("partial_exit_completed")) if state_matches else False
+    partial_exit_completed_at = (
+        str(previous_state.get("partial_exit_completed_at") or "")
+        if partial_exit_completed
+        else ""
+    )
+    partial_exit_sample_id = (
+        str(previous_state.get("partial_exit_sample_id") or "")
+        if partial_exit_completed
+        else ""
+    )
+    partial_exit_executed_qty = (
+        _to_float(previous_state.get("partial_exit_executed_qty"))
+        if partial_exit_completed
+        else 0.0
+    )
+    if not math.isfinite(partial_exit_executed_qty):
+        partial_exit_executed_qty = 0.0
+    runner_active = partial_enabled and partial_exit_completed
+    runner_confirmation_count = (
+        int(_to_float(previous_state.get("runner_confirmation_count")))
+        if runner_active and math.isfinite(_to_float(previous_state.get("runner_confirmation_count")))
+        else 0
+    )
+    runner_last_counted_sample_id = (
+        str(previous_state.get("runner_last_counted_sample_id") or "")
+        if runner_active
+        else ""
+    )
     previous_peak = _to_float(previous_state.get("short_account_peak_pct")) if state_matches else float("nan")
     peak_candidates = [value for value in (previous_peak, previous_short, current_short) if math.isfinite(value)]
     short_peak = max(peak_candidates) if peak_candidates else float("nan")
     short_peak_drawdown = short_peak - current_short if math.isfinite(short_peak) and math.isfinite(current_short) else float("nan")
+    level_condition = math.isfinite(current_short) and current_short <= config.short_account_exit_level_pct
+    peak_condition = math.isfinite(short_peak_drawdown) and short_peak_drawdown >= config.short_account_peak_drawdown_pp
+    structure_condition = level_condition or peak_condition
 
     sample_id = str(short_metrics.get("short_account_sample_id") or short_metrics.get("short_account_timestamp") or "").strip()
     pct_trigger = math.isfinite(roc_pct) and roc_pct <= -abs(config.trigger_short_roc_pct)
     pp_trigger = math.isfinite(roc_pp) and roc_pp <= -abs(config.trigger_short_roc_pp)
-    unwind_trigger = pct_trigger or pp_trigger
+    peak_drawdown_trigger = peak_condition
+    unwind_trigger = pct_trigger or pp_trigger or peak_drawdown_trigger
 
     armed = bool(previous_state.get("short_unwind_armed")) if state_matches else False
     armed_at = str(previous_state.get("short_unwind_armed_at") or "") if armed else ""
@@ -572,10 +731,6 @@ def evaluate_close_decision(
             confirmation_count = 0
             last_counted_sample_id = sample_id
 
-    level_condition = math.isfinite(current_short) and current_short <= config.short_account_exit_level_pct
-    peak_condition = math.isfinite(short_peak_drawdown) and short_peak_drawdown >= config.short_account_peak_drawdown_pp
-    structure_condition = level_condition or peak_condition
-
     oi_change_pct = _to_float(short_metrics.get("open_interest_change_pct"))
     volume_roc_pct = _to_float(short_metrics.get("hour_volume_roc_1h_pct"))
     if position_side == "SHORT":
@@ -609,7 +764,51 @@ def evaluate_close_decision(
     reading_confirmation = confirmation_count >= max(1, config.confirmation_readings)
     confirmation_condition = market_confirmation or reading_confirmation
 
-    if not armed:
+    runner_oi_decline = (
+        math.isfinite(oi_change_pct)
+        and oi_change_pct <= -abs(config.runner_oi_drop_pct)
+    )
+    runner_volume_deceleration = (
+        math.isfinite(volume_roc_pct)
+        and volume_roc_pct <= -abs(config.runner_volume_deceleration_pct)
+    )
+    runner_price_failure = price_stalled or price_confirmation
+    runner_joint_exhaustion = (
+        structure_condition
+        and runner_price_failure
+        and runner_oi_decline
+        and runner_volume_deceleration
+    )
+    runner_hard_exhaustion = (
+        structure_condition
+        and price_confirmation
+        and oi_confirmation
+        and volume_confirmation
+    )
+    new_runner_sample = bool(sample_id and sample_id != runner_last_counted_sample_id)
+    if runner_active and new_runner_sample:
+        if runner_joint_exhaustion or runner_hard_exhaustion:
+            runner_confirmation_count += 1
+        else:
+            runner_confirmation_count = 0
+        runner_last_counted_sample_id = sample_id
+    runner_reading_confirmation = (
+        runner_confirmation_count >= max(1, config.runner_confirmation_readings)
+    )
+    runner_new_sample_after_partial = bool(
+        sample_id
+        and partial_exit_sample_id
+        and sample_id != partial_exit_sample_id
+    )
+    runner_exit_condition = runner_reading_confirmation or (
+        runner_hard_exhaustion and runner_new_sample_after_partial
+    )
+
+    if runner_active and runner_exit_condition:
+        signal_stage = "runner_exit_confirmed"
+    elif runner_active:
+        signal_stage = "runner_active_wait_exhaustion"
+    elif not armed:
         signal_stage = "unarmed"
     elif not structure_condition:
         signal_stage = "armed_wait_structure"
@@ -640,10 +839,30 @@ def evaluate_close_decision(
         "volume_spike_confirmation_pct": config.volume_spike_confirmation_pct,
         "confirmation_readings": config.confirmation_readings,
         "short_rebound_tolerance_pp": config.short_rebound_tolerance_pp,
+        "short_history_limit": config.short_history_limit,
+        "partial_exit_fraction": config.partial_close_fraction,
+        "partial_exit_completed": partial_exit_completed,
+        "partial_exit_completed_at": partial_exit_completed_at,
+        "partial_exit_sample_id": partial_exit_sample_id,
+        "partial_exit_executed_qty": partial_exit_executed_qty,
+        "runner_active": runner_active,
+        "runner_confirmation_readings": config.runner_confirmation_readings,
+        "runner_confirmation_count": runner_confirmation_count,
+        "runner_last_counted_sample_id": runner_last_counted_sample_id,
+        "runner_oi_drop_pct": config.runner_oi_drop_pct,
+        "runner_volume_deceleration_pct": config.runner_volume_deceleration_pct,
+        "runner_oi_decline": runner_oi_decline,
+        "runner_volume_deceleration": runner_volume_deceleration,
+        "runner_price_failure": runner_price_failure,
+        "runner_joint_exhaustion": runner_joint_exhaustion,
+        "runner_hard_exhaustion": runner_hard_exhaustion,
+        "runner_reading_confirmation": runner_reading_confirmation,
+        "runner_exit_condition": runner_exit_condition,
         "short_account_sample_id": sample_id,
         "short_account_peak_pct": short_peak,
         "short_account_drawdown_from_peak_pp": short_peak_drawdown,
         "short_unwind_triggered_this_sample": unwind_trigger,
+        "short_unwind_peak_drawdown_triggered": peak_drawdown_trigger,
         "short_unwind_armed": armed,
         "short_unwind_armed_at": armed_at,
         "short_unwind_armed_sample_id": armed_sample_id,
@@ -683,6 +902,29 @@ def evaluate_close_decision(
     if config.block_without_breakeven_stop and not breakeven_stop_found:
         return CloseDecision(False, "breakeven stop guard not met", row)
 
+    if runner_active:
+        row["exit_action"] = "close_runner" if runner_exit_condition else "hold_runner"
+        row["close_fraction"] = 1.0 if runner_exit_condition else 0.0
+        if not runner_exit_condition:
+            return CloseDecision(
+                False,
+                "runner active; waiting for persistent price, OI, and volume exhaustion",
+                row,
+            )
+        reason_parts = ["runner exhaustion confirmed"]
+        if runner_hard_exhaustion:
+            reason_parts.append("hard price/OI/reversal-volume confirmation")
+        if runner_reading_confirmation:
+            reason_parts.append(
+                f"{runner_confirmation_count} persistent joint-exhaustion readings"
+            )
+        return CloseDecision(
+            True,
+            "; ".join(reason_parts),
+            row,
+            _close_order_params(symbol, position),
+        )
+
     if not armed:
         return CloseDecision(False, "short unwind not armed", row)
     if not structure_condition:
@@ -703,7 +945,19 @@ def evaluate_close_decision(
         reason_parts.append("confirmation: " + ", ".join(market_confirmations))
     elif reading_confirmation:
         reason_parts.append(f"confirmation: {confirmation_count} distinct hourly readings")
-    return CloseDecision(True, "; ".join(reason_parts), row, _close_order_params(symbol, position))
+    close_fraction = config.partial_close_fraction if partial_enabled else 1.0
+    row["exit_action"] = "partial_reduce" if partial_enabled else "full_close"
+    row["close_fraction"] = close_fraction
+    if partial_enabled:
+        reason_parts.append(
+            f"reduce {close_fraction * 100.0:.0f}% and retain protected runner"
+        )
+    return CloseDecision(
+        True,
+        "; ".join(reason_parts),
+        row,
+        _close_order_params(symbol, position, close_fraction=close_fraction),
+    )
 
 
 def fetch_decision(
@@ -734,7 +988,11 @@ def fetch_decision(
         position = _nonzero_position(positions if isinstance(positions, list) else [], symbol)
 
     try:
-        ratio_rows = client.global_long_short_account_ratio(symbol, period="1h", limit=2)
+        ratio_rows = client.global_long_short_account_ratio(
+            symbol,
+            period="1h",
+            limit=max(2, int(config.short_history_limit)),
+        )
     except (BinanceHTTPError, requests.RequestException, RuntimeError, ValueError) as exc:
         errors.append(f"short account ratio: {exc}")
         ratio_rows = []
@@ -766,17 +1024,43 @@ def fetch_decision(
         open_interest_rows = []
 
     position_start_ms = _to_float(position.get("updateTime"))
+    previous_carry_start_ms = _to_float((signal_state or {}).get("realized_carry_since_ms"))
+    if (
+        math.isfinite(previous_carry_start_ms)
+        and previous_carry_start_ms > 0
+        and _state_matches_position(
+            signal_state or {},
+            symbol=symbol,
+            side=_position_side(position),
+            entry_price=_to_float(position.get("entryPrice")),
+        )
+    ):
+        position_start_ms = (
+            min(position_start_ms, previous_carry_start_ms)
+            if math.isfinite(position_start_ms) and position_start_ms > 0
+            else previous_carry_start_ms
+        )
     try:
         if not math.isfinite(position_start_ms) or position_start_ms <= 0:
             raise ValueError("position updateTime unavailable")
+        income_start_ms = int(position_start_ms // 1000) * 1000
         funding_income_rows = client.income_history(
             symbol=symbol,
-            start_time=int(position_start_ms),
+            start_time=income_start_ms,
             income_type="FUNDING_FEE",
             limit=1000,
         )
+        commission_income_rows = client.income_history(
+            symbol=symbol,
+            start_time=income_start_ms,
+            income_type="COMMISSION",
+            limit=1000,
+        )
         carry_metrics = _realized_carry_metrics(
-            funding_income_rows if isinstance(funding_income_rows, list) else [],
+            [
+                *(funding_income_rows if isinstance(funding_income_rows, list) else []),
+                *(commission_income_rows if isinstance(commission_income_rows, list) else []),
+            ],
             symbol=symbol,
             position_start_ms=position_start_ms,
         )
@@ -784,9 +1068,16 @@ def fetch_decision(
         errors.append(f"realized carry: {exc}")
         carry_metrics = {
             "realized_carry_pnl": float("nan"),
+            "realized_funding_pnl": float("nan"),
+            "realized_trading_fee_pnl": float("nan"),
             "realized_carry_asset": "",
             "realized_carry_event_count": 0,
-            "realized_carry_since_ms": int(position_start_ms) if math.isfinite(position_start_ms) and position_start_ms > 0 else 0,
+            "realized_trading_fee_event_count": 0,
+            "realized_carry_since_ms": (
+                int(position_start_ms // 1000) * 1000
+                if math.isfinite(position_start_ms) and position_start_ms > 0
+                else 0
+            ),
         }
 
     try:
@@ -801,6 +1092,20 @@ def fetch_decision(
         algo_orders = []
 
     metrics = _short_metrics(ratio_rows if isinstance(ratio_rows, list) else [])
+    metrics.update(
+        short_account_history_stats(
+            ratio_rows if isinstance(ratio_rows, list) else [],
+            windows=(1, 3, 6),
+        )
+    )
+    metrics["short_account_pct"] = _to_float(
+        metrics.get("short_account_current_pct", metrics.get("short_account_pct"))
+    )
+    metrics["short_account_direction"] = str(
+        metrics.get("short_account_roc_1h_direction")
+        or metrics.get("short_account_direction")
+        or ""
+    )
     latest_short_timestamp = _latest_metric_timestamp(ratio_rows if isinstance(ratio_rows, list) else [])
     if latest_short_timestamp:
         metrics["short_account_timestamp_ms"] = latest_short_timestamp
@@ -923,7 +1228,30 @@ def maybe_close_position(client: BinanceFuturesPublic, decision: CloseDecision, 
                 f"price-protected PnL after realized carry {_format_number(executable_pnl_after_carry)} is not above ${required_profit_usdt:.2f}"
             )
 
-        order_params = _close_order_params(symbol, fresh_position)
+        close_fraction = min(
+            1.0,
+            max(0.0, _to_float(decision.row.get("close_fraction"))),
+        )
+        if not math.isfinite(close_fraction) or close_fraction <= 0:
+            return _execution_block("close fraction is unavailable or invalid")
+        close_quantity = (
+            _fractional_close_quantity(client, symbol, fresh_amount, close_fraction)
+            if close_fraction < 1.0
+            else Decimal(str(abs(fresh_amount)))
+        )
+        decision.row.update(
+            {
+                "execution_exit_action": decision.row.get("exit_action") or "full_close",
+                "execution_close_fraction": close_fraction,
+                "execution_order_quantity": _format_quantity(close_quantity),
+            }
+        )
+        order_params = _close_order_params(
+            symbol,
+            fresh_position,
+            close_fraction=close_fraction,
+            quantity=close_quantity,
+        )
         order_params.update(
             {
                 "type": "LIMIT",
@@ -935,6 +1263,8 @@ def maybe_close_position(client: BinanceFuturesPublic, decision: CloseDecision, 
         order_result = client.new_futures_order(**order_params)
         result = dict(order_result) if isinstance(order_result, dict) else {"raw_result": order_result}
         result["safety_revalidated"] = True
+        result["exit_action"] = decision.row.get("exit_action") or "full_close"
+        result["close_fraction"] = close_fraction
         result["submitted_order_params"] = order_params
         return result
     except (BinanceAuthenticationError, BinanceHTTPError, requests.RequestException, RuntimeError, TypeError, ValueError) as exc:
@@ -967,6 +1297,23 @@ def _order_fully_filled(order_result: dict[str, Any] | None) -> bool:
     )
 
 
+def _order_completes_position(
+    decision: CloseDecision,
+    order_result: dict[str, Any] | None,
+) -> bool:
+    if not _order_fully_filled(order_result):
+        return False
+    if str(decision.row.get("exit_action") or "") in {"full_close", "close_runner"}:
+        return True
+    position_amount = abs(_to_float(decision.row.get("execution_revalidated_position_amt")))
+    executed = _executed_quantity(order_result)
+    return bool(
+        math.isfinite(position_amount)
+        and position_amount > 0
+        and executed >= position_amount - 1e-12
+    )
+
+
 def build_discord_payload(decision: CloseDecision, errors: list[str], order_result: dict[str, Any] | None = None) -> dict[str, Any]:
     row = decision.row
     symbol = str(row.get("symbol", "")).upper()
@@ -974,8 +1321,14 @@ def build_discord_payload(decision: CloseDecision, errors: list[str], order_resu
     action = (
         "EXECUTION BLOCKED"
         if order_result and order_result.get("safety_blocked")
+        else "PARTIAL EXIT TRIGGER"
+        if decision.should_close and row.get("exit_action") == "partial_reduce"
+        else "RUNNER EXIT TRIGGER"
+        if decision.should_close and row.get("exit_action") == "close_runner"
         else "CLOSE TRIGGER"
         if decision.should_close
+        else "RUNNER / WAIT"
+        if row.get("runner_active")
         else "ARMED / WAIT"
         if row.get("short_unwind_armed")
         else "monitor"
@@ -996,6 +1349,9 @@ def build_discord_payload(decision: CloseDecision, errors: list[str], order_resu
         f"or {_format_number(row.get('short_account_peak_drawdown_pp'))}pp below peak.\n"
         f"Confirm with hourly price/OI/volume structure or "
         f"{int(_to_float(row.get('confirmation_readings'))) if math.isfinite(_to_float(row.get('confirmation_readings'))) else 0} distinct hourly short samples.\n\n"
+        f"Lifecycle: first confirmed unwind reduces "
+        f"{_format_pct(_to_float(row.get('partial_exit_fraction')) * 100.0, signed=False)}; "
+        f"runner exits after persistent price/OI/volume exhaustion.\n\n"
         f"Market price: ${_format_number(row.get('market_price'))}\n"
         f"/{symbol} | {row.get('position_side')} amt {_format_number(row.get('position_amt'))} | "
         f"entry {_format_number(row.get('entry_price'))} | mark {_format_number(row.get('mark_price'))}\n"
@@ -1005,13 +1361,21 @@ def build_discord_payload(decision: CloseDecision, errors: list[str], order_resu
         f"fresh PnL ${_format_number(row.get('execution_revalidated_unrealized_profit'))} / "
         f"{_format_pct(row.get('execution_revalidated_profit_pct'))} | protected executable {_format_pct(row.get('execution_executable_profit_pct'))}\n"
         f"Realized Carry PnL ${_format_number(row.get('realized_carry_pnl'))} "
-        f"{row.get('realized_carry_asset') or ''} | funding events {int(_to_float(row.get('realized_carry_event_count'))) if math.isfinite(_to_float(row.get('realized_carry_event_count'))) else 0}\n"
+        f"{row.get('realized_carry_asset') or ''} | "
+        f"funding ${_format_number(row.get('realized_funding_pnl'))} | "
+        f"trading fees ${_format_number(row.get('realized_trading_fee_pnl'))} | "
+        f"events {int(_to_float(row.get('realized_carry_event_count'))) if math.isfinite(_to_float(row.get('realized_carry_event_count'))) else 0} funding / "
+        f"{int(_to_float(row.get('realized_trading_fee_event_count'))) if math.isfinite(_to_float(row.get('realized_trading_fee_event_count'))) else 0} fee\n"
         f"BE stop check: {'hard block' if row.get('block_without_breakeven_stop') else 'warning' if row.get('require_breakeven_stop') else 'off'} | "
         f"found={row.get('breakeven_stop_found')} | tolerance {_format_pct(row.get('breakeven_tolerance_pct'))}\n"
         f"short {_format_pct(row.get('short_account_previous_1h_pct'), signed=False)} -> "
         f"{_format_pct(row.get('short_account_pct'), signed=False)} | "
         f"delta {_format_pp(row.get('short_account_roc_1h_pp'))} / {_format_pct(row.get('short_account_roc_1h_pct'))} | "
         f"{row.get('short_account_direction') or 'n/a'}\n"
+        f"Smoothed short ROC {_format_pp(row.get('short_account_roc_smoothed_3p_pp'))} | "
+        f"accel {_format_pp(row.get('short_account_acceleration_1h_pp'))} | "
+        f"z {_format_number(row.get('short_account_roc_zscore'))} | "
+        f"persistence {int(_to_float(row.get('short_account_direction_persistence'))) if math.isfinite(_to_float(row.get('short_account_direction_persistence'))) else 0}\n"
         f"Exit state: {row.get('exit_signal_stage') or 'n/a'} | armed={bool(row.get('short_unwind_armed'))} | "
         f"hourly reads {int(_to_float(row.get('short_unwind_confirmation_count'))) if math.isfinite(_to_float(row.get('short_unwind_confirmation_count'))) else 0}/"
         f"{int(_to_float(row.get('confirmation_readings'))) if math.isfinite(_to_float(row.get('confirmation_readings'))) else 0}\n"
@@ -1022,11 +1386,18 @@ def build_discord_payload(decision: CloseDecision, errors: list[str], order_resu
         f"OI={bool(row.get('exit_oi_confirmation'))} ({_format_pct(row.get('open_interest_change_pct'))}) | "
         f"volume={bool(row.get('exit_volume_confirmation'))} | "
         f"{row.get('exit_market_confirmation_reasons') or 'none'}\n"
+        f"Runner: active={bool(row.get('runner_active'))} | partial_done={bool(row.get('partial_exit_completed'))} | "
+        f"joint exhaustion={bool(row.get('runner_joint_exhaustion'))} | "
+        f"reads {int(_to_float(row.get('runner_confirmation_count'))) if math.isfinite(_to_float(row.get('runner_confirmation_count'))) else 0}/"
+        f"{int(_to_float(row.get('runner_confirmation_readings'))) if math.isfinite(_to_float(row.get('runner_confirmation_readings'))) else 0}\n"
         f"Volume: 24h ${_format_number(row.get('quote_volume_24h_usdt'))} | "
         f"prior 30D ${_format_number(row.get('quote_volume_prior_30d_total_usdt'))} "
         f"({int(_to_float(row.get('quote_volume_prior_30d_days'))) if math.isfinite(_to_float(row.get('quote_volume_prior_30d_days'))) else 0} closed days)\n"
         f"Prior daily avg ${_format_number(row.get('quote_volume_prior_30d_daily_avg_usdt'))} | "
         f"24h / prior avg {_format_number(row.get('quote_volume_24h_vs_prior_30d_avg_ratio'), suffix='x')}\n"
+        f"30D AVWAP ${_format_number(row.get('anchored_vwap_30d'))} | "
+        f"price distance {_format_pct(row.get('price_vs_anchored_vwap_30d_pct'))} | "
+        f"days {int(_to_float(row.get('anchored_vwap_30d_days'))) if math.isfinite(_to_float(row.get('anchored_vwap_30d_days'))) else 0}\n"
         f"1H quote volume ${_format_number(row.get('hour_quote_volume'))} | previous ${_format_number(row.get('hour_quote_volume_previous_1h'))} | "
         f"1H volume ROC {_format_pct(row.get('hour_volume_roc_1h_pct'))}\n"
         f"Decision: {action} | {decision_text}"
@@ -1065,7 +1436,10 @@ def build_external_close_payload(close_event: dict[str, Any]) -> dict[str, Any]:
         f"last mark {_format_number(close_event.get('mark_price'))}\n"
         f"Last Unrealized PnL ${_format_number(close_event.get('unrealized_profit'))} / "
         f"{_format_pct(close_event.get('profit_pct'))}\n"
-        f"Last Realized Carry PnL ${_format_number(close_event.get('realized_carry_pnl'))}\n"
+        f"Last Realized Carry PnL ${_format_number(close_event.get('realized_carry_pnl'))} "
+        f"{close_event.get('realized_carry_asset') or ''} | "
+        f"funding ${_format_number(close_event.get('realized_funding_pnl'))} | "
+        f"trading fees ${_format_number(close_event.get('realized_trading_fee_pnl'))}\n"
         f"Last short accounts {_format_pct(close_event.get('short_account_pct'), signed=False)} | "
         f"1h ROC {_format_pct(close_event.get('short_account_roc_1h_pct'))}\n"
         f"Last 1H volume ROC {_format_pct(close_event.get('hour_volume_roc_1h_pct'))}\n"
@@ -1202,11 +1576,16 @@ def run_once(config: ShortRocCloseConfig) -> tuple[CloseDecision, list[str], dic
         f"should_close={decision.should_close} "
         f"reason={decision.reason} unrealized_pnl={_format_number(decision.row.get('unrealized_profit'))} "
         f"realized_carry_pnl={_format_number(decision.row.get('realized_carry_pnl'))} "
+        f"funding_pnl={_format_number(decision.row.get('realized_funding_pnl'))} "
+        f"trading_fee_pnl={_format_number(decision.row.get('realized_trading_fee_pnl'))} "
         f"short={_format_pct(decision.row.get('short_account_previous_1h_pct'), signed=False)}"
         f"->{_format_pct(decision.row.get('short_account_pct'), signed=False)} "
         f"short_roc={_format_pct(decision.row.get('short_account_roc_1h_pct'))} "
         f"stage={decision.row.get('exit_signal_stage') or 'n/a'} "
+        f"action={decision.row.get('exit_action') or 'none'} "
         f"armed={bool(decision.row.get('short_unwind_armed'))} "
+        f"runner={bool(decision.row.get('runner_active'))} "
+        f"runner_reads={decision.row.get('runner_confirmation_count', 0)}/{config.runner_confirmation_readings} "
         f"short_peak={_format_pct(decision.row.get('short_account_peak_pct'), signed=False)} "
         f"peak_drawdown={_format_pp(-_to_float(decision.row.get('short_account_drawdown_from_peak_pp')))} "
         f"confirm_reads={decision.row.get('short_unwind_confirmation_count', 0)}/{config.confirmation_readings} "
@@ -1230,7 +1609,7 @@ def run_once(config: ShortRocCloseConfig) -> tuple[CloseDecision, list[str], dic
         )
 
     if _position_data_available(decision, errors):
-        if _order_fully_filled(order_result):
+        if _order_completes_position(decision, order_result):
             closed_state = {
                 **(current_snapshot or previous_state),
                 "status": "closed",
@@ -1238,6 +1617,37 @@ def run_once(config: ShortRocCloseConfig) -> tuple[CloseDecision, list[str], dic
                 "detected_closed_at": _now_utc().strftime("%Y-%m-%d %H:%M:%S UTC"),
             }
             _write_position_state(closed_state, config)
+        elif (
+            current_snapshot
+            and decision.row.get("exit_action") == "partial_reduce"
+            and _executed_quantity(order_result) > 0
+        ):
+            executed_quantity = _executed_quantity(order_result)
+            current_amount = _to_float(current_snapshot.get("position_amt"))
+            remaining_amount = (
+                math.copysign(max(0.0, abs(current_amount) - executed_quantity), current_amount)
+                if math.isfinite(current_amount) and current_amount != 0
+                else current_amount
+            )
+            partial_state = {
+                **current_snapshot,
+                "position_amt": remaining_amount,
+                "partial_exit_completed": True,
+                "partial_exit_completed_at": _now_utc().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "partial_exit_sample_id": decision.row.get("short_account_sample_id") or "",
+                "partial_exit_executed_qty": (
+                    _to_float(previous_state.get("partial_exit_executed_qty"))
+                    if math.isfinite(_to_float(previous_state.get("partial_exit_executed_qty")))
+                    else 0.0
+                )
+                + executed_quantity,
+                "partial_exit_fraction": decision.row.get("partial_exit_fraction"),
+                "runner_active": True,
+                "runner_confirmation_count": 0,
+                "runner_last_counted_sample_id": decision.row.get("short_account_sample_id") or "",
+                "exit_signal_stage": "runner_active_wait_exhaustion",
+            }
+            _write_position_state(partial_state, config)
         elif current_snapshot:
             _write_position_state(current_snapshot, config)
         elif external_close or decision.reason == "no open position":
@@ -1258,15 +1668,16 @@ def run_once(config: ShortRocCloseConfig) -> tuple[CloseDecision, list[str], dic
 def run_forever(config: ShortRocCloseConfig) -> None:
     while True:
         try:
-            _, _, order_result = run_once(config)
+            decision, _, order_result = run_once(config)
         except KeyboardInterrupt:
             print(f"[{_now_label()}] stopped by user", flush=True)
             return
         except Exception as exc:
             print(f"[{_now_label()}] {config.symbol.upper()} close monitor cycle failed: {exc}", flush=True)
+            decision = _empty_decision(config.symbol, "monitor cycle failed", config)
             order_result = None
-        if config.close_once and _order_fully_filled(order_result):
-            print(f"[{_now_label()}] live close order sent; close-once enabled, stopping monitor", flush=True)
+        if config.close_once and _order_completes_position(decision, order_result):
+            print(f"[{_now_label()}] live position close completed; close-once enabled, stopping monitor", flush=True)
             return
         if config.once:
             return
@@ -1287,6 +1698,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--volume-spike-confirmation-pct", type=float, default=float(_env_value("SHORT_ROC_CLOSE_VOLUME_CONFIRMATION_PCT", "50")), help="Confirm an exit on a reversal candle when completed 1h quote-volume ROC reaches this percent.")
     parser.add_argument("--confirmation-readings", type=int, default=int(_env_value("SHORT_ROC_CLOSE_CONFIRMATION_READINGS", "2")), help="Distinct hourly short-account samples that can confirm an armed unwind when no market confirmation is present.")
     parser.add_argument("--short-rebound-tolerance-pp", type=float, default=float(_env_value("SHORT_ROC_CLOSE_REBOUND_TOLERANCE_PP", "0.5")), help="Maximum short-account rebound from the armed level while waiting for another hourly confirmation.")
+    parser.add_argument("--short-history-limit", type=int, default=int(_env_value("SHORT_ROC_CLOSE_HISTORY_LIMIT", "12")), help="Hourly short-account rows used for smoothing, acceleration, persistence, and per-token z-scores.")
+    parser.add_argument("--partial-close-pct", type=float, default=float(_env_value("SHORT_ROC_CLOSE_PARTIAL_PCT", "50")), help="Percent of the position to reduce on the first confirmed unwind. Set 100 for legacy full-close behavior.")
+    parser.add_argument("--runner-confirmation-readings", type=int, default=int(_env_value("SHORT_ROC_CLOSE_RUNNER_CONFIRMATION_READINGS", "2")), help="Distinct post-partial hourly samples required for persistent runner exhaustion.")
+    parser.add_argument("--runner-oi-drop-pct", type=float, default=float(_env_value("SHORT_ROC_CLOSE_RUNNER_OI_DROP_PCT", "3")), help="Hourly OI decline required for the persistent runner exhaustion condition.")
+    parser.add_argument("--runner-volume-deceleration-pct", type=float, default=float(_env_value("SHORT_ROC_CLOSE_RUNNER_VOLUME_DECELERATION_PCT", "20")), help="Hourly volume decline required for the persistent runner exhaustion condition.")
     parser.add_argument("--min-profit-usdt", type=float, default=float(_env_value("SHORT_ROC_CLOSE_MIN_PROFIT_USDT", "0")), help="Minimum unrealized profit in USDT before close can trigger.")
     parser.add_argument("--min-profit-pct", type=float, default=float(_env_value("SHORT_ROC_CLOSE_MIN_PROFIT_PCT", "0")), help="Minimum position profit percent before close can trigger.")
     parser.add_argument("--execution-profit-floor-pct", type=float, default=float(_env_value("SHORT_ROC_CLOSE_EXECUTION_PROFIT_FLOOR_PCT", "0.25")), help="Hard minimum executable gross profit percent required immediately before a protected close order.")
@@ -1324,6 +1740,11 @@ def config_from_args(args: argparse.Namespace) -> ShortRocCloseConfig:
         volume_spike_confirmation_pct=abs(float(args.volume_spike_confirmation_pct)),
         confirmation_readings=max(1, int(args.confirmation_readings)),
         short_rebound_tolerance_pp=abs(float(args.short_rebound_tolerance_pp)),
+        short_history_limit=max(4, int(args.short_history_limit)),
+        partial_close_fraction=min(1.0, max(0.01, float(args.partial_close_pct) / 100.0)),
+        runner_confirmation_readings=max(1, int(args.runner_confirmation_readings)),
+        runner_oi_drop_pct=abs(float(args.runner_oi_drop_pct)),
+        runner_volume_deceleration_pct=abs(float(args.runner_volume_deceleration_pct)),
         min_profit_usdt=float(args.min_profit_usdt),
         min_profit_pct=float(args.min_profit_pct),
         execution_profit_floor_pct=max(0.0, float(args.execution_profit_floor_pct)),
@@ -1345,6 +1766,8 @@ def main(argv: list[str] | None = None) -> None:
         f"short_level<={config.short_account_exit_level_pct:.2f}% "
         f"peak_drawdown>={config.short_account_peak_drawdown_pp:.2f}pp "
         f"confirmations={config.confirmation_readings} "
+        f"partial={config.partial_close_fraction * 100.0:.0f}% "
+        f"runner_confirmations={config.runner_confirmation_readings} "
         f"execution_floor={config.execution_profit_floor_pct:.2f}% "
         f"live={config.live} output={config.output_dir}",
         flush=True,

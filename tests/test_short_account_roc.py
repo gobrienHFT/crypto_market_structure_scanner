@@ -47,6 +47,38 @@ def test_short_account_history_stats_exposes_1h_roc_aliases() -> None:
     assert stats["short_account_roc_1h_direction"] == "build"
 
 
+def test_short_account_history_stats_smooths_and_standardizes_token_breadth() -> None:
+    stats = short_account_history_stats(
+        [
+            _ratio(1, 0.50),
+            _ratio(2, 0.505),
+            _ratio(3, 0.515),
+            _ratio(4, 0.52),
+            _ratio(5, 0.54),
+        ],
+        windows=(1, 3),
+    )
+
+    assert round(float(stats["short_account_roc_smoothed_3p_pp"]), 6) == round((1.0 + 0.5 + 2.0) / 3.0, 6)
+    assert round(float(stats["short_account_acceleration_1h_pp"]), 6) == 1.5
+    assert float(stats["short_account_roc_zscore"]) > 2.0
+    assert stats["short_account_direction_persistence"] == 4
+
+
+def test_short_account_direction_persistence_stops_at_latest_reversal() -> None:
+    stats = short_account_history_stats(
+        [
+            _ratio(1, 0.50),
+            _ratio(2, 0.53),
+            _ratio(3, 0.52),
+            _ratio(4, 0.51),
+        ]
+    )
+
+    assert stats["short_account_roc_1h_direction"] == "cover"
+    assert stats["short_account_direction_persistence"] == 2
+
+
 def test_short_account_roc_row_and_flags_cover_builds_and_covers() -> None:
     build = build_short_account_roc_row(
         futures_symbol=_symbol("BUILDUSDT"),
@@ -121,9 +153,9 @@ def test_scan_short_account_roc_uses_quote_volume_filter_and_history() -> None:
                 {"symbol": "BBBUSDT", "lastPrice": "2", "quoteVolume": "10"},
             ]
 
-        def global_long_short_account_ratio(self, symbol: str, *, period: str = "1h", limit: int = 2):
+        def global_long_short_account_ratio(self, symbol: str, *, period: str = "1h", limit: int = 12):
             assert period == "1h"
-            assert limit == 2
+            assert limit == 12
             return [_ratio(1, 0.50), _ratio(2, 0.54)]
 
     frame, errors = scan_short_account_roc(FakeClient(), min_quote_volume=1000)

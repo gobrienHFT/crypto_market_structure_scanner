@@ -14,7 +14,14 @@ from binance_futures import BinanceFuturesPublic
 CASE_STUDY_SYMBOLS = ("RAVEUSDT", "LABUSDT", "VELVETUSDT", "RIVERUSDT", "SIRENUSDT", "STOUSDT")
 
 LOCAL_SNAPSHOT_FILES = (
+    Path("crypto_market_structure/fixtures/historical_exports/2026-04-20T17-22_export.csv"),
+    Path("crypto_market_structure/fixtures/historical_exports/2026-04-28T18-29_export.csv"),
+    Path("crypto_market_structure/fixtures/historical_exports/2026-04-28T18-30_export.csv"),
+    # Compatibility names keep the backfill helper usable with a caller's
+    # temporary root and older local exports without keeping generated files
+    # in this repository's root.
     Path("2026-04-20T17-22_export.csv"),
+    Path("2026-04-28T18-29_export.csv"),
     Path("2026-04-28T18-30_export.csv"),
     Path("data/latest_convex_longs.csv"),
     Path("data/latest_short_account_roc.csv"),

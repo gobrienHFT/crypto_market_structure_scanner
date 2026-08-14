@@ -20,10 +20,12 @@ class _Session:
     def __init__(self, responses):
         self.responses = list(responses)
         self.urls: list[str] = []
+        self.methods: list[str] = []
         self.headers = {}
 
     def request(self, *, url, **_kwargs):
         self.urls.append(url)
+        self.methods.append(str(_kwargs.get("method") or "").upper())
         return self.responses.pop(0)
 
 
@@ -68,3 +70,15 @@ def test_timestamp_error_forces_resync_and_retries_same_request(monkeypatch) -> 
     assert len(client.session.urls) == 3
     retried_query = parse_qs(urlparse(client.session.urls[2]).query)
     assert retried_query["timestamp"] == ["1000"]
+
+
+def test_cancel_individual_algo_order_uses_signed_delete() -> None:
+    client = _client([_Response(200, {"algoId": 123, "success": True})])
+    client._last_time_sync_monotonic = binance_futures.time.monotonic()
+
+    result = client.cancel_futures_algo_order(algo_id=123)
+
+    assert result["success"] is True
+    assert client.session.methods == ["DELETE"]
+    query = parse_qs(urlparse(client.session.urls[0]).query)
+    assert query["algoId"] == ["123"]

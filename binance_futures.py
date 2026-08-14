@@ -607,6 +607,22 @@ class BinanceFuturesPublic:
         data = self._signed_delete("/fapi/v1/algoOpenOrders", {"symbol": symbol.upper()})
         return data if isinstance(data, dict) else {}
 
+    def cancel_futures_algo_order(
+        self,
+        *,
+        algo_id: int | str | None = None,
+        client_algo_id: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if algo_id is not None:
+            params["algoId"] = algo_id
+        if client_algo_id:
+            params["clientAlgoId"] = client_algo_id
+        if not params:
+            raise ValueError("algo_id or client_algo_id is required")
+        data = self._signed_delete("/fapi/v1/algoOrder", params)
+        return data if isinstance(data, dict) else {}
+
     def income_history(
         self,
         *,

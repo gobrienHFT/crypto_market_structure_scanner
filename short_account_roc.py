@@ -118,6 +118,12 @@ def short_account_history_stats(rows: list[dict[str, Any]], *, windows: tuple[in
         "short_account_roc_1h_pp": float("nan"),
         "short_account_roc_1h_abs_pp": float("nan"),
         "short_account_roc_1h_direction": "",
+        "short_account_roc_smoothed_3p_pp": float("nan"),
+        "short_account_roc_smoothed_3p_pct": float("nan"),
+        "short_account_acceleration_1h_pp": float("nan"),
+        "short_account_acceleration_smoothed_3p_pp": float("nan"),
+        "short_account_roc_zscore": float("nan"),
+        "short_account_direction_persistence": 0,
         "short_account_change_max_pct": float("nan"),
         "short_account_change_max_pp": float("nan"),
         "short_account_change_max_window": "",
@@ -134,6 +140,50 @@ def short_account_history_stats(rows: list[dict[str, Any]], *, windows: tuple[in
 
     current = short_values[-1]
     stats["short_account_current_pct"] = current
+    one_step_pp = [
+        short_values[index] - short_values[index - 1]
+        for index in range(1, len(short_values))
+    ]
+    one_step_pct = [
+        _pct_change(short_values[index], short_values[index - 1])
+        for index in range(1, len(short_values))
+    ]
+    if one_step_pp:
+        recent_count = min(3, len(one_step_pp))
+        stats["short_account_roc_smoothed_3p_pp"] = sum(one_step_pp[-recent_count:]) / recent_count
+        valid_recent_pct = [value for value in one_step_pct[-recent_count:] if math.isfinite(value)]
+        if valid_recent_pct:
+            stats["short_account_roc_smoothed_3p_pct"] = sum(valid_recent_pct) / len(valid_recent_pct)
+
+        latest_sign = 1 if one_step_pp[-1] > 0 else -1 if one_step_pp[-1] < 0 else 0
+        persistence = 0
+        if latest_sign:
+            for value in reversed(one_step_pp):
+                value_sign = 1 if value > 0 else -1 if value < 0 else 0
+                if value_sign != latest_sign:
+                    break
+                persistence += 1
+        stats["short_account_direction_persistence"] = persistence
+
+        prior_deltas = one_step_pp[:-1]
+        if len(prior_deltas) >= 3:
+            baseline_mean = sum(prior_deltas) / len(prior_deltas)
+            variance = sum((value - baseline_mean) ** 2 for value in prior_deltas) / len(prior_deltas)
+            baseline_std = math.sqrt(variance)
+            if baseline_std > 1e-12:
+                stats["short_account_roc_zscore"] = (one_step_pp[-1] - baseline_mean) / baseline_std
+
+    accelerations = [
+        one_step_pp[index] - one_step_pp[index - 1]
+        for index in range(1, len(one_step_pp))
+    ]
+    if accelerations:
+        stats["short_account_acceleration_1h_pp"] = accelerations[-1]
+        recent_count = min(3, len(accelerations))
+        stats["short_account_acceleration_smoothed_3p_pp"] = (
+            sum(accelerations[-recent_count:]) / recent_count
+        )
+
     pct_changes: dict[int, float] = {}
     pp_changes: dict[int, float] = {}
     for window in windows:
@@ -206,6 +256,16 @@ def build_short_account_roc_row(
         "short_account_roc_1h_pp": _to_float(stats.get("short_account_roc_1h_pp")),
         "short_account_roc_1h_abs_pp": _to_float(stats.get("short_account_roc_1h_abs_pp")),
         "short_account_roc_1h_direction": str(stats.get("short_account_roc_1h_direction", "") or ""),
+        "short_account_roc_smoothed_3p_pp": _to_float(stats.get("short_account_roc_smoothed_3p_pp")),
+        "short_account_roc_smoothed_3p_pct": _to_float(stats.get("short_account_roc_smoothed_3p_pct")),
+        "short_account_acceleration_1h_pp": _to_float(stats.get("short_account_acceleration_1h_pp")),
+        "short_account_acceleration_smoothed_3p_pp": _to_float(
+            stats.get("short_account_acceleration_smoothed_3p_pp")
+        ),
+        "short_account_roc_zscore": _to_float(stats.get("short_account_roc_zscore")),
+        "short_account_direction_persistence": int(
+            stats.get("short_account_direction_persistence", 0) or 0
+        ),
         "short_account_history_points": int(stats.get("short_account_history_points", 0) or 0),
     }
     row.update(closed_hour_volume_metrics(hourly_klines or [], bars_per_hour=1))
@@ -238,7 +298,7 @@ def scan_short_account_roc(
     symbols: tuple[str, ...] = (),
     max_symbols: int = 0,
     period: str = "1h",
-    history_limit: int = 2,
+    history_limit: int = 12,
     min_quote_volume: float = 0.0,
 ) -> tuple[pd.DataFrame, list[str]]:
     universe = client.perpetual_usdt_symbols()
@@ -373,6 +433,12 @@ def _append_alerts(path: Path, rows: pd.DataFrame) -> None:
         "short_account_previous_1h_pct",
         "short_account_roc_1h_pp",
         "short_account_roc_1h_pct",
+        "short_account_roc_smoothed_3p_pp",
+        "short_account_roc_smoothed_3p_pct",
+        "short_account_acceleration_1h_pp",
+        "short_account_acceleration_smoothed_3p_pp",
+        "short_account_roc_zscore",
+        "short_account_direction_persistence",
         "quote_volume_24h",
         "hour_quote_volume_previous_1h",
         "hour_quote_volume",
@@ -387,6 +453,18 @@ def _append_alerts(path: Path, rows: pd.DataFrame) -> None:
             "short_account_previous_1h_pct": row.get("short_account_previous_1h_pct", ""),
             "short_account_roc_1h_pp": row.get("short_account_roc_1h_pp", ""),
             "short_account_roc_1h_pct": row.get("short_account_roc_1h_pct", ""),
+            "short_account_roc_smoothed_3p_pp": row.get("short_account_roc_smoothed_3p_pp", ""),
+            "short_account_roc_smoothed_3p_pct": row.get("short_account_roc_smoothed_3p_pct", ""),
+            "short_account_acceleration_1h_pp": row.get("short_account_acceleration_1h_pp", ""),
+            "short_account_acceleration_smoothed_3p_pp": row.get(
+                "short_account_acceleration_smoothed_3p_pp",
+                "",
+            ),
+            "short_account_roc_zscore": row.get("short_account_roc_zscore", ""),
+            "short_account_direction_persistence": row.get(
+                "short_account_direction_persistence",
+                "",
+            ),
             "quote_volume_24h": row.get("quote_volume_24h", ""),
             "hour_quote_volume_previous_1h": row.get("hour_quote_volume_previous_1h", ""),
             "hour_quote_volume": row.get("hour_quote_volume", ""),
@@ -417,6 +495,10 @@ def _format_alert_line(row: pd.Series) -> str:
         f"/{symbol} | {arrow} {direction} | short {_format_number(row.get('short_account_previous_1h_pct'), '%')} -> "
         f"{_format_number(row.get('short_account_pct'), '%')} | "
         f"delta {_format_number(row.get('short_account_roc_1h_pp'), 'pp')} / {_format_number(row.get('short_account_roc_1h_pct'), '%')} | "
+        f"smooth {_format_number(row.get('short_account_roc_smoothed_3p_pp'), 'pp')} | "
+        f"accel {_format_number(row.get('short_account_acceleration_1h_pp'), 'pp')} | "
+        f"z {_format_number(row.get('short_account_roc_zscore'))} | "
+        f"persist {int(_to_float(row.get('short_account_direction_persistence'))) if math.isfinite(_to_float(row.get('short_account_direction_persistence'))) else 0} | "
         f"vol24 ${_format_number(row.get('quote_volume_24h'))} | "
         f"vol ROC 1h {_format_number(row.get('hour_volume_roc_1h_pct'), '%')}"
     )
@@ -524,7 +606,17 @@ def run_once(config: ShortAccountRocConfig) -> tuple[pd.DataFrame, pd.DataFrame,
     if not flagged.empty:
         print(
             flagged[
-                ["symbol", "short_account_pct", "short_account_roc_1h_pp", "short_account_roc_1h_pct", "hour_volume_roc_1h_pct"]
+                [
+                    "symbol",
+                    "short_account_pct",
+                    "short_account_roc_1h_pp",
+                    "short_account_roc_1h_pct",
+                    "short_account_roc_smoothed_3p_pp",
+                    "short_account_acceleration_1h_pp",
+                    "short_account_roc_zscore",
+                    "short_account_direction_persistence",
+                    "hour_volume_roc_1h_pct",
+                ]
             ].to_string(index=False),
             flush=True,
         )
@@ -584,7 +676,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-symbols", type=int, default=int(_env_value("SHORT_ROC_MAX_SYMBOLS", "0")), help="Optional cap for smoke testing. 0 scans every USDT perp.")
     parser.add_argument("--symbols", default=_env_value("SHORT_ROC_SYMBOLS", ""), help="Comma-separated symbols to scan. Empty scans all.")
     parser.add_argument("--period", default=_env_value("SHORT_ROC_PERIOD", "1h"), help="Binance long/short account ratio period. Default 1h.")
-    parser.add_argument("--history-limit", type=int, default=int(_env_value("SHORT_ROC_HISTORY_LIMIT", "2")), help="Ratio rows per symbol. 2 is enough for 1h ROC.")
+    parser.add_argument(
+        "--history-limit",
+        type=int,
+        default=int(_env_value("SHORT_ROC_HISTORY_LIMIT", "12")),
+        help="Ratio rows per symbol. 12 supports smoothing, acceleration, persistence, and per-token standardization.",
+    )
     parser.add_argument("--min-abs-pp", type=float, default=float(_env_value("SHORT_ROC_MIN_ABS_PP", "1.5")), help="Alert when 1h short-account share moves by at least this many percentage points.")
     parser.add_argument("--min-abs-pct", type=float, default=float(_env_value("SHORT_ROC_MIN_ABS_PCT", "3.0")), help="Alert when 1h relative short-account change exceeds this percent.")
     parser.add_argument("--min-quote-volume", type=float, default=float(_env_value("SHORT_ROC_MIN_QUOTE_VOLUME", "0")), help="Optional 24h quote-volume floor.")

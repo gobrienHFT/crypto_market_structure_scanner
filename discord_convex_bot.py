@@ -43,6 +43,7 @@ from market_structure_scoring import apply_lifecycle_model
 from pre_activity_radar import apply_pre_activity_radar
 from proof_engine import proof_archive_path, refresh_outcomes, weekly_scoreboard_text, write_weekly_report
 from scan_orchestrator import run_fresh_scan_frame
+from short_account_roc import short_account_history_stats
 from short_squeeze_scoring import apply_short_squeeze_model
 from terminal_engine import apply_terminal_model, build_setup_dossier
 from timing_engine import apply_timing_model, build_timing_card
@@ -273,6 +274,13 @@ def _fmt_compact_number(value: Any) -> str:
         if abs(parsed) >= divisor:
             return f"{parsed / divisor:.2f}{suffix}"
     return f"{parsed:.2f}".rstrip("0").rstrip(".")
+
+
+def _signed_metric(value: Any, suffix: str) -> str:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return "n/a"
+    return f"{parsed:+.2f}{suffix}"
 
 
 def _chunk_text_lines(lines: list[str], *, max_chars: int = 1850) -> list[str]:
@@ -6501,25 +6509,30 @@ def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]
     underlying_by_symbol = {str(item.symbol).upper().strip(): str(getattr(item, "underlying_type", "") or "").upper().strip() for item in universe if getattr(item, "symbol", "")}
     for symbol in symbols:
         try:
-            ratio_rows = client.global_long_short_account_ratio(symbol, period=period, limit=2)
+            history_limit = min(
+                _env_int("DISCORD_SHORTPCT_HISTORY_LIMIT", 12, minimum=4),
+                500,
+            )
+            ratio_rows = client.global_long_short_account_ratio(
+                symbol,
+                period=period,
+                limit=history_limit,
+            )
         except Exception:
             errors += 1
             continue
         if len(ratio_rows) < 2:
             continue
-        previous = ratio_rows[-2]
         latest = ratio_rows[-1]
-        previous_short = _safe_pct(previous.get("shortAccount"))
-        current_short = _safe_pct(latest.get("shortAccount"))
+        history_stats = short_account_history_stats(ratio_rows, windows=(1,))
+        previous_short = _safe_float(history_stats.get("short_account_previous_1h_pct"))
+        current_short = _safe_float(history_stats.get("short_account_current_pct"))
         long_pct = _safe_pct(latest.get("longAccount"))
         ratio = _safe_float(latest.get("longShortRatio"))
         if previous_short is None or current_short is None:
             continue
-        delta_pp = current_short - previous_short
-        if abs(previous_short) < 1e-12:
-            delta_pct = None
-        else:
-            delta_pct = (current_short / previous_short - 1.0) * 100.0
+        delta_pp = _safe_float(history_stats.get("short_account_roc_1h_pp"))
+        delta_pct = _safe_float(history_stats.get("short_account_roc_1h_pct"))
         ticker = tickers.get(symbol, {})
         rows.append(
             {
@@ -6530,6 +6543,24 @@ def _load_live_shortpct_frame(*, period: str = "1h") -> tuple[pd.DataFrame, str]
                 "short_account_previous_pct": previous_short,
                 "short_account_roc_pp": delta_pp,
                 "short_account_roc_pct": delta_pct,
+                "short_account_roc_smoothed_3p_pp": _safe_float(
+                    history_stats.get("short_account_roc_smoothed_3p_pp")
+                ),
+                "short_account_acceleration_1h_pp": _safe_float(
+                    history_stats.get("short_account_acceleration_1h_pp")
+                ),
+                "short_account_acceleration_smoothed_3p_pp": _safe_float(
+                    history_stats.get("short_account_acceleration_smoothed_3p_pp")
+                ),
+                "short_account_roc_zscore": _safe_float(
+                    history_stats.get("short_account_roc_zscore")
+                ),
+                "short_account_direction_persistence": int(
+                    history_stats.get("short_account_direction_persistence", 0) or 0
+                ),
+                "short_account_history_points": int(
+                    history_stats.get("short_account_history_points", 0) or 0
+                ),
                 "long_account_pct": long_pct,
                 "long_short_account_ratio": ratio,
                 "quote_volume_24h": _safe_float(ticker.get("quoteVolume")),
@@ -6561,7 +6592,20 @@ def _format_shortpct_frame(
     prefix: str = "",
 ) -> tuple[str, list[str]]:
     rows = frame.copy()
-    for column in ("short_account_pct", "short_account_previous_pct", "short_account_roc_pp", "short_account_roc_pct", "quote_volume_24h", "price_change_24h_pct"):
+    for column in (
+        "short_account_pct",
+        "short_account_previous_pct",
+        "short_account_roc_pp",
+        "short_account_roc_pct",
+        "short_account_roc_smoothed_3p_pp",
+        "short_account_acceleration_1h_pp",
+        "short_account_acceleration_smoothed_3p_pp",
+        "short_account_roc_zscore",
+        "short_account_direction_persistence",
+        "short_account_history_points",
+        "quote_volume_24h",
+        "price_change_24h_pct",
+    ):
         if column not in rows.columns:
             rows[column] = float("nan")
         if column in rows.columns:
@@ -6614,6 +6658,13 @@ def _format_shortpct_frame(
         current_short = _safe_pct(row.get("short_account_pct"))
         delta_pp = _safe_float(row.get("short_account_roc_pp"))
         delta_pct = _safe_float(row.get("short_account_roc_pct"))
+        smoothed_pp = _safe_float(row.get("short_account_roc_smoothed_3p_pp"))
+        acceleration_pp = _safe_float(row.get("short_account_acceleration_smoothed_3p_pp"))
+        if acceleration_pp is None:
+            acceleration_pp = _safe_float(row.get("short_account_acceleration_1h_pp"))
+        zscore = _safe_float(row.get("short_account_roc_zscore"))
+        persistence = int(_safe_float(row.get("short_account_direction_persistence")) or 0)
+        history_points = int(_safe_float(row.get("short_account_history_points")) or 0)
         volume = _safe_float(row.get("quote_volume_24h"))
         day_change = _safe_float(row.get("price_change_24h_pct"))
         short_text = (
@@ -6627,6 +6678,11 @@ def _format_shortpct_frame(
             else "n/a"
         )
         day_text = f"24h {day_change:+.1f}%" if day_change is not None else "24h n/a"
+        structure_text = (
+            f"smooth {_signed_metric(smoothed_pp, 'pp')} | "
+            f"accel {_signed_metric(acceleration_pp, 'pp')} | "
+            f"z {_signed_metric(zscore, '')} | persist {persistence} | hist {history_points}"
+        )
         has_context = _boolish_scalar(row.get("_shorts_context_available"))
         base_thesis = "Y" if _boolish_scalar(row.get("_discord_base_thesis_gate")) else "N" if has_context else "?"
         if has_context:
@@ -6639,7 +6695,8 @@ def _format_shortpct_frame(
         else:
             context = f" | baseThesis {base_thesis} | no scanner thesis context"
         lines.append(
-            f"/{symbol} | shortROC {delta_text} | shorts {short_text} | vol {_fmt_compact_number(volume)} | {day_text}{context}"
+            f"/{symbol} | shortROC {delta_text} | {structure_text} | shorts {short_text} | "
+            f"vol {_fmt_compact_number(volume)} | {day_text}{context}"
         )
     return "Short-account ROC leaderboard", _chunk_text_lines(lines)
 
@@ -6676,6 +6733,26 @@ def _shorttrend_row(symbol: str, ratio_rows: list[dict[str, Any]], *, period: st
         "scan_mode": f"live {period} short-account trend",
         "scanned_at_utc": scanned_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
+    history_stats = short_account_history_stats(ratio_rows, windows=(1,))
+    row.update(
+        {
+            "short_account_roc_smoothed_3p_pp": _safe_float(
+                history_stats.get("short_account_roc_smoothed_3p_pp")
+            ),
+            "short_account_acceleration_1h_pp": _safe_float(
+                history_stats.get("short_account_acceleration_1h_pp")
+            ),
+            "short_account_acceleration_smoothed_3p_pp": _safe_float(
+                history_stats.get("short_account_acceleration_smoothed_3p_pp")
+            ),
+            "short_account_roc_zscore": _safe_float(
+                history_stats.get("short_account_roc_zscore")
+            ),
+            "short_account_direction_persistence": int(
+                history_stats.get("short_account_direction_persistence", 0) or 0
+            ),
+        }
+    )
     for window in windows:
         pp_key = f"short_account_change_{window}p_pp"
         pct_key = f"short_account_change_{window}p_pct"
@@ -6810,6 +6887,11 @@ def _format_shorttrend_frame(
         "short_account_total_positive_pp",
         "short_account_total_pp",
         "short_account_trend_score",
+        "short_account_roc_smoothed_3p_pp",
+        "short_account_acceleration_1h_pp",
+        "short_account_acceleration_smoothed_3p_pp",
+        "short_account_roc_zscore",
+        "short_account_direction_persistence",
         "quote_volume_24h",
         "price_change_24h_pct",
     ]
@@ -6869,6 +6951,12 @@ def _format_shorttrend_frame(
         pos_count = int(_safe_float(row.get("positive_window_count")) or 0)
         available_count = int(_safe_float(row.get("available_window_count")) or 0)
         total_positive_pp = _safe_float(row.get("short_account_total_positive_pp")) or 0.0
+        smoothed_pp = _safe_float(row.get("short_account_roc_smoothed_3p_pp"))
+        acceleration_pp = _safe_float(row.get("short_account_acceleration_smoothed_3p_pp"))
+        if acceleration_pp is None:
+            acceleration_pp = _safe_float(row.get("short_account_acceleration_1h_pp"))
+        zscore = _safe_float(row.get("short_account_roc_zscore"))
+        persistence = int(_safe_float(row.get("short_account_direction_persistence")) or 0)
         changes: list[str] = []
         for window in windows:
             delta_pp = _safe_float(row.get(f"short_account_change_{window}p_pp"))
@@ -6892,7 +6980,10 @@ def _format_shorttrend_frame(
             context = f" | baseThesis {base_thesis} | no scanner thesis context"
         current_text = f"{current_short:.1f}%" if current_short is not None else "n/a"
         lines.append(
-            f"/{symbol} | trend {pos_count}/{available_count} +{total_positive_pp:.2f}pp | shorts {current_text} | {changes_text} | vol {_fmt_compact_number(volume)} | {day_text}{context}"
+            f"/{symbol} | trend {pos_count}/{available_count} +{total_positive_pp:.2f}pp | "
+            f"smooth {_signed_metric(smoothed_pp, 'pp')} | accel {_signed_metric(acceleration_pp, 'pp')} | "
+            f"z {_signed_metric(zscore, '')} | persist {persistence} | shorts {current_text} | "
+            f"{changes_text} | vol {_fmt_compact_number(volume)} | {day_text}{context}"
         )
     return "Short-account trend leaderboard", _chunk_text_lines(lines)
 

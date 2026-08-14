@@ -53,6 +53,53 @@ def closed_hour_volume_metrics(
     }
 
 
+def closed_daily_anchored_vwap_metrics(
+    klines: list[list[Any]],
+    *,
+    last_price: Any,
+    lookback_days: int = 30,
+    exclude_forming_bar: bool = True,
+) -> dict[str, float | int]:
+    """Calculate VWAP anchored to the start of the completed daily lookback."""
+    lookback_days = max(1, int(lookback_days))
+    closed_rows = klines[:-1] if exclude_forming_bar and klines else klines
+    valid_rows: list[list[Any]] = []
+    for row in closed_rows[-lookback_days:]:
+        if len(row) <= 7:
+            continue
+        base_volume = _to_float(row[5])
+        quote_volume = _to_float(row[7])
+        if (
+            math.isfinite(base_volume)
+            and base_volume > 0
+            and math.isfinite(quote_volume)
+            and quote_volume >= 0
+        ):
+            valid_rows.append(row)
+
+    total_base_volume = sum(_to_float(row[5]) for row in valid_rows)
+    total_quote_volume = sum(_to_float(row[7]) for row in valid_rows)
+    anchored_vwap = (
+        total_quote_volume / total_base_volume
+        if valid_rows and total_base_volume > 0
+        else float("nan")
+    )
+    current_price = _to_float(last_price)
+    distance_pct = (
+        (current_price / anchored_vwap - 1.0) * 100.0
+        if math.isfinite(current_price)
+        and current_price > 0
+        and math.isfinite(anchored_vwap)
+        and anchored_vwap > 0
+        else float("nan")
+    )
+    return {
+        "anchored_vwap_30d": anchored_vwap,
+        "price_vs_anchored_vwap_30d_pct": distance_pct,
+        "anchored_vwap_30d_days": len(valid_rows),
+    }
+
+
 def append_csv_row_schema_safe(path: Path, row: dict[str, Any]) -> None:
     """Append while migrating an existing CSV header when new monitor fields appear."""
     path.parent.mkdir(parents=True, exist_ok=True)

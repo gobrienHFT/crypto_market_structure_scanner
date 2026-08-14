@@ -21,4 +21,6 @@ lab_short_roc_close_output*/
 auto_short_roc_close_output*/
 evaa_short_roc_close_output*/
 ticker_short_roc_close_output*/
+auto_short_uptrend_trader_output*/
 *.sqlite
+artifacts/
