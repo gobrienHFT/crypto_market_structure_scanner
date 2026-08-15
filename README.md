@@ -2,11 +2,62 @@
 
 [![tests](https://img.shields.io/badge/tests-pytest-green)](.github/workflows/tests.yml)
 
-Research and monitoring framework for finding asymmetric crypto market structures before they become obvious on price alone.
+`crypto_market_structure_scanner` studies reflexive crypto regimes in which constrained effective float, concentrated ownership, abnormal derivatives participation, and fragmented short-side positioning may create forced-buying feedback loops.
+
+`FLOAT/OWNERSHIP -> DERIVATIVES SHOCK -> SHORT CROWDING -> TREND -> REFLEXIVITY STATE -> EVENT STUDY / INVALIDATION`
+
+> **Thesis:** constrained or concentrated spot supply + abnormal derivatives participation + persistent upward pressure + fragmented short-side clientele + forced-buying/liquidation reflexivity may create convex upside, but this is a falsifiable hypothesis rather than a promise.
+
+This repository is a reviewer-grade research system for testing that thesis on crypto perpetual markets. The canonical research layer comes first; the default `app.py` experience is a focused **Convex Squeeze Radar**, while Discord and live tooling are secondary operational projections. The system is designed to surface a small queue of early, mechanism-linked structures, show what is observed versus missing, and measure whether the idea survives outside the best anecdotes.
 
 The system combines perpetual-market positioning, Binance+Bitget venue participation with Gate as optional evidence, on-chain holder concentration, wallet-to-CEX flow, timing quality, Discord alerting, and proof-of-signal tracking. The practical goal is to surface low-float or concentrated-holder structures where short crowding, thin liquidity, and exchange inventory movement can create convex payoff conditions.
 
 It is built as research infrastructure, not as an automated trading system. Alerts are designed to accelerate discretionary review, sizing discipline, and post-alert measurement.
+
+Run the deterministic offline review first:
+
+```powershell
+python -m crypto_market_structure.review_demo
+```
+
+The demo uses a clearly labelled synthetic fixture. It exercises the same observation metadata, state machine, event-study horizons, chronological holdout split, casebook, and hash manifest without contacting an exchange.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    A[Binance perp snapshots] --> B[Canonical observations]
+    C[Holder and venue evidence] --> B
+    D[Wallet to CEX flow] --> B
+    B --> E[Mechanism components]
+    E --> F[State transitions]
+    F --> G[Streamlit radar]
+    F --> H[Discord research alerts]
+    B --> I[Frozen event study]
+    I --> J[Casebook and manifest]
+```
+
+The UI is a projection over the deterministic research layer. Each metric retains event time, receipt time, source, venue, units, freshness, and provenance. Missing or stale values remain visible; they are not silently substituted with zeros or treated as confirmation.
+
+### 60-second reviewer path
+
+1. Run `python -m crypto_market_structure.review_demo` and open the generated `artifacts/review_demo/review_report.md`.
+2. Read the canonical state replay and inspect the missingness/data-quality column before looking at returns.
+3. Compare the signal summary with the matched non-event, unconditional-universe, token-history, and benchmark-excess sections.
+4. Read [the casebook](docs/reflexivity-casebook.md) to see what is observed versus inferred for RAVE/LAB.
+5. Run `streamlit run app.py` only after the offline path is understood; use **Refresh structural proof** for a bounded evidence follow-up.
+
+### Claim boundary
+
+| Evidence | The system can claim | The system cannot claim |
+| --- | --- | --- |
+| Account ratios | A measured breadth imbalance by account count | Short dollar notional, account wealth, or “dumb retail” intent |
+| Holder tables | Raw and adjusted concentration under documented classifications | That an unidentified wallet is an insider or that concentration proves manipulation |
+| Derivatives/OI/volume | Abnormal participation and positioning changes relative to frozen baselines | Who will be forced, or that OI alone predicts direction |
+| CEX flows | A labelled/classified transfer relative to float, volume, and visible liquidity | Wallet intent or a guaranteed sell order |
+| Event study | Point-in-time forward outcomes, coverage, distributions, and uncertainty | Causality, profitability after execution costs, or guaranteed convex returns |
+
+The offline fixture is synthetic and deliberately labelled as such. Any attractive number in its report demonstrates calculation and reproducibility, not historical performance.
 
 ---
 
@@ -47,6 +98,29 @@ The scanner is aimed at a specific class of market structure:
 - enough ATH/runway or liquidity asymmetry for payoff to become nonlinear
 
 No single signal is treated as proof. The product value comes from stacking independent evidence into a fast review queue, then archiving outcomes so the rules can be judged empirically.
+
+### Canonical state model
+
+The radar uses explicit point-in-time states rather than presenting every high score as an entry:
+
+- `DISCOVERY`: partial or low-quality evidence; investigate only.
+- `BUILDING`: short-account crowding, participation, OI, or price structure is forming, but the complete trigger is absent.
+- `ACTIVE_REFLEXIVITY`: short crowding/build, participation, OI, trend confirmation, and no-exhaustion gates agree.
+- `ACCELERATING`: active reflexivity with stronger breakout and persistence evidence.
+- `EXHAUSTION_RISK`: extension, rejection, short-account rollover, or OI weakness raises the cost of chasing.
+- `INVALIDATED`: price and/or fuel conditions break the defined structure.
+
+`short_account_pct` is explicitly the percentage of accounts, not short dollar notional. Funding semantics are also explicit: positive funding means longs pay shorts; negative funding means shorts pay longs. Funding is carry and crowding context, not a causal label such as "backwardation".
+
+The canonical observation schema also keeps, when supplied: circulating supply, FDV, market cap, estimated tradable-float value, raw and adjusted concentration, HHI/Gini-style measures, wallet classification evidence, Binance/Bitget/Gate metadata, 7D/30D/90D participation baselines, OI relative to market cap/float, funding persistence, global and top-trader account/position ratios, multi-horizon returns and breakout/runway state, realized-volatility/acceleration context, and CEX-flow notional relative to float, spot volume, and visible liquidity. Each remains a separately sourced metric; unavailable fields stay unavailable.
+
+The mechanism read is intentionally decomposed into Float Constraint, Holder Concentration, Venue Confirmation, Derivatives Activity Shock, OI Expansion, Short-Account Crowding/Acceleration, Trend/Breakout, Funding Dislocation, Reflexivity Persistence, and CEX Supply Risk. The displayed score is a ranking aid, not a probability or expected-return estimate.
+
+### Falsification plan
+
+The short-account hypothesis is not accepted because a chart looks convincing. A proper evaluation compares global account breadth with top-trader accounts/positions, OI, funding, volume, price, and subsequent returns at 1h, 4h, 12h, 24h, 3d, and 7d. It reports sample sizes, missingness, medians, tails, MFE/MAE, hit rates, bootstrap intervals, matched baselines, chronological holdout results, and sensitivity to removing the largest winners. The question is whether account-count crowding adds information after the other mechanisms are controlled for.
+
+See [the reflexivity casebook](docs/reflexivity-casebook.md) for the RAVE/LAB references, with observed facts, inferences, hypotheses, and unavailable evidence kept separate. The bundled review report is synthetic and must not be read as historical performance.
 
 ---
 
@@ -136,38 +210,45 @@ Optional API keys are read from environment variables:
 
 ```text
 COINGECKO_API_KEY=
-ETHERSCAN_V2_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-ETHERSCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-BSCSCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-ARBISCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-ARBSCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
+ETHERSCAN_V2_API_KEY=<set locally; never commit>
+ETHERSCAN_API_KEY=<set locally; never commit>
+BSCSCAN_API_KEY=<set locally; never commit>
+ARBISCAN_API_KEY=<set locally; never commit>
+ARBSCAN_API_KEY=<set locally; never commit>
 ```
 
 The scanner uses structural and probabilistic classification methods only. It does not make legal, regulatory, or compliance assertions from on-chain data alone.
 
 ---
 
-## 3. Streamlit Dashboard
+## 3. Convex Squeeze Radar
 
-The Streamlit dashboard provides an interactive research interface for reviewing scanner results.
+`app.py` is a focused Streamlit decision surface for finding early RAVE/LAB-style forced-flow structures. The default path is deliberately bounded: bulk Binance data selects a coarse candidate set from the full live crypto-perpetual universe, probes current short-account breadth, then enriches only the finalists with hourly price, volume, open-interest, funding, and account-ratio history. Explorer and external-market requests are kept out of the interactive loop.
 
-Dashboard functionality includes:
+The radar includes:
 
-- live scan controls
-- ranked candidate tables
-- concentration overlays
-- holder composition summaries
-- token contract inspection
-- a distinct `1H Short ROC` grid for past-hour Binance global short-account share changes
-- a `Convex Mechanisms` board that explains the active reflexivity loop behind each candidate and includes a case-study evidence table for RAVE/LAB/VELVET/RIVER/SIREN/STO
-- a `Shorts Fighting Uptrend` board for positive-funding coins where short accounts are high/rising while price structure keeps trending up
-- cached scan comparison
-- local persistence of scanner outputs
-- discretionary review of structural market conditions
+- `REFLEXIVE`, `IGNITION`, `ARMED`, `OBSERVE`, `UNWIND`, `LATE`, and `STALE` lifecycle states
+- current and smoothed short-account-share build, explicitly labelled as account count rather than short dollar notional
+- multi-hour short-account and OI confirmation, including 3H/6H net change and consecutive build persistence, so one noisy print cannot promote a setup
+- agreement gates across positive funding, short crowding, current short build, volume ignition, OI expansion, breakout structure, and 30-day anchored VWAP
+- optional top-finalist crowd diagnostics: broad account positioning versus top-trader positioning plus taker buy flow, used as a veto against “crowd is already long” false positives rather than mistaken for short notional
+- a hard no-chase veto for extension, rejection, blow-off, and breakdown conditions
+- separate market-trigger, verified-structure-watch, and entry-ready queues, so missing holder or Bitget/Gate proof is visible instead of silently treated as confirmation
+- current short-account preselection so stale background short scans cannot outrank live account breadth
+- explicit `PROXY ONLY` versus `VERIFIED / STALE` evidence labels; verified holder/venue evidence must be no more than 30 days old
+- saved market snapshots older than 90 minutes are neutralized as `STALE` until a live refresh completes
+- cached concentration evidence with protocol-storage, wrapper, and CEX-custody false-positive controls
+- sortable Radar, Watch, Lifecycle, and Evidence views plus a component-level setup drilldown
+- a compact 30-day scan ledger that labels candidates `NEW`, `REPEATED`, or `PERSISTENT` when the structure keeps reappearing across refreshes
+- an Evidence-tab structural-proof action that runs the existing concentration scanner only for a bounded top queue; explorer/RPC work is kept out of the normal fast refresh path
+- `Early`, `Primary`, and `Strict` profiles without rerunning the network scan
+- local persistence of the last good radar snapshot for a useful first load
 
-See [Convex market-structure mechanism thesis](docs/mechanism-thesis.md), [Case-study event summary](docs/case-study-event-summary.md), and [Case-study evidence backfill checklist](docs/case-study-backfill-checklist.md) for the current mechanism map, evidence table, and backfill queue behind the RAVE/LAB/VELVET/RIVER/SIREN/STO research thread.
+The live candidate budget defaults to a small universe and can be raised from 24 to 48 when broader coverage matters more than latency. A typical refresh first probes 72 candidates using the lightweight global account-ratio endpoint, then performs heavier enrichment only for the selected rows. The existing full scanner, concentration tooling, and Discord command paths remain available as backend research services, but no longer compete for attention on the dashboard front page.
 
-The dashboard is intended for fast review, filtering, and monitoring of markets that show unusual activity or concentration patterns.
+The primary profile requires current short build plus either positive three-hour short-account change or repeated hourly build, and requires current OI expansion plus either positive three-hour OI change or consecutive OI build observations. The `Early` profile relaxes those thresholds for discovery; `Strict` raises them for fewer, cleaner candidates. The history ledger is compact and local, and is retained only for the configured number of days.
+
+`Entry Ready` is intentionally stricter than a market trigger: the structural proof must be verified, fresh, contract-backed, and accompanied by storage/representation controls plus Bitget/Gate venue evidence. Use **Refresh structural proof** in the Evidence tab when a high-ranked live row deserves promotion; a failed or partial explorer response leaves it visible as research context rather than silently treating the row as confirmed.
 
 Run the dashboard with:
 
@@ -248,6 +329,29 @@ run_coai_hourly_monitor_24_7.bat
 
 Both post every cycle to `INX_MONITOR_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune the shared monitor with `INX_MONITOR_SYMBOL`, `INX_MONITOR_INTERVAL_SECONDS`, and `INX_MONITOR_OUTPUT_DIR`; the COAI BAT overrides the symbol/output directory to `COAIUSDT` and `coai_hourly_monitor_output`.
 
+### Short-ROC staged exit monitor
+
+`short_roc_position_close.py` treats short-account percentage as crowd breadth, then keeps open-interest, price, and volume behavior as separate confirmation layers. The default live BAT workflow now has two stages:
+
+1. **Protect profit:** a sharp one-hour short-account unwind or a cumulative 5 percentage-point drawdown from the observed position peak can arm the signal. The breadth structure must then persist for distinct hourly observations or receive market confirmation. A passing signal reduces 50% of the position.
+2. **Manage the runner:** the remaining position stays open until breadth depletion coincides with price failure, falling OI, and volume deceleration for two distinct post-reduction observations. A hard price/OI/reversal-volume exhaustion event can close it sooner.
+
+The monitor also calculates a three-observation smoothed short ROC, smoothed acceleration, per-symbol ROC z-score, same-direction persistence, and price distance from a VWAP anchored to the start of up to 30 completed daily candles. Every live order is revalidated immediately before submission against the current position, side, executable price, configured profit floor, and exchange limit-order quantity rules. Submitted orders are reduce-only, and a filled partial reduction does not mark the position as fully closed or stop the monitor.
+
+Run automatic single-position detection with:
+
+```powershell
+run_auto_short_roc_close_live_24_7.bat
+```
+
+Or enter any ticker interactively with:
+
+```powershell
+run_ticker_short_roc_close_live_24_7.bat
+```
+
+Key controls are `SHORT_ROC_CLOSE_PARTIAL_PCT`, `SHORT_ROC_CLOSE_HISTORY_LIMIT`, `SHORT_ROC_CLOSE_RUNNER_CONFIRMATION_READINGS`, `SHORT_ROC_CLOSE_RUNNER_OI_DROP_PCT`, and `SHORT_ROC_CLOSE_RUNNER_VOLUME_DECELERATION_PCT`. Set `--partial-close-pct 100` for the legacy all-at-once close behavior. Use `--dry-run` before enabling live execution; exchange connectivity, latency, slippage, and position reconciliation remain operational risks.
+
 ---
 
 ## 5. Discord Bot Commands
@@ -314,8 +418,8 @@ The bot can retrieve:
 - a strict core-thesis alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short crowd plus squeeze fuel, and not-late gates
 - latest cached scanner rankings
 - a `/shorts` diagnostic board for symbols where more than 50% of accounts are short; rows are labelled `weakCtx` and overlay `baseThesis Y/N/?` so high short-account percentage stays weak context unless the strict holder, Binance+Bitget, and 60D no-pump gates also pass
-- a `/shortpct` live Binance board for the fastest positive short-account percentage increases by rate of change, with both percentage-point delta and relative ROC printed next to optional base-thesis context
-- a `/shorttrend` live Binance trend board for persistent short-account builds across 1h/3h/6h/12h/24h ROC windows, filtered by positive-window count and total positive percentage-point build
+- a `/shortpct` live Binance board for the fastest positive short-account percentage increases by rate of change, with raw and three-observation smoothed ROC, acceleration, token-relative z-score, same-direction persistence, and optional base-thesis context
+- a `/shorttrend` live Binance trend board for persistent short-account builds across 1h/3h/6h/12h/24h ROC windows, filtered by positive-window count and total positive percentage-point build, with the same smoothed acceleration and persistence diagnostics
 - live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
 - a `/precrime` radar for quiet latent setups after the hard explorer holder-source snapshot, Binance+Bitget thesis gates, pinned 60D no-pump/dormancy proof, low-float/high-FDV structure proof, and short crowd plus squeeze fuel: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books as amplifiers, and no-chase low activity
 - a primary `/hunt` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for `massive_flow` top-holder-origin CEX transfers, lower-floor `flow` whale-CEX diagnostics, generic target-CEX flow, forced-flow mechanics, breakout highs, triggered-only, or core-watch rows
@@ -574,11 +678,11 @@ Example `.env` template:
 
 ```text
 COINGECKO_API_KEY=
-ETHERSCAN_V2_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-ETHERSCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-BSCSCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-ARBISCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
-ARBSCAN_API_KEY=XFYBWMNYA62ZRW6PK252CVYIYM2H5GZ6YP
+ETHERSCAN_V2_API_KEY=<set locally; never commit>
+ETHERSCAN_API_KEY=<set locally; never commit>
+BSCSCAN_API_KEY=<set locally; never commit>
+ARBISCAN_API_KEY=<set locally; never commit>
+ARBSCAN_API_KEY=<set locally; never commit>
 CEX_ADDRESS_BOOK_FILE=data/cex_address_book.csv
 CEX_ADDRESS_LABELS=
 

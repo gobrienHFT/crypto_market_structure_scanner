@@ -2,6 +2,17 @@
 
 This is the fastest path for a reviewer to understand the project without needing production API keys.
 
+The canonical first step is the deterministic, credential-free replay:
+
+```powershell
+python -m crypto_market_structure.review_demo
+```
+
+It writes a synthetic state/event-study report and hash manifest under
+`artifacts/review_demo/`. The report is a reproducibility artifact, not a
+performance claim. The operational steps below are secondary follow-ups for
+the Streamlit and Discord surfaces.
+
 ## 1. Install
 
 ```powershell
