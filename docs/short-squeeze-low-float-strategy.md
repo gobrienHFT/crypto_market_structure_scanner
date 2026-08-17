@@ -1,10 +1,10 @@
-# Low-Float Perpetual Short-Squeeze Strategy
+# Low-Float Perpetual Reflexivity Hypothesis
 
 ## Purpose and framing
 
-This document describes a research-driven crypto trading strategy built to find a narrow class of asymmetric long opportunities: low-float, highly concentrated tokens whose spot and perpetual markets may become vulnerable to forced buying and reflexive short squeezes.
+This document describes a research-driven hypothesis about a narrow class of low-float, highly concentrated tokens whose spot and perpetual markets may become vulnerable to forced buying and reflexive short squeezes.
 
-The objective is not to estimate a token's intrinsic value or to prove that any actor is manipulating a market. The working premise is more mechanical: when the tradeable float is genuinely scarce, ownership is concentrated, liquidity is thin, and a perpetual market attracts persistent short participation, relatively modest net buying can produce a self-reinforcing price move. The strategy tries to identify this structure before the obvious vertical phase, participate with small unlevered exposure, and reduce or close when the short-side fuel begins to disappear or the market reaches a late/exhausted state.
+The objective is not to estimate a token's intrinsic value or to prove that any actor is manipulating a market. The working premise is more mechanical: when the tradeable float is genuinely scarce, ownership is concentrated, liquidity is thin, and a perpetual market attracts persistent short participation, relatively modest net buying can produce a self-reinforcing price move. The research process tries to identify this structure before the obvious vertical phase and defines explicit continuation, exhaustion, and invalidation observations for later testing.
 
 This is a hypothesis and an event-driven research process, not a guarantee of future returns. The relevant assets can move violently in both directions, can gap through stops, can be delisted, and can have incomplete or misleading data. A correlation between a signal and a price move is not proof of causation or coordinated activity.
 
@@ -23,7 +23,7 @@ The strategy is not a valuation trade. It does not assume a high FDV must fall, 
 - Those purchases can be large relative to thin spot/perpetual depth, causing further price appreciation.
 - A visible move can attract momentum buyers and new shorts simultaneously, extending the reflexive loop.
 
-The relevant payoff shape is convex but discontinuous: many watches will do nothing or fail; a minority can create unusually large upside moves accompanied by equally unusual volatility and crash risk. The strategy therefore treats survival, small sizing, and early detection as more important than precision forecasting.
+The outcome distribution is asymmetric and discontinuous: many observations will do nothing or fail; a minority can produce unusually large moves accompanied by equally unusual volatility and crash risk. The research process therefore treats survival, small sizing, and early detection as more important than precision forecasting.
 
 ## The market-structure hypothesis
 
@@ -69,7 +69,7 @@ A working sequence for a successful squeeze is:
 8. New long momentum and new short attempts can coexist, keeping the loop alive.
 9. Eventually, the short cohort stops building and begins to cover materially; OI/funding/volume can peak, price can go vertical, and the risk/reward shifts from early convexity to late fragility.
 
-The strategy aims to own the middle of this sequence, not to predict the eventual top and not to short merely because the asset looks artificial or expensive.
+The research question concerns the middle of this sequence, not prediction of the eventual top and not a short thesis based merely on an asset looking artificial or expensive.
 
 ## Venue selection and why it matters
 
@@ -296,7 +296,7 @@ The strategy should be challenged when:
 
 ## What needs to be tested quantitatively
 
-The central research question is not "can this find big pumps?" It is whether a point-in-time combination of concentration, float, venue, flow, derivatives positioning, and timing produces a statistically and economically meaningful improvement over simpler baselines.
+The central research question is not "can this find large moves?" It is whether a point-in-time combination of concentration, float, venue, flow, derivatives positioning, and timing produces a statistically and economically meaningful improvement over simpler baselines.
 
 Recommended tests:
 
@@ -326,6 +326,6 @@ The design intent is to degrade gracefully: local caches and diagnostic outputs 
 
 ## Bottom line
 
-The strategy seeks early ownership of **mechanically fragile market structures**, not a moral judgment about a token and not a conventional fundamental long. The full thesis requires a controlled/opaque float, usable derivative venues, emerging flow and liquidity stress, persistent short-side fuel, and an early breakout/trend state that is not already exhausted. Its most distinctive exit insight is to watch the short-account cohort itself: as that cohort covers, the forced-buying reservoir may be shrinking.
+The research programme studies **mechanically fragile market structures**, not a moral judgment about a token and not a conventional fundamental valuation. The full hypothesis requires a controlled or opaque float, usable derivative venues, emerging flow and liquidity stress, persistent short-side fuel, and an early breakout/trend state that is not already exhausted. One distinctive test is to watch the short-account cohort itself: as that cohort covers, the potential forced-buying reservoir may be shrinking.
 
 The edge, if one exists, will come from disciplined evidence combination, point-in-time validation, and risk control. The failures will come from treating incomplete data as confirmation, chasing verticality, confusing account ratios with actual exposure, and assuming a plausible narrative is sufficient without measured out-of-sample performance.

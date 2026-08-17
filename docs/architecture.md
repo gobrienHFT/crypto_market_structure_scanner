@@ -1,7 +1,9 @@
 # Architecture
 
-The project is organized as a research pipeline with a canonical mechanism
-layer and three user-facing surfaces:
+The project is organized as a research pipeline. The canonical mechanism layer
+defines observations, provenance, state transitions, and outcome measurement;
+the operational surfaces consume those definitions for investigation or live
+triage.
 
 - `crypto_market_structure/` for point-in-time observations, state transitions,
   offline replay, event studies, casebook output, and manifests
@@ -40,7 +42,12 @@ flowchart LR
 
 `market_structure_scoring.py` is the neutral public import for lifecycle scoring. `crime_scoring.py` remains as a compatibility wrapper for older scripts, notebooks, and cached workflows.
 
-## Live Discord Path
+## Operational projections
+
+The Streamlit and Discord surfaces are downstream projections, not separate
+research definitions. Their role is to make the canonical evidence easier to
+inspect, filter, and archive. Live execution helpers are isolated from this
+layer and are optional operational tooling.
 
 1. `discord_convex_bot.py` or `discord_convex_watcher.py` asks `scan_orchestrator.py` for a fresh scan.
 2. `scan_orchestrator.py` imports `app.py` in `CRYPTO_SCANNER_IMPORT_ONLY=1` mode and calls the undecorated scan function.
@@ -55,11 +62,14 @@ flowchart LR
 ## Design Constraints
 
 - The scanner is a research system, not an execution engine.
+- A global long/short account ratio is account breadth, not notional exposure.
+- Negative funding means shorts pay longs; funding sign is context, not a directional verdict.
 - Alerts use neutral structural language and avoid assertions about intent.
 - Large scans should degrade gracefully through local caches.
 - Discord outputs must fit embed limits and remain readable under pressure.
 - Outcome tracking is part of the product, not an afterthought.
 - Canonical observations preserve raw versus adjusted ownership, account breadth versus notional, and labelled CEX custody versus inferred insider control as separate concepts.
+- Concentration evidence requires exchange, custody, bridge, LP, protocol, system-wallet, treasury, and vesting classifications where available.
 - `crypto_market_structure/reflexivity.py` and `crypto_market_structure/reporting.py` are deterministic research primitives; they can be evaluated from JSON/DataFrame fixtures without Streamlit, Discord, or live APIs.
 - The fast dashboard path uses market telemetry only; holder/explorer/RPC proof is explicit, bounded, and on-demand.
 - Execution helpers remain separate, opt-in, reduce-only where intended, and fail closed on missing credentials, position state, timestamps, or risk limits.

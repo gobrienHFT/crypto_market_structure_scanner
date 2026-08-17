@@ -2,770 +2,163 @@
 
 [![tests](https://img.shields.io/badge/tests-pytest-green)](.github/workflows/tests.yml)
 
-`crypto_market_structure_scanner` studies reflexive crypto regimes in which constrained effective float, concentrated ownership, abnormal derivatives participation, and fragmented short-side positioning may create forced-buying feedback loops.
+`crypto_market_structure_scanner` studies reflexive crypto regimes in which constrained effective float, concentrated economic ownership, abnormal derivatives participation, persistent upward price structure, and fragmented short-side positioning may create forced-buying feedback loops.
 
-`FLOAT/OWNERSHIP -> DERIVATIVES SHOCK -> SHORT CROWDING -> TREND -> REFLEXIVITY STATE -> EVENT STUDY / INVALIDATION`
+`FLOAT / OWNERSHIP -> DERIVATIVES PARTICIPATION SHOCK -> SHORT-SIDE CLIENTELE / OI -> PRICE PERSISTENCE -> FORCED-BUYING REFLEXIVITY -> EXHAUSTION / INVALIDATION`
 
-> **Thesis:** constrained or concentrated spot supply + abnormal derivatives participation + persistent upward pressure + fragmented short-side clientele + forced-buying/liquidation reflexivity may create convex upside, but this is a falsifiable hypothesis rather than a promise.
+The project is a research system for testing that sequence with point-in-time evidence. Streamlit, Discord, and live monitors are implementation surfaces around the research model; they are not the intellectual identity of the repository.
 
-This repository is a reviewer-grade research system for testing that thesis on crypto perpetual markets. The canonical research layer comes first; the default `app.py` experience is a focused **Convex Squeeze Radar**, while Discord and live tooling are secondary operational projections. The system is designed to surface a small queue of early, mechanism-linked structures, show what is observed versus missing, and measure whether the idea survives outside the best anecdotes.
+## Research question
 
-The system combines perpetual-market positioning, Binance+Bitget venue participation with Gate as optional evidence, on-chain holder concentration, wallet-to-CEX flow, timing quality, Discord alerting, and proof-of-signal tracking. The practical goal is to surface low-float or concentrated-holder structures where short crowding, thin liquidity, and exchange inventory movement can create convex payoff conditions.
+Can a combination of constrained effective float, concentrated ownership, unusual derivatives participation, persistent price structure, and crowded short-side account breadth identify a regime in which buying pressure becomes self-reinforcing before the move is obvious from price alone?
 
-It is built as research infrastructure, not as an automated trading system. Alerts are designed to accelerate discretionary review, sizing discipline, and post-alert measurement.
+The question is deliberately narrower than "which markets will make a large move." A positive result would need to survive missing-data controls, alternative explanations, realistic costs, and chronological out-of-sample testing. A plausible chart or a large historical winner is not enough.
 
-Run the deterministic offline review first:
+## Mechanism
+
+```mermaid
+flowchart LR
+    A[Float / ownership constraint] --> B[Derivatives participation shock]
+    B --> C[Short-side clientele and OI]
+    C --> D[Persistent price structure]
+    D --> E[Forced-buying reflexivity]
+    E --> F[Exhaustion or invalidation]
+    F --> G[Measure the outcome]
+    G --> A
+```
+
+The working mechanism is:
+
+1. **Float / ownership:** headline circulating supply may overstate the supply that is available to trade. Economic ownership must be separated from exchange custody, bridges, LPs, protocol or system wallets, vesting, and other non-comparable balances.
+2. **Derivatives participation:** a sharp change in OI, volume, trade activity, or venue participation can make marginal demand matter more in a thin market.
+3. **Short-side clientele:** global long/short account ratios measure account breadth, not short or long dollar notional. A high short-account share can describe many small accounts rather than a large aggregate short position.
+4. **Price persistence:** continuation requires more than one impulse candle. Breakout persistence, volume, OI, funding, and short-account observations should agree without an exhaustion or breakdown signal.
+5. **Forced buying:** if short positions are crowded and price keeps moving against them, covering or liquidation can add demand. This is a testable hypothesis, not an inference from the account ratio alone.
+6. **Exhaustion / invalidation:** short-account rollover, falling OI, volume deceleration, rejection, or a breakdown can indicate that the fuel is fading. The event study measures both favorable excursion and adverse excursion rather than only the eventual high.
+
+## What is observed
+
+The canonical observation model keeps the evidence categories separate so that a missing or ambiguous field cannot silently become confirmation.
+
+| Evidence | What it measures | What it does not establish |
+| --- | --- | --- |
+| Supply and ownership | Circulating supply, FDV, estimated effective float, raw and adjusted holder concentration | That a wallet is an insider or that concentration proves manipulation |
+| Wallet classifications | Exchange, custody, bridge, LP, protocol, system, treasury, vesting, and other documented classifications | That an unlabelled wallet has a known intent |
+| Derivatives | OI, volume, funding, venue participation, global and top-trader ratios | Direction, liquidation certainty, or short dollar notional from account counts |
+| Short-side breadth | Global long/short account share and its changes over multiple horizons | The wealth, leverage, or exposure of those accounts |
+| Price structure | Returns, breakouts, persistence, volatility, VWAP context, rejection, and drawdown | A guarantee that continuation will follow a breakout |
+| CEX flow | Labelled transfers relative to float, spot volume, visible liquidity, and venue context | Whether a transfer will be sold or the intent of its sender |
+
+Funding semantics are explicit: **positive funding means longs pay shorts; negative funding means shorts pay longs**. Funding is a carry and positioning observation, not a standalone directional explanation.
+
+## Normalized observations and state model
+
+The importable `crypto_market_structure/` package is the source of truth for the research definitions. It normalizes observations with event time, receipt time, source, venue, units, freshness, provenance, data quality, and missing fields. Raw and adjusted ownership, account breadth and notional, and labelled custody and inferred control remain distinct concepts.
+
+Each observation is assessed through an explicit state machine:
+
+| State | Interpretation |
+| --- | --- |
+| `DISCOVERY` | Partial, stale, or low-quality evidence that needs investigation |
+| `BUILDING` | Crowding, participation, OI, or price structure is forming, but the complete regime is not present |
+| `ACTIVE_REFLEXIVITY` | Crowding/build, participation, OI, trend confirmation, and non-exhaustion evidence agree |
+| `ACCELERATING` | An active regime has stronger breakout and persistence evidence |
+| `EXHAUSTION_RISK` | Extension, rejection, short-account rollover, OI weakness, or other late-risk evidence is increasing |
+| `INVALIDATED` | The defined price or fuel conditions have broken |
+
+The displayed component assessments are interpretability aids. They are not probabilities, expected returns, or trade instructions. Missing values remain missing; stale evidence is not treated as a positive observation.
+
+## Falsification and event study
+
+The research path is:
+
+```text
+point-in-time observations -> normalized state -> frozen event -> forward outcomes -> baseline comparison -> invalidation review
+```
+
+`crypto_market_structure/event_study.py` evaluates forward price paths at 1h, 4h, 12h, 24h, 72h, and 168h. It records coverage, median returns, maximum favorable excursion, maximum adverse excursion, threshold hits, invalidation, short-unwind context, and fuel coverage. The review workflow also carries matched non-event, unconditional-universe, token-history, benchmark-excess, and chronological holdout views where the data supports them.
+
+The central test is incremental information. Does account-count short breadth add anything after controlling for OI, funding, price, volume, liquidity, token age, top-trader positioning, market regime, and data quality? Does the result survive removal of the largest winners, realistic fees and slippage, listing and delisting bias controls, and a final untouched period?
+
+## Case studies
+
+RAVE and LAB are historical case studies used to define questions and failure modes, not proof of causality or repeatable alpha. The supplied chart references do not reconstruct all contemporaneous holder, OI, funding, venue, liquidation, or account-level observations. The casebook keeps observed facts, inferences, hypotheses, and unavailable evidence separate.
+
+- [Reflexivity casebook](docs/reflexivity-casebook.md): RAVE and LAB phase records.
+- [Case-study event summary](docs/case-study-event-summary.md): local evidence, gaps, and follow-up actions.
+- [Mechanism thesis](docs/mechanism-thesis.md): broader mechanism taxonomy and external references.
+- [Low-float strategy notes](docs/short-squeeze-low-float-strategy.md): the working hypothesis, signal definitions, risks, and tests.
+
+## Deterministic demo
+
+Run the complete credential-free replay from the repository root:
 
 ```powershell
 python -m crypto_market_structure.review_demo
 ```
 
-The demo uses a clearly labelled synthetic fixture. It exercises the same observation metadata, state machine, event-study horizons, chronological holdout split, casebook, and hash manifest without contacting an exchange.
+In roughly one minute:
 
-### Architecture
+1. Read the printed signal version, observation count, event count, and manifest path.
+2. Open `artifacts/review_demo/review_report.md`.
+3. Check the state replay and missing fields before reading the outcome table.
+4. Inspect `artifacts/review_demo/manifest.json` for input and artifact hashes, configuration, event-study definition, and holdout metadata.
 
-```mermaid
-flowchart LR
-    A[Binance perp snapshots] --> B[Canonical observations]
-    C[Holder and venue evidence] --> B
-    D[Wallet to CEX flow] --> B
-    B --> E[Mechanism components]
-    E --> F[State transitions]
-    F --> G[Streamlit radar]
-    F --> H[Discord research alerts]
-    B --> I[Frozen event study]
-    I --> J[Casebook and manifest]
-```
+The fixture is frozen and synthetic. It proves that the observation-to-state-to-event-study workflow is reproducible; it does not prove historical alpha, profitability, causality, or that account-count shorting equals short notional.
 
-The UI is a projection over the deterministic research layer. Each metric retains event time, receipt time, source, venue, units, freshness, and provenance. Missing or stale values remain visible; they are not silently substituted with zeros or treated as confirmation.
+## Live research surfaces
 
-### 60-second reviewer path
+The live surfaces project the research model into faster workflows:
 
-1. Run `python -m crypto_market_structure.review_demo` and open the generated `artifacts/review_demo/review_report.md`.
-2. Read the canonical state replay and inspect the missingness/data-quality column before looking at returns.
-3. Compare the signal summary with the matched non-event, unconditional-universe, token-history, and benchmark-excess sections.
-4. Read [the casebook](docs/reflexivity-casebook.md) to see what is observed versus inferred for RAVE/LAB.
-5. Run `streamlit run app.py` only after the offline path is understood; use **Refresh structural proof** for a bounded evidence follow-up.
+- **Streamlit:** `app.py` presents the focused Convex Squeeze Radar, lifecycle views, evidence status, and on-demand structural proof. Market telemetry is kept separate from heavier holder or explorer refreshes.
+- **Discord:** the bot and watcher provide live triage, evidence cards, diagnostics, and outcome archives. The command details and venue-gating rules are in [Discord Alpha Workflow](docs/discord-alpha-workflow.md).
+- **Execution and monitors:** auto-trader and short-ROC close utilities are isolated operational tools, disabled unless explicitly configured, and should be treated as operational risk rather than research evidence.
 
-### Claim boundary
+For setup and operational examples, see [Demo Walkthrough](docs/demo-walkthrough.md) and [Architecture](docs/architecture.md). The long Discord command and BAT-file documentation stays there instead of competing with the research narrative.
 
-| Evidence | The system can claim | The system cannot claim |
-| --- | --- | --- |
-| Account ratios | A measured breadth imbalance by account count | Short dollar notional, account wealth, or “dumb retail” intent |
-| Holder tables | Raw and adjusted concentration under documented classifications | That an unidentified wallet is an insider or that concentration proves manipulation |
-| Derivatives/OI/volume | Abnormal participation and positioning changes relative to frozen baselines | Who will be forced, or that OI alone predicts direction |
-| CEX flows | A labelled/classified transfer relative to float, volume, and visible liquidity | Wallet intent or a guaranteed sell order |
-| Event study | Point-in-time forward outcomes, coverage, distributions, and uncertainty | Causality, profitability after execution costs, or guaranteed convex returns |
+## Limitations
 
-The offline fixture is synthetic and deliberately labelled as such. Any attractive number in its report demonstrates calculation and reproducibility, not historical performance.
+- Account-count ratios are breadth measures, not exposure measures. They cannot identify the actual short notional, leverage, wealth, or liquidation level of the cohort.
+- Holder concentration is only meaningful after exchange, custody, bridge, LP, protocol, system-wallet, treasury, and vesting classifications are considered.
+- CEX deposits can represent inventory preparation, internal movement, market making, or distribution. Wallet labels and intent are uncertain.
+- OI and funding are not directionally self-explanatory. Positive funding can coexist with a rising price and crowded short accounts; the sign must be interpreted with the rest of the state.
+- Explorer APIs, exchange endpoints, venue labels, supply data, and historical snapshots can be stale, incomplete, or blocked. A failed request means unknown coverage, not no activity.
+- RAVE and LAB are anchors for falsifiable tests. They are not evidence that the same mechanism caused either move or that it will recur.
+- The deterministic fixture is synthetic. Its attractive paths are method demonstrations, not a performance record.
+- No result should be treated as personalized financial advice or a guarantee of execution, continuation, or profit.
 
----
+## Repository map
 
-## Overview
+| Area | Purpose |
+| --- | --- |
+| `crypto_market_structure/` | Canonical observations, state machine, reporting projection, event study, casebook, manifest, and offline replay |
+| `crypto_market_structure/fixtures/` | Frozen synthetic input and dated historical exports used as research context |
+| `app.py` | Streamlit presentation surface |
+| `discord_convex_bot.py` and related modules | Discord presentation and triage surface |
+| `tests/` | Tests for the existing research, presentation, and operational contracts |
+| `docs/` | Architecture, mechanism notes, case studies, workflow details, and review prompts |
 
-`crypto_market_structure_scanner` helps surface crypto assets with unusual structural conditions across market data, venue flow, derivatives positioning, and holder data.
-
-The project combines:
-
-- Binance perpetual market screening
-- Binance+Bitget thesis venue gating, with Gate as optional supporting evidence
-- on-chain holder concentration analytics
-- float and liquidity analysis
-- futures/open-interest monitoring
-- short-account crowding and squeeze-fuel scoring
-- wallet-to-CEX transfer monitoring
-- holder composition analysis
-- Discord webhook alerts
-- Discord bot query commands
-- Discord alpha brief / triage workflow
-- Streamlit dashboards
-- contract-resolution tooling
-- persistent local scan storage and ranking
-
-The goal is to identify assets worth further review by combining observable market behaviour with token-distribution structure.
-
----
-
-## Research Thesis
-
-The scanner is aimed at a specific class of market structure:
-
-- low tradable float or highly concentrated observed holder distribution
-- visible participation on venues where orderflow hedging and market making can matter
-- crowded short-account positioning on perpetual markets
-- rising open interest, volume, or trade count before price fully extends
-- recent large token movements from concentrated wallets into labelled exchange wallets
-- enough ATH/runway or liquidity asymmetry for payoff to become nonlinear
-
-No single signal is treated as proof. The product value comes from stacking independent evidence into a fast review queue, then archiving outcomes so the rules can be judged empirically.
-
-### Canonical state model
-
-The radar uses explicit point-in-time states rather than presenting every high score as an entry:
-
-- `DISCOVERY`: partial or low-quality evidence; investigate only.
-- `BUILDING`: short-account crowding, participation, OI, or price structure is forming, but the complete trigger is absent.
-- `ACTIVE_REFLEXIVITY`: short crowding/build, participation, OI, trend confirmation, and no-exhaustion gates agree.
-- `ACCELERATING`: active reflexivity with stronger breakout and persistence evidence.
-- `EXHAUSTION_RISK`: extension, rejection, short-account rollover, or OI weakness raises the cost of chasing.
-- `INVALIDATED`: price and/or fuel conditions break the defined structure.
-
-`short_account_pct` is explicitly the percentage of accounts, not short dollar notional. Funding semantics are also explicit: positive funding means longs pay shorts; negative funding means shorts pay longs. Funding is carry and crowding context, not a causal label such as "backwardation".
-
-The canonical observation schema also keeps, when supplied: circulating supply, FDV, market cap, estimated tradable-float value, raw and adjusted concentration, HHI/Gini-style measures, wallet classification evidence, Binance/Bitget/Gate metadata, 7D/30D/90D participation baselines, OI relative to market cap/float, funding persistence, global and top-trader account/position ratios, multi-horizon returns and breakout/runway state, realized-volatility/acceleration context, and CEX-flow notional relative to float, spot volume, and visible liquidity. Each remains a separately sourced metric; unavailable fields stay unavailable.
-
-The mechanism read is intentionally decomposed into Float Constraint, Holder Concentration, Venue Confirmation, Derivatives Activity Shock, OI Expansion, Short-Account Crowding/Acceleration, Trend/Breakout, Funding Dislocation, Reflexivity Persistence, and CEX Supply Risk. The displayed score is a ranking aid, not a probability or expected-return estimate.
-
-### Falsification plan
-
-The short-account hypothesis is not accepted because a chart looks convincing. A proper evaluation compares global account breadth with top-trader accounts/positions, OI, funding, volume, price, and subsequent returns at 1h, 4h, 12h, 24h, 3d, and 7d. It reports sample sizes, missingness, medians, tails, MFE/MAE, hit rates, bootstrap intervals, matched baselines, chronological holdout results, and sensitivity to removing the largest winners. The question is whether account-count crowding adds information after the other mechanisms are controlled for.
-
-See [the reflexivity casebook](docs/reflexivity-casebook.md) for the RAVE/LAB references, with observed facts, inferences, hypotheses, and unavailable evidence kept separate. The bundled review report is synthetic and must not be read as historical performance.
-
----
-
-## What This Demonstrates
-
-For engineering review, this repo shows:
-
-- production-style data ingestion from exchange, explorer, and market-data APIs
-- modular scoring engines with focused tests
-- Streamlit product/dashboard work
-- Discord bot and webhook operations
-- local persistence, cache fallbacks, cooldown state, and proof archives
-- careful language boundaries around research signals, risk, and user execution responsibility
-
----
-
-## Core Features
-
-## 1. Market Structure Scanner
-
-The market scanner evaluates Binance perpetual markets using structural and liquidity-based indicators.
-
-It screens for conditions such as:
-
-- relative volume expansion
-- open-interest acceleration
-- volatility compression and expansion
-- futures-versus-spot activity
-- float-adjusted participation
-- liquidity asymmetry
-- CEX deposit notional versus visible ask depth
-- concentration-gated venue-inventory stress
-- concentration-adjusted turnover
-- abnormal participation relative to recent baseline
-- structural squeeze conditions
-- dominant reflexivity-mechanism classification: hidden-float cap-table reflexivity, CEX inventory squeeze, crowded-short uptrend continuation, compression ignition, and runway breakout reflexivity
-- case-study analogue matching for RAVE/LAB/SIREN/RIVER/STO-style structures, with RAVEUSDT on 2026-04-18 and LABUSDT on 2026-05-11 treated as historical anchors
-- dashboard `Convex Long` buckets that only promote rows after the hard holder, Binance+Bitget, and 60D no-pump thesis gates pass; raw convex setup signals stay visible as watchlist context with the missing gate printed inline
-
-The output is intended to help prioritize markets for further research rather than produce standalone trade instructions.
-
-Results are surfaced through the Streamlit dashboard and can also be distributed through Discord integrations.
-
----
-
-## 2. On-Chain Concentration Analytics
-
-The repository includes a dedicated concentration-analysis engine for evaluating token distribution quality and tradable-float characteristics across ERC-20 and BEP-20 assets.
-
-The concentration engine supports:
-
-- contract and token metadata resolution
-- top-holder concentration analysis
-- holder classification heuristics
-- linked-wallet clustering
-- adjusted float estimation
-- raw and adjusted concentration metrics
-- Gini-style concentration analysis
-- HHI-style concentration analysis
-- liquidity and custody filtering
-- thin-float detection
-- structural-risk ranking
-
-The scanner distinguishes between different holder types, including:
-
-- centralized exchange wallets
-- custody wallets
-- liquidity pools
-- bridges and wrapped-token contracts
-- staking contracts
-- vesting contracts
-- treasury and reserve wallets
-- multisig wallets
-- burn addresses
-- owner/admin-linked wallets
-- unresolved whale clusters
-
-This helps separate nominal supply concentration from potentially relevant tradable-float concentration.
-
-Local scan outputs are stored in:
-
-```text
-data/concentration_scanner.sqlite
-```
-
-Optional API keys are read from environment variables:
-
-```text
-COINGECKO_API_KEY=
-ETHERSCAN_V2_API_KEY=<set locally; never commit>
-ETHERSCAN_API_KEY=<set locally; never commit>
-BSCSCAN_API_KEY=<set locally; never commit>
-ARBISCAN_API_KEY=<set locally; never commit>
-ARBSCAN_API_KEY=<set locally; never commit>
-```
-
-The scanner uses structural and probabilistic classification methods only. It does not make legal, regulatory, or compliance assertions from on-chain data alone.
-
----
-
-## 3. Convex Squeeze Radar
-
-`app.py` is a focused Streamlit decision surface for finding early RAVE/LAB-style forced-flow structures. The default path is deliberately bounded: bulk Binance data selects a coarse candidate set from the full live crypto-perpetual universe, probes current short-account breadth, then enriches only the finalists with hourly price, volume, open-interest, funding, and account-ratio history. Explorer and external-market requests are kept out of the interactive loop.
-
-The radar includes:
-
-- `REFLEXIVE`, `IGNITION`, `ARMED`, `OBSERVE`, `UNWIND`, `LATE`, and `STALE` lifecycle states
-- current and smoothed short-account-share build, explicitly labelled as account count rather than short dollar notional
-- multi-hour short-account and OI confirmation, including 3H/6H net change and consecutive build persistence, so one noisy print cannot promote a setup
-- agreement gates across positive funding, short crowding, current short build, volume ignition, OI expansion, breakout structure, and 30-day anchored VWAP
-- optional top-finalist crowd diagnostics: broad account positioning versus top-trader positioning plus taker buy flow, used as a veto against “crowd is already long” false positives rather than mistaken for short notional
-- a hard no-chase veto for extension, rejection, blow-off, and breakdown conditions
-- separate market-trigger, verified-structure-watch, and entry-ready queues, so missing holder or Bitget/Gate proof is visible instead of silently treated as confirmation
-- current short-account preselection so stale background short scans cannot outrank live account breadth
-- explicit `PROXY ONLY` versus `VERIFIED / STALE` evidence labels; verified holder/venue evidence must be no more than 30 days old
-- saved market snapshots older than 90 minutes are neutralized as `STALE` until a live refresh completes
-- cached concentration evidence with protocol-storage, wrapper, and CEX-custody false-positive controls
-- sortable Radar, Watch, Lifecycle, and Evidence views plus a component-level setup drilldown
-- a compact 30-day scan ledger that labels candidates `NEW`, `REPEATED`, or `PERSISTENT` when the structure keeps reappearing across refreshes
-- an Evidence-tab structural-proof action that runs the existing concentration scanner only for a bounded top queue; explorer/RPC work is kept out of the normal fast refresh path
-- `Early`, `Primary`, and `Strict` profiles without rerunning the network scan
-- local persistence of the last good radar snapshot for a useful first load
-
-The live candidate budget defaults to a small universe and can be raised from 24 to 48 when broader coverage matters more than latency. A typical refresh first probes 72 candidates using the lightweight global account-ratio endpoint, then performs heavier enrichment only for the selected rows. The existing full scanner, concentration tooling, and Discord command paths remain available as backend research services, but no longer compete for attention on the dashboard front page.
-
-The primary profile requires current short build plus either positive three-hour short-account change or repeated hourly build, and requires current OI expansion plus either positive three-hour OI change or consecutive OI build observations. The `Early` profile relaxes those thresholds for discovery; `Strict` raises them for fewer, cleaner candidates. The history ledger is compact and local, and is retained only for the configured number of days.
-
-`Entry Ready` is intentionally stricter than a market trigger: the structural proof must be verified, fresh, contract-backed, and accompanied by storage/representation controls plus Bitget/Gate venue evidence. Use **Refresh structural proof** in the Evidence tab when a high-ranked live row deserves promotion; a failed or partial explorer response leaves it visible as research context rather than silently treating the row as confirmed.
-
-Run the dashboard with:
-
-```powershell
-streamlit run app.py
-```
-
----
-
-## 4. Discord Webhook Alerts
-
-The repository supports Discord webhook alerts for distributing scanner results to a Discord channel.
-
-Webhook alerts support:
-
-- ranked scan summaries
-- configurable top-N filtering
-- configurable score thresholds
-- per-symbol cooldowns
-- strict 90%+ holder-concentration evidence gate with ETH/BNB/ARB chain, contract, and explorer holder-source snapshot backing
-- Binance+Bitget thesis venue gating by default, with Gate treated as optional supporting evidence
-- dedicated CEX-flow alert source for concentrated wallet-to-exchange movement
-- dedicated 24/7 short-account 1h rate-of-change connector for rapid short builds/covers
-- dedicated 24/7 breakout/high-low/MA200 connector for fresh Binance perp structure changes
-- dedicated 24/7 single-symbol one-hour connectors for short-account change, open interest, and recent volume
-- venue-inventory stress notes when CEX deposits are large versus visible liquidity
-- case-study analogue lines for fast pattern triage, including the RAVE 2026-04-18 and LAB 2026-05-11 historical anchors when matched
-- optional holder composition summaries
-- compact thesis, evidence stack, next-check, invalidation, and liquidity-risk lines
-- scheduled monitoring workflows
-
-Example `.env` configuration:
-
-```text
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-DISCORD_CONVEX_ALERTS_ENABLED=1
-DISCORD_CONVEX_ALERT_TOP_N=10
-DISCORD_CONVEX_ALERT_MIN_SCORE=0
-DISCORD_CONVEX_ALERT_COOLDOWN_MINUTES=240
-DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS=0
-```
-
-Fresh scans write `binance_perp_universe=true` before Discord gates run. Binance evidence must come from an explicit marker, Binance venue share, or Binance top-venue text; symbol text alone never proves Binance venue support, even if the deprecated `DISCORD_ASSUME_SYMBOLS_ARE_BINANCE_PERPS` variable is present. The old `DISCORD_REQUIRE_BITGET_OR_GATE` flag is also ignored by thesis gates; Binance+Bitget trading evidence is pinned on, with Gate only supporting context. Discord thesis screens such as `/hunt`, `/radar`, `/ravelab`, `/crimepump`, `/precrime`, `/pumpwatch`, `/setupscore`, `/coincheck`, `/alpha`, `/high`, and `/low` always require explicit Binance evidence and 60D no-pump proof; candidate surfaces add their core gates such as low-float/high-FDV, short/squeeze fuel, and not-late structure before showing rows. They do not use symbol text as proof.
-
-Per-symbol cooldown state is stored locally in:
-
-```text
-data/discord_convex_alert_state.csv
-```
-
-Run the short-account 1h rate-of-change Discord connector with:
-
-```powershell
-run_short_account_roc_watcher_24_7.bat
-```
-
-It posts to `SHORT_ROC_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune it with `SHORT_ROC_MIN_ABS_PP`, `SHORT_ROC_MIN_ABS_PCT`, `SHORT_ROC_INTERVAL_SECONDS`, `SHORT_ROC_TOP_N`, and `SHORT_ROC_REALERT_HOURS`.
-
-Run the breakout/high-low/MA200 Discord connector with:
-
-```powershell
-run_breakout_monitor_24_7.bat
-```
-
-It posts newly appearing breakout signals to `BREAKOUT_MONITOR_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune it with `BREAKOUT_MONITOR_INTERVAL_SECONDS`, `BREAKOUT_MONITOR_SYMBOLS`, `BREAKOUT_MONITOR_MAX_SYMBOLS`, and `BREAKOUT_MONITOR_SUPPRESS_INITIAL_ALERTS`.
-
-Run the INX one-hour short/OI/volume Discord connector with:
-
-```powershell
-run_inx_hourly_monitor_24_7.bat
-```
-
-Run the COAI one-hour short/OI/volume Discord connector with:
-
-```powershell
-run_coai_hourly_monitor_24_7.bat
-```
-
-Both post every cycle to `INX_MONITOR_DISCORD_WEBHOOK_URL` when set, otherwise `DISCORD_WEBHOOK_URL`. Tune the shared monitor with `INX_MONITOR_SYMBOL`, `INX_MONITOR_INTERVAL_SECONDS`, and `INX_MONITOR_OUTPUT_DIR`; the COAI BAT overrides the symbol/output directory to `COAIUSDT` and `coai_hourly_monitor_output`.
-
-### Short-ROC staged exit monitor
-
-`short_roc_position_close.py` treats short-account percentage as crowd breadth, then keeps open-interest, price, and volume behavior as separate confirmation layers. The default live BAT workflow now has two stages:
-
-1. **Protect profit:** a sharp one-hour short-account unwind or a cumulative 5 percentage-point drawdown from the observed position peak can arm the signal. The breadth structure must then persist for distinct hourly observations or receive market confirmation. A passing signal reduces 50% of the position.
-2. **Manage the runner:** the remaining position stays open until breadth depletion coincides with price failure, falling OI, and volume deceleration for two distinct post-reduction observations. A hard price/OI/reversal-volume exhaustion event can close it sooner.
-
-The monitor also calculates a three-observation smoothed short ROC, smoothed acceleration, per-symbol ROC z-score, same-direction persistence, and price distance from a VWAP anchored to the start of up to 30 completed daily candles. Every live order is revalidated immediately before submission against the current position, side, executable price, configured profit floor, and exchange limit-order quantity rules. Submitted orders are reduce-only, and a filled partial reduction does not mark the position as fully closed or stop the monitor.
-
-Run automatic single-position detection with:
-
-```powershell
-run_auto_short_roc_close_live_24_7.bat
-```
-
-Or enter any ticker interactively with:
-
-```powershell
-run_ticker_short_roc_close_live_24_7.bat
-```
-
-Key controls are `SHORT_ROC_CLOSE_PARTIAL_PCT`, `SHORT_ROC_CLOSE_HISTORY_LIMIT`, `SHORT_ROC_CLOSE_RUNNER_CONFIRMATION_READINGS`, `SHORT_ROC_CLOSE_RUNNER_OI_DROP_PCT`, and `SHORT_ROC_CLOSE_RUNNER_VOLUME_DECELERATION_PCT`. Set `--partial-close-pct 100` for the legacy all-at-once close behavior. Use `--dry-run` before enabling live execution; exchange connectivity, latency, slippage, and position reconciliation remain operational risks.
-
----
-
-## 5. Discord Bot Commands
-
-The repository also includes a lightweight Discord bot interface for querying cached scanner results directly from Discord.
-
-Supported commands include:
-
-```text
-/commands
-/help
-/alpha [limit]
-/convex [limit]
-/shorts
-/shortpct [limit] [period] [min_pp] [min_pct]
-/shorttrend [limit] [period] [min_windows] [min_total_pp]
-/funding [side] [limit] [period] [min_abs_funding_pct]
-/hunt [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/thesis [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/radar [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/precrime [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_target_flow] [require_quiet] [require_behavior_gate] [require_dormant_60d]
-/crimepump [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/ravelab [min_score] [min_archetype] [min_whale_pct] [min_squeeze_score] [min_history_days] [max_recent_pump_pct] [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [breakout_windows] [style] [require_quiet] [require_target_flow] [require_breakout_high] [require_whale_origin_flow] [trigger_filter] [near_miss_limit] [detail]
-/prime [min_tokens] [whale_flow_min_tokens] [limit] [lookback_hours] [trigger] [breakout_windows]
-/pumpwatch [min_score] [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_target_flow] [require_dormant_60d]
-/setupscore [min_score] [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct]
-/gates [min_tokens] [lookback_hours] [limit] [min_short_pct] [min_whale_pct]
-/flowproof <symbol> [min_tokens] [lookback_hours]
-/coincheck <symbol> [min_score] [min_tokens] [lookback_hours] [min_short_pct] [min_whale_pct]
-/floattrap [min_score] [limit]
-/squeezeready [min_short_pct] [min_score] [limit]
-/cextargets [min_tokens] [limit] [lookback_hours]
-/whales [min_pct] [bucket] [limit] [require_contract_hint] [max_symbols] [refresh]
-/high [days] [limit] [thesis_only]
-/low [days] [limit] [thesis_only]
-/terminal
-/timing
-/corr [threshold] [limit]
-/cexflow [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_venue_gate]
-/cexdiag [min_tokens] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_venue_gate] [symbol_limit]
-/earlyflow [min_tokens] [limit] [lookback_hours] [min_whale_pct] [require_holder_evidence] [require_venue_gate]
-/flowcoin <symbol> [min_tokens] [lookback_hours]
-/flowstress [min_tokens] [limit] [lookback_hours] [require_venue_gate]
-/flowblocked [min_tokens] [limit] [lookback_hours]
-/flowhealth [min_tokens] [lookback_hours] [symbol_limit]
-/sethflow [min_tokens] [limit] [lookback_hours] [min_short_pct] [min_whale_pct] [require_whale_origin_flow]
-/dossier <symbol>
-/coin <symbol>
-/startbot [mode] [scan_mode]
-/stopbot
-/tradebot_status
-/convex_status
-/convex_scoreboard
-/convex_archive
-/sync_commands
-/<configured-symbol-alias>
-```
-
-Use `/help` or `/commands` inside Discord when you want the operator map. It labels `/hunt` and `/thesis` as the primary hard-gated queues, `/gates` as the empty-queue funnel diagnostic, `/ravelab` as the diagnostic microscope, and the flow/holder commands as diagnostics rather than candidate lists.
-Legacy options may still appear for slash-command compatibility, but the candidate loaders pin their thesis gates on: `require_dormant_60d:false` cannot weaken `/precrime` or `/pumpwatch`, and `require_quiet:false` cannot weaken `/ravelab`.
-
-The bot can retrieve:
-
-- a strict core-thesis alpha brief across structure, timing, CEX flow, scanner score, and short-account fuel after 90%+ top-10 holder control with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, 60D no-pump, low-float/high-FDV, short crowd plus squeeze fuel, and not-late gates
-- latest cached scanner rankings
-- a `/shorts` diagnostic board for symbols where more than 50% of accounts are short; rows are labelled `weakCtx` and overlay `baseThesis Y/N/?` so high short-account percentage stays weak context unless the strict holder, Binance+Bitget, and 60D no-pump gates also pass
-- a `/shortpct` live Binance board for the fastest positive short-account percentage increases by rate of change, with raw and three-observation smoothed ROC, acceleration, token-relative z-score, same-direction persistence, and optional base-thesis context
-- a `/shorttrend` live Binance trend board for persistent short-account builds across 1h/3h/6h/12h/24h ROC windows, filtered by positive-window count and total positive percentage-point build, with the same smoothed acceleration and persistence diagnostics
-- live Binance funding-carry rankings split into shorts-receive-positive and longs-receive-negative sides
-- a `/precrime` radar for quiet latent setups after the hard explorer holder-source snapshot, Binance+Bitget thesis gates, pinned 60D no-pump/dormancy proof, low-float/high-FDV structure proof, and short crowd plus squeeze fuel: holder/control concentration, target-CEX inventory tells, short-fuse perps, thin books as amplifiers, and no-chase low activity
-- a primary `/hunt` operator queue for the main thesis: top-10 whale-control threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget, float/FDV trap evidence, 60D no-pump/dormancy, squeeze fuel, early/no-chase, and optional trigger filters for `massive_flow` top-holder-origin CEX transfers, lower-floor `flow` whale-CEX diagnostics, generic target-CEX flow, forced-flow mechanics, breakout highs, triggered-only, or core-watch rows
-- `/thesis` as the plain-name alias for the same hard-gated queue when you want the core setup without the RAVE/LAB microscope; `/radar` as a technical alias, `/crimepump` as a legacy blunt-name alias, and `/prime` as a short alias for the same compact hard-gated queue
-- a dedicated `/ravelab` strict early-structure microscope requiring observed top-10 whale-control concentration at the requested threshold with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, Binance+Bitget trading evidence, float/FDV trap evidence, at least 60 days of history plus verified 60D closed-candle no-pump/no-chase dormancy, and a squeeze stack that pairs short crowding with perp/OI/liquidation/funding-flip/build fuel before ranking RAVE/LAB analogues by hard-gate completion first; when filtered/manipulable holder metrics are available it uses those adjusted top-10 values ahead of raw top-10, so CEX, treasury, vesting, bridge, wrapper, LP, burn, and protocol-storage concentration cannot pass as insider float control; it reapplies lifecycle and short-squeeze models in the Discord path, then prints a hard-gate funnel, trigger-lane counts, a trigger/core-watch queue, compact stage labels, blocker text, `crime`/`ssq` model reads, a `flowMech` forced-flow/exhaustion read for short crowd, short-build/fade, OI, and volume, holder source, count, chain, contract, adjusted holder-control context, float-score, and FDV/MC details, 60D pump-proof source, venue provenance, optional top-holder-origin CEX-flow filtering that respects `whale_flow_min_tokens` while generic target-CEX flow still respects `min_tokens`, a separate `massive_flow` lane controlled by `DISCORD_RAVELAB_MASSIVE_WHALE_FLOW_MIN_TOKENS` with the cleared floor printed beside the trigger amount, a first-class `forced_flow` lane for hard-gated rows where short crowd, OI/volume, and fuel are rising without exhaustion, optional 1D/2D/3D/4D/etc high-breakout filtering after those hard gates, a blocked high-signal near-miss tail controlled by `near_miss_limit`, and `detail:true` for the full evidence stack
-- a single `/pumpwatch` board that rank-orders early pump candidates across target-CEX flow, whale/control, low float, short-squeeze fuel, timing, venue support, and not-late risk after the same pinned 90%+ explorer holder-source snapshot, Binance+Bitget, 60D no-pump/dormancy, low-float/high-FDV, squeeze-fuel, and not-late gates; high short-account percentage alone is context, not a pass, unless paired with build/OI/liquidation/funding/forced-buying fuel
-- a strict full-thesis `/setupscore` ranking for target-CEX flow, 90%+ top-10 holder dominance with ETH/BNB/ARB chain+contract explorer holder-source snapshot evidence, mandatory Binance+Bitget trading evidence, 60D no-pump proof, low float/high FDV, short crowd plus squeeze fuel, and not-late structure
-- `/gates` diagnostics that explain where the current scan fails the core thesis funnel before you waste time staring at an empty `/thesis` or `/hunt` queue
-- symbol-level `/flowproof`, `/coincheck`, `/coin`, and `/dossier` views that separate base thesis, core setup, and CEX-flow triggers; transfer labels cannot masquerade as venue proof, and a clean core structure no longer looks rejected merely because the CEX-flow trigger has not appeared yet
-- holder-concentration, low-float/high-FDV, squeeze-ready, inventory-stress, and Binance/Gate/Bitget target-transfer diagnostic boards that label raw rows separately from candidate rows and show `baseThesis` plus `coreThesis` blockers when strict holder, Binance+Bitget, 60D no-pump, low-float/high-FDV, short+squeeze-fuel, or not-late gates fail
-- top terminal market-structure evidence rows after the strict base thesis gate, with `baseThesis Y` printed per row
-- top timing-quality rows after the strict base thesis gate, with `baseThesis Y` printed per row
-- BTC low-correlation rows with the actual correlation window used per symbol plus `baseThesis Y/N` blockers
-- concentration-gated wallet-to-CEX flow rows
-- explicit `Whale sender` status on every CEX-flow card, separating verified top-holder-origin transfers from generic labelled target-CEX flow
-- CEX-flow coverage diagnostics for missing hints, holder-gate attempts, explorer errors, empty explorer HTML parses, venue-gate filtering, and attempted-symbol review
-- lower-threshold early wallet-to-CEX transfer sweeps, for low-float names where 500k tokens is too blunt
-- symbol-specific wallet-to-CEX flow checks with a custom transfer floor
-- CEX deposit inventory-stress rankings versus visible ask depth and 24h turnover
-- Etherscan V2 token-transfer API fallback when explorer HTML is blocked or returns no parsable transfer rows, with unlabelled-transfer diagnostics that surface destination addresses needing CEX wallet labels before rows count as verified flow
-- CEX-flow health checks covering API keys and local address-label coverage
-- a full massive target-CEX flow -> top-holder sender -> 90%+ top-10 holder concentration/evidence -> low-float/FDV -> short crowd plus squeeze fuel -> dormant-structure checklist via `/sethflow`, which defaults to the 10M massive-flow floor unless `min_tokens` is explicitly lowered for diagnostics
-- top-10-first whale-dominance rankings, with top100 retained as diagnostic context
-- hard-gated high/low breakout rows for any 1D-1499D lookback, using dashboard columns when present and live Binance daily candles for custom windows; default `thesis_only:true` keeps only rows that also pass top10 holder evidence, Binance+Bitget, 60D no-pump proof, low-float/high-FDV, short crowd plus squeeze fuel, and not-late structure, while `thesis_only:false` shows raw breakout context with base-gate blockers
-- symbol-level market structure metrics
-- live scan context
-- holder composition summaries
-- contract metadata when available
-- trailing proof-engine outcome summaries
-- local proof-archive exports
-- trade-bot candidate selection that reuses the strict thesis plus core setup gates before any paper/live setup is chosen
-
-Example `.env` configuration:
-
-```text
-DISCORD_BOT_TOKEN=
-DISCORD_GUILD_ID=
-DISCORD_ALLOWED_CHANNEL_ID=
-DISCORD_CLEAR_GLOBAL_COMMANDS_ON_GUILD_SYNC=0
-DISCORD_CONVEX_COMMAND_TOP_N=10
-DISCORD_ALPHA_TOP_N=15
-DISCORD_ALPHA_BRIEF_MIN_SCORE=35
-DISCORD_EARLY_FLOW_MIN_TOKENS=20000
-DISCORD_RAVELAB_WHALE_FLOW_MIN_TOKENS=100000
-DISCORD_RAVELAB_MASSIVE_WHALE_FLOW_MIN_TOKENS=10000000
-DISCORD_LOGIN_RETRY_SECONDS=90
-DISCORD_DEFAULT_USER_TIER=pro
-DISCORD_FREE_SAMPLE_TOP_N=3
-DISCORD_PAID_ROLE_IDS=
-DISCORD_PRO_ROLE_IDS=
-```
-
-`DISCORD_GUILD_ID` is recommended because guild slash commands usually sync faster than global Discord commands.
-
-Run the bot with:
-
-```powershell
-run_discord_convex_bot.bat
-```
-
-See [Discord alpha workflow](docs/discord-alpha-workflow.md) for the alert taxonomy, operator loop, and recommended command sequence.
-
----
-
-## 6. Proof Archive and Outcome Tracking
-
-Discord alerts are archived locally so scanner quality can be measured over time instead of judged by screenshots.
-
-The append-only archive writes one JSON line per alert:
-
-```text
-data/archive/flags/YYYY-MM-DD.jsonl
-```
-
-Each record includes the ticker, timestamp, flagged price, scanner score, scan mode, reason tags, holder concentration metrics, OI/volume state, liquidity/risk tags, source URL when available, the raw bot output, and a `research_tooling_only` status field.
-
-Outcome refreshes append versioned JSONL records:
-
-```text
-data/archive/outcomes/YYYY-MM-DD_outcomes.jsonl
-```
-
-Outcomes track max upside after 1h, 4h, 24h, and 7d, max drawdown after the flag, time to +20%, time to +50%, time to 2x, whether OI/volume confirmed, and whether the structure invalidated by the current rules.
-
-Weekly report generation writes:
-
-```text
-data/archive/reports/weekly_YYYY-WW.md
-data/archive/reports/weekly_YYYY-WW.csv
-```
-
-The legacy CSV summary remains available at:
-
-```text
-data/discord_convex_alert_archive.csv
-```
-
-Useful configuration:
-
-```text
-DISCORD_PROOF_ARCHIVE_ROOT=data/archive
-DISCORD_PROOF_REFRESH_ENABLED=1
-DISCORD_PROOF_REFRESH_MAX_ROWS=12
-DISCORD_SCOREBOARD_REFRESH_OUTCOMES=1
-DISCORD_WEEKLY_REPORT_WRITE_ENABLED=1
-```
-
----
-
-## 7. Automated Discord Watcher
-
-The watcher service supports scheduled rescanning and automatic posting of newly detected scanner candidates.
-
-Example configuration:
-
-```text
-DISCORD_WATCHER_SCAN_MODE=Deep
-DISCORD_WATCHER_ALERT_SOURCE=terminal_timing
-DISCORD_WATCHER_SCAN_INTERVAL_SECONDS=180
-DISCORD_WATCHER_TOP_N=25
-DISCORD_WATCHER_REALERT_HOURS=12
-DISCORD_WATCHER_MIN_TERMINAL_SCORE=60
-DISCORD_WATCHER_MIN_TIMING_SCORE=55
-DISCORD_WATCHER_ALLOWED_TIMING_STATES=Coiling,Triggering,Confirmed
-DISCORD_HOLDER_COMPOSITION_ENABLED=1
-```
-
-`DISCORD_WATCHER_ALERT_SOURCE` controls what the automatic watcher posts:
-
-- `terminal_timing` requires the core thesis gate plus both structural evidence and current timing quality.
-- `terminal` alerts from the core-gated structural evidence ranking only.
-- `timing` alerts from the core-gated timing ranking only.
-- `cex_flow` alerts from core-gated, concentration-gated wallet-to-CEX token-transfer flow.
-- `convex` keeps the older Convex Long source, but rows still pass the core thesis gates before posting.
-
-Every watcher card now starts with a compact `Watcher gate` line showing `coreThesis`, holder/top10, Binance+Bitget, 60D no-pump, and short-account context, so automatic alerts carry the same hard-gate proof posture as the slash-command screens.
-Dashboard-triggered Discord Convex alerts and the latest Convex cache also re-score rows with the current core-thesis bucket logic before sending or caching, so stale `Convex Long` labels cannot bypass the low-float/FDV, short+squeeze-fuel, no-pump, holder, and Binance+Bitget gates. Dashboard-triggered alert cards start with a compact `Dashboard gate` line showing `coreThesis`, holder/top10, Binance+Bitget, 60D no-pump, and short-account context.
-
-The watcher stores state locally so unchanged candidates are not reposted every scan:
-
-```text
-data/discord_convex_watcher_state.csv
-```
-
-Run the watcher with:
-
-```powershell
-run_discord_convex_watcher.bat
-```
-
----
-
-## 8. Holder Composition Summaries
-
-Discord alerts and dashboard views can attach compact holder-composition summaries when token contract data is available.
-
-Holder summaries may include:
-
-- top-holder concentration
-- top 5 / top 10 observed concentration
-- holder count
-- total supply context
-- whale / shark / dolphin / shrimp-style holder buckets
-- known holder categories
-- unresolved wallet concentration
-- adjusted float indicators
-
-Contract resolution uses, where available:
-
-- scan result columns
-- local contract hint files
-- environment variable overrides
-- explorer-compatible token metadata
-- public token lists
-
-Failures in holder composition retrieval are non-blocking. Scanner alerts can still post even if holder data is temporarily unavailable.
-
----
-
-## 9. Contract Resolution Tooling
-
-The repository includes utilities for maintaining local contract mappings used by the scanner, dashboard, and Discord integrations.
-
-Bulk-fill local contract hints with:
-
-```powershell
-python .\scripts\build_discord_holder_contracts.py --limit 6000
-```
-
-Generated files:
-
-```text
-data/discord_holder_contracts.csv
-data/discord_holder_contracts_spreadsheet_safe.csv
-data/discord_holder_contracts_full.csv
-```
-
-Manual contract hints can be added by copying:
-
-```text
-discord_holder_contracts.example.csv
-```
-
-to:
-
-```text
-data/discord_holder_contracts.csv
-```
-
-Example row:
-
-```text
-symbol,chain,contract_address
-CHIPUSDT,arbitrum,0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e
-```
-
-Quick one-line hints can also be provided through `.env`:
-
-```text
-DISCORD_HOLDER_CONTRACTS=CHIPUSDT:arbitrum:0x0C1c1C109FE34733fca54b82d7B46B75CFb71F6e
-DISCORD_HOLDER_COMPOSITION_MAX_HOLDERS=100
-DISCORD_HOLDER_COMPOSITION_TOP_HOLDERS=0
-```
-
-When opening contract CSVs in Excel or Google Sheets, import `contract_address` as text. If a contract address is converted into scientific notation, the address has been corrupted and should be reloaded from the generated CSV.
-
----
-
-## Technology Stack
-
-The project uses:
-
-- Python
-- Streamlit
-- SQLite
-- Binance market-data APIs
-- Discord.py and Discord webhooks
-- Etherscan-family explorers and Etherscan V2 token-transfer APIs
-- GoPlus token-security data
-- local CSV and SQLite persistence
-
----
-
-## Local Setup
-
-Install dependencies using the repository's Python environment setup, then configure optional environment variables as needed.
+## Local setup
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+python scripts/security_audit.py
+python -m pytest -q
 ```
 
-Example `.env` template:
+The offline replay needs no API keys. Live exchange, explorer, Discord, and execution credentials belong in a local `.env`, which is ignored by Git. Use `.env.example` only as a blank template.
 
-```text
-COINGECKO_API_KEY=
-ETHERSCAN_V2_API_KEY=<set locally; never commit>
-ETHERSCAN_API_KEY=<set locally; never commit>
-BSCSCAN_API_KEY=<set locally; never commit>
-ARBISCAN_API_KEY=<set locally; never commit>
-ARBSCAN_API_KEY=<set locally; never commit>
-CEX_ADDRESS_BOOK_FILE=data/cex_address_book.csv
-CEX_ADDRESS_LABELS=
+## Further reading
 
-DISCORD_WEBHOOK_URL=
-DISCORD_BOT_TOKEN=
-DISCORD_GUILD_ID=
-DISCORD_ALLOWED_CHANNEL_ID=
-```
+- [Architecture](docs/architecture.md)
+- [Demo Walkthrough](docs/demo-walkthrough.md)
+- [Discord Alpha Workflow](docs/discord-alpha-workflow.md)
+- [Case-study backfill checklist](docs/case-study-backfill-checklist.md)
+- [Core thesis gate audit](docs/core-thesis-gate-audit.md)
+- [GPT-5.6 Sol review prompt](docs/gpt56-sol-review-prompt.md)
+- [Security and release notes](SECURITY.md)
 
-Run the dashboard:
-
-```powershell
-streamlit run app.py
-```
-
-Run the Discord bot:
-
-```powershell
-run_discord_convex_bot.bat
-```
-
-Run the Discord watcher:
-
-```powershell
-run_discord_convex_watcher.bat
-```
-
-Run the short-account 1h ROC watcher:
-
-```powershell
-run_short_account_roc_watcher_24_7.bat
-```
-
-Run the breakout/high-low/MA200 watcher:
-
-```powershell
-run_breakout_monitor_24_7.bat
-```
-
-Run the INX one-hour short/OI/volume watcher:
-
-```powershell
-run_inx_hourly_monitor_24_7.bat
-```
-
-Run the COAI one-hour short/OI/volume watcher:
-
-```powershell
-run_coai_hourly_monitor_24_7.bat
-```
-
----
-
-## Design Philosophy
-
-The project focuses on observable structure rather than black-box prediction.
-
-Core design priorities:
-
-- transparent scanner logic
-- reproducible local outputs
-- practical dashboard review
-- persistent monitoring workflows
-- clear separation between market data and on-chain data
-- conservative language around structural risk
-- no unsupported legal or predictive claims
-
-The repository is intended to demonstrate practical crypto market-data engineering, research workflow design, dashboard development, and real-time monitoring infrastructure.
-
----
-
-## Reviewer Guide
-
-- [Demo walkthrough](docs/demo-walkthrough.md): install, test, dashboard, Discord, proof loop.
-- [Architecture](docs/architecture.md): module map and data flow.
-- [Discord alpha workflow](docs/discord-alpha-workflow.md): operator loop and alert taxonomy.
-- [Core thesis gate audit](docs/core-thesis-gate-audit.md): maps each non-negotiable gate to the enforcing modules and tests.
-- [Sample Discord output](docs/sample-discord-output.md): representative `/alpha`, alert, `/cexflow`, and scoreboard text.
-
-Continuous test coverage is configured in [.github/workflows/tests.yml](.github/workflows/tests.yml).
-
----
-
-## Disclaimer
-
-This repository is for research and educational purposes only. It does not provide financial advice, trading advice, legal conclusions, or compliance determinations.
+The system is research infrastructure. Any live decision, sizing, execution, or risk remains outside the scope of this repository's evidence claims.

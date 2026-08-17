@@ -109,10 +109,10 @@ data/archive/outcomes/YYYY-MM-DD_outcomes.jsonl
 
 The scoreboard command summarizes whether the rules are producing useful follow-through, not just visually exciting alerts.
 
-## 7. What To Point Out In An Interview
+## 7. Research design in brief
 
-- The thesis is narrow: concentrated float plus derivatives crowding plus venue-flow stress.
-- The architecture separates research scoring, Discord operations, and proof measurement.
-- The bot avoids trade-call language and keeps risk/execution responsibility explicit.
-- The proof engine creates a feedback loop for improving the signal stack.
-- Tests exercise edge cases around Discord length limits, CEX-flow rows, venue gating, and timing filters.
+- The hypothesis is narrow: constrained effective float plus derivatives crowding plus venue-flow stress may create forced-buying feedback.
+- The canonical package separates observations, state assessment, event studies, and reproducibility manifests from presentation surfaces.
+- Missingness, provenance, account breadth versus notional, and custody classifications remain visible throughout the workflow.
+- The bot and dashboard are triage surfaces; they do not turn incomplete evidence into a trade call.
+- The proof loop records outcomes so the signal stack can be falsified rather than narrated after the fact.

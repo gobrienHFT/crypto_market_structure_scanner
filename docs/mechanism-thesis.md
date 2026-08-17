@@ -1,8 +1,15 @@
-# Convex Market-Structure Mechanism Thesis
+# Reflexive Market-Structure Mechanism Thesis
 
-This repo is trying to catch a narrow failure mode in perp-listed crypto: a token can reprice violently when real tradable float is much smaller than headline supply, the active venue set concentrates order flow, and the perp crowd leans the wrong way while price is already trending.
+This document states a falsifiable hypothesis about perp-listed crypto: a token can reprice violently when effective tradable float is much smaller than headline supply, the active venue set concentrates order flow, and the perp crowd leans the wrong way while price is already trending.
 
-The scanner should not read any one signal as proof. The useful signal is a stack of independent hints that point to the same reflexive loop.
+The scanner should not read any one signal as proof. The useful signal is a stack of independently sourced observations that point to the same possible reflexive loop. RAVE and LAB are case-study anchors for defining tests and failure modes, not evidence that the mechanism caused either move.
+
+Interpretation rules apply throughout:
+
+- Global long/short account ratios describe account breadth, not dollar notional, leverage, or liquidation levels.
+- Negative funding means shorts pay longs; funding is carry and positioning context, not a directional verdict.
+- Holder concentration is only meaningful after exchange, custody, bridge, LP, protocol, system-wallet, treasury, and vesting classifications are considered.
+- A CEX transfer is labelled flow evidence, not proof of an intended sale or coordinated activity.
 
 ## Mechanism Map
 
@@ -63,11 +70,11 @@ Primary scanner columns:
 
 Reference pattern: current/recent `VELVETUSDT`-style behavior.
 
-This is the pattern the new dashboard section explicitly promotes: price is structurally advancing, funding is positive, short-account share is high, and shorts are still building. That combination can mean traders are paying funding to fight an uptrend while each new high increases liquidation/fomo pressure.
+This is the pattern the dashboard makes available for investigation: price is structurally advancing, funding is positive, short-account share is high, and the short-account cohort is still building. Positive funding means longs pay shorts, so this combination can coexist with high short-account breadth and larger long notional; it is a mixed positioning signal that needs OI, price, volume, and persistence context.
 
 Scanner interpretation:
 
-- positive funding does not automatically mean "too late"; in this setup it can prove shorts are paying to stay short
+- positive funding does not automatically mean "too late"; it is carry paid by longs to shorts and does not prove which side will be forced
 - high short-account share is more useful when short share is rising into strength
 - a multi-window high-break stack matters more than a single candle
 - the loop fails when price breaks recent lows, funding flips, or shorts stop building
@@ -122,9 +129,11 @@ Primary scanner columns:
 - `breakout_pressure_score`
 - `trend_confluence_score`
 
-## Practical Dashboard Usage
+## Research surfaces
 
-Start with `Convex Mechanisms`.
+The dashboard and Discord views are ways to inspect the research objects; they
+do not replace the point-in-time observation and event-study definitions.
+Start with `Convex Mechanisms` when using the dashboard.
 
 - `Primary Mechanism` tells you which loop is most active.
 - `Mechanism Evidence` gives the compact reason.
@@ -162,7 +171,7 @@ A stronger full event study should keep extending each named historical example 
 
 That turns the mechanism taxonomy from a strong qualitative framework into a measurable backtest surface.
 
-## External Sources Used For The Thesis
+## External references
 
 - DL News, "Binance and Bitget to investigate Rave token market manipulation": https://www.dlnews.com/articles/markets/binance-and-bitget-under-fire-after-ravedao-crash/
 - CoinDesk, "Binance and Bitget to Probe RAVE's 4,500% Token Surge": https://www.coindesk.com/business/2026/04/18/binance-and-biget-to-probe-rave-s-4-500-token-surge-as-claims-of-insider-orchestrated-rally-grow
