@@ -1,10 +1,10 @@
 # Reflexive Market-Structure Mechanism Thesis
 
-This document states a falsifiable hypothesis about perp-listed crypto: a token can reprice violently when effective tradable float is much smaller than headline supply, the active venue set concentrates order flow, and the perp crowd leans the wrong way while price is already trending.
+This is a falsifiable hypothesis about perp-listed crypto: a token may reprice violently when effective tradable float is much smaller than headline supply, the active venue set concentrates order flow, and the perp crowd leans the wrong way while price is already trending.
 
-The scanner should not read any one signal as proof. The useful signal is a stack of independently sourced observations that point to the same possible reflexive loop. RAVE and LAB are case-study anchors for defining tests and failure modes, not evidence that the mechanism caused either move.
+I do not want any one signal treated as proof. The useful read is several independently sourced observations pointing toward the same possible loop. RAVE and LAB help define the tests and failure modes; they do not show that the mechanism caused either move.
 
-Interpretation rules apply throughout:
+I keep four distinctions in view:
 
 - Global long/short account ratios describe account breadth, not dollar notional, leverage, or liquidation levels.
 - Negative funding means shorts pay longs; funding is carry and positioning context, not a directional verdict.
@@ -17,9 +17,9 @@ Interpretation rules apply throughout:
 
 Reference pattern: `RAVEUSDT` on `2026-04-18`.
 
-External reporting around RAVE described a rapid vertical move followed by a collapse, exchange investigations by Binance and Bitget, allegations of insider-engineered activity, very high wallet concentration, exchange transfers before the move, and large short liquidations. Public reports vary on exact percentages and peak values, so the scanner treats RAVE as a mechanism anchor rather than a legal claim about intent.
+External reporting around RAVE described a rapid vertical move followed by a collapse, exchange investigations by Binance and Bitget, allegations of insider-engineered activity, high wallet concentration, exchange transfers before the move, and large short liquidations. Public reports vary on exact percentages and peak values. I therefore use RAVE as a mechanism anchor, not as a legal claim about intent.
 
-Scanner interpretation:
+What I would want to check:
 
 - observed top-holder concentration or adjusted control is high
 - FDV/market-cap or locked-supply structure implies low real float
@@ -27,7 +27,7 @@ Scanner interpretation:
 - a breakout forces late buyers and wrong-way shorts into the same thin float
 - after the vertical phase, the same structure can unwind violently
 
-Primary scanner columns:
+Fields that help test it:
 
 - `mechanism_hidden_float_score`
 - `terminal_hidden_float_reflexivity_score`
@@ -44,9 +44,9 @@ Primary scanner columns:
 
 Reference pattern: `LABUSDT` on `2026-05-11`.
 
-The public evidence for LAB is less clean than RAVE, but market commentary and token-data pages repeatedly describe a low-float, high-FDV, thin-liquidity token that traded with extreme upside and crash volatility. The scanner treats LAB as the venue-inventory stress pattern: controlled or thin float plus visible transfer/venue evidence plus perp fuel.
+The public evidence for LAB is less clean than RAVE. Market commentary and token-data pages describe a low-float, high-FDV, thin-liquidity token that traded with extreme upside and crash volatility. I use LAB as the venue-inventory question: does controlled or thin float, visible transfer/venue evidence, and perp fuel matter together?
 
-Scanner interpretation:
+What I would want to check:
 
 - controlled float or concentrated holder structure is present
 - whale or control-wallet inventory moves toward a labelled exchange wallet
@@ -54,7 +54,7 @@ Scanner interpretation:
 - sellable inventory can be absorbed, trapped, or used to shape supply
 - price can continue higher even while naive traders expect the CEX deposit to be bearish
 
-Primary scanner columns:
+Fields that help test it:
 
 - `mechanism_inventory_squeeze_score`
 - `cex_deposit_flow_score`
@@ -70,16 +70,16 @@ Primary scanner columns:
 
 Reference pattern: current/recent `VELVETUSDT`-style behavior.
 
-This is the pattern the dashboard makes available for investigation: price is structurally advancing, funding is positive, short-account share is high, and the short-account cohort is still building. Positive funding means longs pay shorts, so this combination can coexist with high short-account breadth and larger long notional; it is a mixed positioning signal that needs OI, price, volume, and persistence context.
+This is the pattern I want to examine most closely: price is advancing, funding is positive, short-account share is high, and the short-account cohort is still building. Positive funding means longs pay shorts, so this can coexist with high short-account breadth and larger long notional. It is a mixed positioning signal that needs OI, price, volume, and persistence context.
 
-Scanner interpretation:
+What I would want to check:
 
 - positive funding does not automatically mean "too late"; it is carry paid by longs to shorts and does not prove which side will be forced
 - high short-account share is more useful when short share is rising into strength
 - a multi-window high-break stack matters more than a single candle
 - the loop fails when price breaks recent lows, funding flips, or shorts stop building
 
-Primary scanner columns:
+Fields that help test it:
 
 - `mechanism_crowded_short_uptrend_score`
 - `crowded_short_uptrend_score`
@@ -100,9 +100,9 @@ Primary scanner columns:
 
 Reference pattern: `SIRENUSDT`-style short-fuse compression.
 
-This is the pre-breakout version of the squeeze. The setup is quiet, shorts or OI build, volatility compresses, and the first decisive range break can create an outsized reaction because the tape has not yet attracted broad chase behavior.
+This is the pre-breakout version of the squeeze. The setup is quiet, shorts or OI build, volatility compresses, and a first range break may matter more because the tape has not yet attracted broad attention.
 
-Primary scanner columns:
+Fields that help test it:
 
 - `mechanism_compression_ignition_score`
 - `pre_pump_compression_score`
@@ -116,9 +116,9 @@ Primary scanner columns:
 
 Reference patterns: `RIVERUSDT` / `STOUSDT`-style breakouts.
 
-This is less about one CEX-flow event and more about payoff geometry. If a token has significant distance to prior extremes, enough venue support, and a clean high-break stack, the market can keep repricing as long as shorts, OI, volume, and narrative attention reinforce the trend.
+This is less about one CEX-flow event and more about room to move. If a token has distance to prior extremes, enough venue support, and a clean high-break stack, repricing may continue while shorts, OI, volume, and attention reinforce the trend.
 
-Primary scanner columns:
+Fields that help test it:
 
 - `mechanism_runway_breakout_score`
 - `terminal_runway_score`
@@ -131,9 +131,9 @@ Primary scanner columns:
 
 ## Research surfaces
 
-The dashboard and Discord views are ways to inspect the research objects; they
-do not replace the point-in-time observation and event-study definitions.
-Start with `Convex Mechanisms` when using the dashboard.
+The dashboard and Discord views are ways to inspect the same observations; they
+do not replace the point-in-time definitions or the event study. In the
+dashboard, I would start with `Convex Mechanisms` and then ask what is missing.
 
 - `Primary Mechanism` tells you which loop is most active.
 - `Mechanism Evidence` gives the compact reason.
@@ -151,13 +151,13 @@ Then drill down:
 
 ## Event-Study Evidence
 
-The current local snapshot summary is in [Case-Study Event Summary](case-study-event-summary.md). It intentionally prints missing local evidence instead of filling gaps with assumptions. Where Binance daily candles are available, it also adds event-day and post-event price-path metrics.
+The current local snapshot summary is in [Case-Study Event Summary](case-study-event-summary.md). It leaves missing evidence visible instead of filling gaps with assumptions. Where Binance daily candles are available, it also adds event-day and post-event price-path metrics.
 
 The current evidence backlog is in [Case-Study Evidence Backfill Checklist](case-study-backfill-checklist.md). It groups missing evidence by next action so the research loop can move from mechanism hypothesis to stronger proof.
 
 The latest holder-backfill attempt is in [Case-Study Holder Backfill](case-study-holder-backfill.md). It records whether the local contract hints could produce holder concentration rows or whether explorer coverage blocked the fetch.
 
-A stronger full event study should keep extending each named historical example with:
+For a fuller event study, I would keep extending each named example with:
 
 - event date and local scan snapshot
 - 7D/3D/1D pre-event returns
@@ -169,7 +169,7 @@ A stronger full event study should keep extending each named historical example 
 - CEX-flow evidence, including whether blocked explorer coverage makes the result inconclusive
 - post-event max upside and max drawdown
 
-That turns the mechanism taxonomy from a strong qualitative framework into a measurable backtest surface.
+That is the step that would turn a qualitative mechanism map into a measurable test.
 
 ## External references
 

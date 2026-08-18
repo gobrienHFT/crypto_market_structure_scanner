@@ -1,6 +1,6 @@
 # Architecture
 
-The project is organized as a research pipeline. The canonical mechanism layer
+The project is organized as a research pipeline. The main mechanism layer
 defines observations, provenance, state transitions, and outcome measurement;
 the operational surfaces consume those definitions for investigation or live
 triage.
@@ -16,7 +16,7 @@ triage.
 ```mermaid
 flowchart LR
     A["Exchange / explorer / market-data APIs"] --> B["Scanner orchestration"]
-    B --> C["Canonical observations + provenance"]
+    B --> C["Shared observations + provenance"]
     C --> D["Mechanism components"]
     D --> E["Explicit reflexivity state"]
     E --> F["Focused Streamlit radar"]
@@ -35,7 +35,7 @@ flowchart LR
 | Exchange data | `binance_futures.py`, `external_markets.py`, `cmc_movers.py` | Binance futures, external venue mix, CMC movers |
 | Holder concentration | `concentration_scanner/`, `holder_composition.py` | Contract discovery, holder classification, concentration metrics |
 | CEX flow | `cex_flow_scanner.py` | Concentration-gated wallet-to-exchange transfer monitoring |
-| Canonical research core | `crypto_market_structure/reflexivity.py`, `crypto_market_structure/reporting.py`, `crypto_market_structure/event_study.py`, `crypto_market_structure/review_demo.py`, `crypto_market_structure/manifest.py`, `crypto_market_structure/casebook.py` | Provenance-aware observations, UI-independent assessment projections, explicit state transitions, point-in-time outcomes, deterministic replay, casebook and reproducibility artifacts |
+| Research core | `crypto_market_structure/reflexivity.py`, `crypto_market_structure/reporting.py`, `crypto_market_structure/event_study.py`, `crypto_market_structure/review_demo.py`, `crypto_market_structure/manifest.py`, `crypto_market_structure/casebook.py` | Provenance-aware observations, UI-independent assessment projections, explicit state transitions, point-in-time outcomes, deterministic replay, casebook and reproducibility artifacts |
 | Legacy/compatibility scoring | `market_structure_scoring.py`, `convexity_scoring.py`, `short_squeeze_scoring.py`, `terminal_engine.py`, `timing_engine.py`, `archetype_scoring.py`, `early_pump_radar.py` | Existing broader surfaces retained for Discord/backward compatibility; the default dashboard is the focused radar |
 | Discord | `discord_convex_bot.py`, `discord_convex_watcher.py`, `discord_flag_formatter.py` | Slash commands, webhook watcher, alert cards |
 | Validation | `proof_engine.py`, `tests/` | Archive alerts, refresh outcomes, test scoring and bot contracts |
@@ -45,7 +45,7 @@ flowchart LR
 ## Operational projections
 
 The Streamlit and Discord surfaces are downstream projections, not separate
-research definitions. Their role is to make the canonical evidence easier to
+research definitions. Their role is to make the same evidence easier to
 inspect, filter, and archive. Live execution helpers are isolated from this
 layer and are optional operational tooling.
 
@@ -56,7 +56,7 @@ layer and are optional operational tooling.
 5. Archetype scoring compares rows with RAVE-style cap-table reflexivity, LAB-style venue-inventory stress, SIREN-style short-fuse compression, RIVER-style runway breakouts, and STO-style target-venue squeeze structures.
 6. `early_pump_radar.py` collapses target-CEX flow, whale/control, low float, short crowding, venue support, archetype match, timing, and not-late risk into one ranked pump-watch layer.
 7. Venue gating keeps Discord focused on Binance perp plus Bitget trading evidence; Gate and labelled CEX transfer targets are supporting evidence, not Bitget substitutes, unless a command is explicitly run in diagnostic ungated mode.
-8. `discord_flag_formatter.py` renders a research card with thesis, evidence stack, trigger, next check, invalidation, liquidity warning, and case-study analogue when available.
+8. `discord_flag_formatter.py` renders a research card with thesis, evidence, trigger, next check, invalidation, liquidity warning, and case-study analogue when available.
 9. `proof_engine.py` archives alerts, including structure-edge, inventory-stress, and archetype scores, then later refreshes outcome metrics.
 
 ## Design Constraints
@@ -68,7 +68,7 @@ layer and are optional operational tooling.
 - Large scans should degrade gracefully through local caches.
 - Discord outputs must fit embed limits and remain readable under pressure.
 - Outcome tracking is part of the product, not an afterthought.
-- Canonical observations preserve raw versus adjusted ownership, account breadth versus notional, and labelled CEX custody versus inferred insider control as separate concepts.
+- Shared observations preserve raw versus adjusted ownership, account breadth versus notional, and labelled CEX custody versus inferred insider control as separate concepts.
 - Concentration evidence requires exchange, custody, bridge, LP, protocol, system-wallet, treasury, and vesting classifications where available.
 - `crypto_market_structure/reflexivity.py` and `crypto_market_structure/reporting.py` are deterministic research primitives; they can be evaluated from JSON/DataFrame fixtures without Streamlit, Discord, or live APIs.
 - The fast dashboard path uses market telemetry only; holder/explorer/RPC proof is explicit, bounded, and on-demand.

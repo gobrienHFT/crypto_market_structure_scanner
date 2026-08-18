@@ -217,7 +217,7 @@ Diagnostic rows: /TIGHTUSDT /CAPUSDT /MEGAUSDT
 Convex Score: 86/100
 Structure: High short pressure + rising OI + thin upside liquidity
 Convex thesis: concentrated holder structure plus fresh CEX-flow creates a venue-inventory stress window; validate against OI and price absorption.
-Evidence stack: CEX flow 88 | float control 91 | terminal 78 | timing 64 | perp fuel 63
+Evidence: CEX flow 88 | float control 91 | terminal 78 | timing 64 | perp fuel 63
 Perp positioning: short accounts 63.0% | long accounts 37.0% | L/S acct 0.59 | OI change +2.1%
 Recent CEX flow: score 88/100 | 3 large deposit(s) | Bitget | top10 91.0% / top100 99.0% | 2.50M tokens
 Why flagged: scanner score 86/100 + 63.0% short-account pressure + concentration-gated CEX-flow signal

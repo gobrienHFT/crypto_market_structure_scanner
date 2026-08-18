@@ -21,7 +21,7 @@ The highest-quality Discord flags usually combine several of these:
 - `timing`: coiling or triggering state without late-stage fragility
 - `proof`: archived alert records with later outcome refreshes
 
-No single component is treated as proof. The point is to build a fast evidence stack and then measure the result.
+No single component is treated as proof. The point is to assemble a clear evidence trail and then measure what happened next.
 
 ## Command Loop
 
@@ -182,7 +182,7 @@ CEX_ADDRESS_LABELS=
 The main Discord card is designed to be readable under pressure:
 
 - `Convex thesis`: the concise reason the setup might have nonlinear payoff
-- `Evidence stack`: the strongest available component scores
+- `Evidence`: the strongest available component scores
 - `Perp positioning`: short/long account skew, L/S ratio, OI context
 - `Recent CEX flow`: large wallet-to-exchange movement, when present
 - `Why flagged`: the concrete scanner reason

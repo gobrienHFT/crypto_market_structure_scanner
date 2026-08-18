@@ -1,8 +1,8 @@
 # Demo Walkthrough
 
-This is the fastest path for a reviewer to understand the project without needing production API keys.
+If you want to understand the project without production API keys, start here.
 
-The canonical first step is the deterministic, credential-free replay:
+The first step is the deterministic, credential-free replay:
 
 ```powershell
 python -m crypto_market_structure.review_demo
@@ -112,7 +112,7 @@ The scoreboard command summarizes whether the rules are producing useful follow-
 ## 7. Research design in brief
 
 - The hypothesis is narrow: constrained effective float plus derivatives crowding plus venue-flow stress may create forced-buying feedback.
-- The canonical package separates observations, state assessment, event studies, and reproducibility manifests from presentation surfaces.
+- The research package separates observations, state assessment, event studies, and reproducibility manifests from presentation surfaces.
 - Missingness, provenance, account breadth versus notional, and custody classifications remain visible throughout the workflow.
 - The bot and dashboard are triage surfaces; they do not turn incomplete evidence into a trade call.
 - The proof loop records outcomes so the signal stack can be falsified rather than narrated after the fact.

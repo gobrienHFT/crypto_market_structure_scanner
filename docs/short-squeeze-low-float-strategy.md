@@ -2,19 +2,19 @@
 
 ## Purpose and framing
 
-This document describes a research-driven hypothesis about a narrow class of low-float, highly concentrated tokens whose spot and perpetual markets may become vulnerable to forced buying and reflexive short squeezes.
+I am testing a narrow hypothesis about low-float, highly concentrated tokens whose spot and perpetual markets may become vulnerable to forced buying and reflexive short squeezes.
 
-The objective is not to estimate a token's intrinsic value or to prove that any actor is manipulating a market. The working premise is more mechanical: when the tradeable float is genuinely scarce, ownership is concentrated, liquidity is thin, and a perpetual market attracts persistent short participation, relatively modest net buying can produce a self-reinforcing price move. The research process tries to identify this structure before the obvious vertical phase and defines explicit continuation, exhaustion, and invalidation observations for later testing.
+I am not trying to estimate a token's intrinsic value or prove that any actor is manipulating a market. The mechanical question is simpler: when tradeable float is genuinely scarce, ownership is concentrated, liquidity is thin, and a perpetual market attracts persistent short participation, can relatively modest net buying produce a self-reinforcing move? The research process looks for that structure before the obvious vertical phase and defines continuation, exhaustion, and invalidation observations in advance.
 
 This is a hypothesis and an event-driven research process, not a guarantee of future returns. The relevant assets can move violently in both directions, can gap through stops, can be delisted, and can have incomplete or misleading data. A correlation between a signal and a price move is not proof of causation or coordinated activity.
 
 ## One-sentence thesis
 
-Look for a controlled or unusually concentrated low-float token with Binance perpetual access and supporting Bitget/Gate activity, then wait for an early breakout plus rising derivatives activity and a persistent or growing short-account cohort; own a small unlevered long while forced short covering remains plausible, and de-risk when that short cohort materially starts to cover or when late-stage excess replaces the early structure.
+The hypothesis is most interesting when a controlled or unusually concentrated low-float token has Binance perpetual access, supporting Bitget/Gate activity, an early breakout, rising derivatives participation, and a persistent or growing short-account cohort. The test is whether that combination remains informative before the structure becomes a late vertical move, and whether short-account rollover or other exhaustion signals mark a change in the regime.
 
-## What is being traded
+## What the market structure is
 
-The strategy is not a valuation trade. It does not assume a high FDV must fall, nor does it treat a low-quality project as automatically shortable. Its object is **forced-flow mechanics**:
+This is not a valuation trade. A high FDV is not, by itself, a reason to short, and a low-quality project is not automatically a squeeze candidate. The object of study is **forced-flow mechanics**:
 
 - A small economically available float can make displayed spot liquidity fragile.
 - Concentrated ownership can make the public float materially smaller than headline supply figures imply.
@@ -23,7 +23,7 @@ The strategy is not a valuation trade. It does not assume a high FDV must fall, 
 - Those purchases can be large relative to thin spot/perpetual depth, causing further price appreciation.
 - A visible move can attract momentum buyers and new shorts simultaneously, extending the reflexive loop.
 
-The outcome distribution is asymmetric and discontinuous: many observations will do nothing or fail; a minority can produce unusually large moves accompanied by equally unusual volatility and crash risk. The research process therefore treats survival, small sizing, and early detection as more important than precision forecasting.
+The outcome distribution is asymmetric and discontinuous: many observations will do nothing or fail, while a minority can produce unusually large moves alongside equally unusual volatility and crash risk. That is why survival, small sizing, and early detection matter more here than pretending to forecast every move precisely.
 
 ## The market-structure hypothesis
 
@@ -33,13 +33,13 @@ Headline circulating supply is not the same as continuously tradeable supply. A 
 
 > How much supply is likely to be independently held, available for sale, and actually sitting in accessible spot order books?
 
-If this effective float is small, new net spot demand can move price disproportionately. It also means apparent liquidity can be transient: bids or offers may be canceled, replenished selectively, or be too shallow to absorb market orders. This is the structural precondition behind the strategy, not a trade signal by itself.
+If effective float is small, new net spot demand can move price disproportionately. Apparent liquidity can also be transient: bids or offers may be canceled, replenished selectively, or be too shallow for market orders. This is a structural precondition to investigate, not a signal by itself.
 
 ### 2. Concentration must be adjusted for benign or mechanical holders
 
 Raw holder concentration is noisy. A top-ten concentration statistic can be inflated by an exchange omnibus wallet, bridge, wrapper, liquidity pool, burn address, treasury, vesting contract, staking contract, DAO reserve, protocol contract, or distribution reserve. Treating these mechanically as coordinated directional control would create false positives.
 
-The scanner therefore attempts to distinguish raw concentration from **effective/adjusted manipulable concentration**. It filters or discounts known custody and storage categories where possible and prefers on-chain evidence from Ethereum, BNB Chain, and Arbitrum. A current hard evidence gate is generally based on observed adjusted top-ten holder concentration of at least 90%, but this is a screening threshold, not evidence that those wallets are coordinated or malicious.
+I therefore want raw concentration kept separate from **effective/adjusted manipulable concentration**. Known custody and storage categories should be filtered or discounted where possible, with on-chain evidence from Ethereum, BNB Chain, and Arbitrum recorded separately. The current hard evidence gate generally uses observed adjusted top-ten concentration of at least 90%, but that is only a screening threshold. It does not show that the wallets are coordinated or malicious.
 
 The most interesting cases are where, after reasonable exclusions, a small number of non-benign or unexplained wallets still control a very large share of supply. This is a cap-table/float risk condition. It should be described as concentration or opacity, never as proof of intent.
 
@@ -53,11 +53,11 @@ This creates an asymmetric condition:
 - The spot supply required to push the market upward may be scarce.
 - The same price rise that makes a valuation short look worse can mechanically create more buy pressure through covering and liquidation.
 
-The strategy watches the **percentage of Binance accounts that are short**, the change in that percentage, open interest, funding, price, and volume. Account-based long/short statistics are only a proxy. They do not reveal position size, leverage, liquidation prices, account overlap, hedges, or the net exposure of large traders. They are useful as directional context, not as a liquidation map.
+I watch the **percentage of Binance accounts that are short**, its change, OI, funding, price, and volume. The account-based statistic is only a proxy: it does not reveal position size, leverage, liquidation prices, account overlap, hedges, or large-trader exposure. It is directional context, not a liquidation map.
 
 ### 4. The reflexive squeeze loop
 
-A working sequence for a successful squeeze is:
+A sequence worth testing is:
 
 1. A token has concentrated ownership and a low effective float.
 2. It has a listed or developing perpetual venue, particularly Binance, with supporting activity on Bitget and/or Gate.
@@ -73,15 +73,15 @@ The research question concerns the middle of this sequence, not prediction of th
 
 ## Venue selection and why it matters
 
-The research universe prioritizes Binance perpetuals and requires supporting Bitget trading evidence for the main thesis alerts; Gate and labelled CEX transfer targets are additional evidence. These venues are deliberately selected because they are where the observed examples and the intended derivatives/spot interaction are most relevant.
+The research universe prioritizes Binance perpetuals and requires supporting Bitget trading evidence for the main thesis alerts; Gate and labelled CEX transfer targets are additional context. These venues are used because they are where the observed examples and the intended derivatives/spot interaction are most visible.
 
-The strategy has a working hypothesis that the venue mix, market-maker inventory practices, and hedging behavior on these exchanges can matter for price discovery and inventory stress. That hypothesis should be tested, not treated as an established fact. The scanner must not claim that any exchange or market maker engages in B-booking, manipulation, or coordinated conduct without direct evidence.
+I have a further hypothesis that venue mix, inventory practices, and hedging behavior can affect price discovery and inventory stress. That needs testing, not assertion. Nothing here supports claims that an exchange or market maker engages in B-booking, manipulation, or coordinated conduct without direct evidence.
 
 The practical reason for the venue gate is simpler and testable: a candidate needs liquid enough perpetual access to form a visible short cohort and enough cross-venue activity for the market structure to be actionable and observable. A labelled Binance, Bitget, or Gate deposit can be important, but transfer target alone is not a substitute for actual trading/venue evidence.
 
 ## The signal stack
 
-No individual field is sufficient. The strategy is a conjunction of imperfect evidence, ranked rather than blindly binary.
+No individual field is sufficient. I treat the signal as a conjunction of imperfect observations, ranked for review rather than treated as a binary verdict.
 
 ### A. Ownership and float evidence
 
@@ -152,7 +152,7 @@ Funding is used as a sentiment/carry input, not a simplistic contrarian rule. A 
 
 Positive funding alongside elevated short accounts can occur because funding is driven by aggregate perp pricing and positions, while account ratios count accounts rather than notional. It may reveal a market with small numerous shorts and larger long exposure, or a more complex mix. It should not be interpreted as a contradiction without examining the rest of the data.
 
-Negative funding can also be supportive of a squeeze hypothesis in some cases, but the full context matters more than the sign. The strategy does not buy solely because funding is positive or because it flips.
+Negative funding can also be consistent with a squeeze hypothesis in some cases, but the full context matters more than the sign. I would not treat either funding sign or a funding flip as sufficient on its own.
 
 ### F. Price, volume, and breakout structure
 
@@ -174,11 +174,11 @@ The scanner considers thin displayed liquidity, visible ask depth, turnover, and
 
 Thin liquidity is a double-edged condition. It can help an upside squeeze travel quickly, but it also makes entries, exits, stops, and position sizing more dangerous. Any expected edge must exceed spread, slippage, gaps, and inability to exit during disorderly conditions.
 
-## Candidate lifecycle
+## How a candidate moves through review
 
 ### 1. Universe and discovery
 
-Start from tokens with Binance perpetual contracts, then retain those with supporting Bitget evidence and optionally Gate/labelled CEX flow. Exclude traditional-finance proxy pairs from short-account trend scans because their positioning behavior does not represent the intended crypto low-float universe.
+Start with tokens that have Binance perpetual contracts, then retain those with supporting Bitget evidence and optionally Gate or labelled CEX flow. Traditional-finance proxy pairs are excluded from short-account trend scans because their positioning does not represent the intended crypto low-float universe.
 
 Scan for low effective float, high adjusted concentration, relevant contract data, quiet history, and no major recent expansion. The first output is a watchlist, not an entry list.
 
@@ -199,17 +199,17 @@ Monitor the candidate before it is obvious:
 - Is there a fresh, concentration-gated transfer into a relevant exchange?
 - Is the target venue showing meaningful activity relative to the rest of the market?
 
-The scanner labels these conditions with states such as sleeper watch, squeeze watch, flow-first watch, prime early squeeze, too late/fragile, and no edge. These labels are ranking aids, not automatic trade instructions.
+The live screens give these conditions labels such as sleeper watch, squeeze watch, flow-first watch, prime early squeeze, too late/fragile, and no edge. I treat those labels as ways to organize attention, not as automatic trade instructions.
 
 ### 4. Entry concept
 
-The intended entry is early, small, and unlevered. The operator's stated preference is to avoid leverage because these assets can make extreme drawdowns and recoveries that mechanically liquidate both late shorts and leveraged longs. The thesis is designed to seek asymmetric upside with an amount of capital that can be lost without forcing emotional or mechanical liquidation.
+The intended entry, if the research ever supports one, is early, small, and unlevered. I avoid leverage in the hypothesis because these assets can make extreme drawdowns and recoveries that mechanically liquidate both late shorts and leveraged longs. Any exposure would need to be small enough that a full loss does not force a decision under pressure.
 
-The best entry is not a prediction that the token is good. It is a decision that several structural conditions coexist before the market has become a vertical, obvious crowd event. There is no averaging-down premise. If the structure invalidates, the trade is wrong or early, and risk should be controlled rather than increased.
+The idea is not a prediction that the token is good. It is a test of whether several structural conditions coexist before the market becomes a vertical, obvious crowd event. There is no averaging-down premise. If the structure invalidates, the observation was wrong or early; adding risk does not repair it.
 
 ### 5. Position monitoring and exits
 
-The key discretionary exit idea is that short-account roll-over can mark fading squeeze fuel. The operator watches the live short-account percentage and its one-hour rate of change, along with OI, volume, funding, trend persistence, CEX wallet flow, and the degree of verticality.
+The key exit hypothesis is that short-account rollover can mark fading squeeze fuel. I would read the live short-account percentage and its one-hour change alongside OI, volume, funding, trend persistence, CEX wallet flow, and the degree of verticality.
 
 Exit/reduction warnings include:
 
@@ -243,21 +243,21 @@ These examples are pattern labels, not proof that the same cause drove each even
 
 The repository's backfill work has explicitly recorded evidence gaps for several of these cases. Historical similarity is not a substitute for a complete event study.
 
-## Dashboard, Discord, and monitoring workflow
+## How the software is used
 
-The system has three surfaces:
+The software has three ways to look at the same work:
 
 - A Streamlit dashboard for broad scan review, score decomposition, breakouts, correlation, CEX flow, holder data, and trend context.
 - Discord slash commands and alert webhooks for rapid triage and monitoring.
 - A proof archive and CSV outputs for later outcome measurement and rule refinement.
 
-Important operational tools include scans for thesis-qualified candidates, early-pump ranking, CEX flow with adjustable transfer thresholds and lookbacks, high/low breakout searches for arbitrary day windows, short-account rate-of-change rankings/trends, BTC correlation, and RAVE/LAB-style structural matching. Dedicated hourly monitors exist for selected tokens and the generic short-ROC close monitor can be started with a ticker input.
+The operational layer includes thesis screens, CEX flow with adjustable thresholds and lookbacks, flexible high/low breakout searches, short-account rate-of-change rankings, BTC correlation, and RAVE/LAB-style structural matching. Dedicated hourly monitors exist for selected tokens, and the generic short-ROC close monitor accepts a ticker input.
 
 The Discord/CSV output should always display both the live short-account percentage and its change. ROC without the level can be misleading: a 2% change from 10% and a 2% change from 70% describe different positioning contexts.
 
-## What would falsify or weaken the thesis
+## What would change my mind
 
-The strategy should be challenged when:
+I would weaken or reject the hypothesis when:
 
 - Adjusted concentration disappears after correctly classifying storage/custody wallets.
 - Apparent low float is an artifact of bad circulating-supply data.
@@ -269,7 +269,7 @@ The strategy should be challenged when:
 - Slippage, gaps, funding, and missed fills erase the observed gross edge.
 - The position-close rule exits too early during successful trends or too late during reversals.
 
-## Data-quality and operational risks
+## Where the data can fail
 
 - Explorer APIs can return HTTP 403, incomplete holder lists, stale labels, or rate-limit errors. A failed request is unknown, not evidence of no transfer or no concentration.
 - Wallet labels can be wrong or incomplete. Exchange deposit ownership and sender identity are probabilistic.
@@ -281,7 +281,7 @@ The strategy should be challenged when:
 - Backtests must use point-in-time data, correct listing ages, delisted symbols, realistic fees/funding/slippage, and the exact signals available at the decision time.
 - Live execution has API, key, order, reduce-only, partial-fill, and reconciliation risk. The system should never assume a submitted order equals a completed close.
 
-## Research and risk rules
+## Practical guardrails
 
 1. Treat every signal as evidence with a confidence level, not a fact about intent.
 2. Never use the strategy's belief that a move is manipulated as a reason to increase risk.
@@ -294,11 +294,11 @@ The strategy should be challenged when:
 9. Record every candidate, including non-trades and failures, to measure false positives and missed winners.
 10. Require human review before expanding automation or changing thresholds based on a small sample.
 
-## What needs to be tested quantitatively
+## What would convince me
 
-The central research question is not "can this find large moves?" It is whether a point-in-time combination of concentration, float, venue, flow, derivatives positioning, and timing produces a statistically and economically meaningful improvement over simpler baselines.
+The central question is whether a point-in-time combination of concentration, float, venue, flow, derivatives positioning, and timing improves on simpler baselines in a statistically and economically meaningful way.
 
-Recommended tests:
+The tests I would want are:
 
 - Define a point-in-time universe of all Binance perpetual listings, including failures and delistings.
 - Create feature snapshots at fixed intervals before and after a candidate is flagged.
@@ -312,9 +312,9 @@ Recommended tests:
 - Use walk-forward validation and keep a final untouched out-of-sample period.
 - Maintain a failure taxonomy: false concentration, no venue support, premature breakout, late chase, distribution flow, short fuel absent, data outage, and execution failure.
 
-## Current implementation summary
+## How the pieces fit
 
-The codebase is organized as a research pipeline:
+At a high level, the workflow is straightforward:
 
 1. Exchange, explorer, and market data enter the scanner orchestration layer.
 2. Holder concentration and wallet-to-CEX flow enrich the market data.
@@ -322,10 +322,10 @@ The codebase is organized as a research pipeline:
 4. Dashboard and Discord surfaces expose the ranked candidates and diagnostic evidence.
 5. A proof archive stores alerts and later measures outcomes.
 
-The design intent is to degrade gracefully: local caches and diagnostic outputs should show whether a result is a genuine negative finding, missing coverage, an API block, or a gate failure. The system should prefer "inconclusive" over false certainty.
+When coverage is weak, local caches and diagnostics should make the reason visible: a genuine negative finding, missing data, an API block, or a gate failure. I would rather see "inconclusive" than false certainty.
 
 ## Bottom line
 
-The research programme studies **mechanically fragile market structures**, not a moral judgment about a token and not a conventional fundamental valuation. The full hypothesis requires a controlled or opaque float, usable derivative venues, emerging flow and liquidity stress, persistent short-side fuel, and an early breakout/trend state that is not already exhausted. One distinctive test is to watch the short-account cohort itself: as that cohort covers, the potential forced-buying reservoir may be shrinking.
+The research programme is about **mechanically fragile market structures**, not a moral judgment about a token and not a conventional fundamental valuation. The hypothesis needs a controlled or opaque float, usable derivative venues, emerging flow and liquidity stress, persistent short-side fuel, and an early breakout/trend state that is not already exhausted. One distinctive test is to watch the short-account cohort itself: as that cohort covers, the potential forced-buying reservoir may be shrinking.
 
-The edge, if one exists, will come from disciplined evidence combination, point-in-time validation, and risk control. The failures will come from treating incomplete data as confirmation, chasing verticality, confusing account ratios with actual exposure, and assuming a plausible narrative is sufficient without measured out-of-sample performance.
+If there is an edge here, it will have to come from disciplined evidence combination, point-in-time validation, and risk control. The obvious ways to fool ourselves are treating incomplete data as confirmation, chasing verticality, confusing account ratios with actual exposure, and mistaking a plausible narrative for out-of-sample evidence.
