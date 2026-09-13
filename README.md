@@ -1,6 +1,32 @@
 # crypto_market_structure_scanner
 
-[![tests](https://img.shields.io/badge/tests-pytest-green)](.github/workflows/tests.yml)
+[![tests](https://github.com/gobrienHFT/crypto_market_structure_scanner/actions/workflows/tests.yml/badge.svg)](https://github.com/gobrienHFT/crypto_market_structure_scanner/actions/workflows/tests.yml)
+
+A full-market Binance USD-M crypto perpetual dashboard and reproducible market-structure research toolkit. It combines breakout timing, account positioning, volume, open interest, funding, and BTC correlations, with a separate reflexivity research view. It is an engineering and research project, not a demonstrated profitable trading system.
+
+**Start here:** install the [local dependencies](#local-setup), run `run_dashboard.bat` to open the dashboard in Chrome, or run the [deterministic demo](#deterministic-demo) without credentials. The dashboard uses public market data; it does not start the separate execution bots.
+
+## Market workspace
+
+| View | What you can inspect |
+| --- | --- |
+| All Markets | Every eligible Binance USD-M crypto perpetual, including majors, with sortable metrics and visible partial-data status |
+| Reflexivity | Multi-factor candidate ranking, short-account changes, funding, and explicitly sourced ownership evidence |
+| Breakouts | 5/20/90/180-day highs and lows, sortable crossing ages, and a daily close/MA200 chart |
+| Volume & OI | Hourly volume changes, 24-hour versus prior-30-day volume, and OI value/unit comparisons |
+| Correlations | BTC daily-return correlation with the actual matched observation count |
+| Market Breadth | Share of eligible assets breaking out or above MA200; not a market-cap index |
+
+Scans run in bounded background workers and retain results locally. Missing endpoints do not silently remove pairs. Crossing times identify a candle, not an exact trade: minute refinement is used where available, otherwise hourly resolution is disclosed. See [metric definitions, coverage, and architecture](docs/market-workspace.md).
+
+### Reviewer route
+
+1. Run the offline demo and inspect its manifest and synthetic replay. No keys or live orders are needed.
+2. Run `python -m pytest -q` and inspect `tests/test_market_workspace.py` for missing-data, history-gap, timing, and UI coverage.
+3. Open the dashboard, scan the universe, and compare Breakouts with Volume & OI and Reflexivity. Check the coverage and freshness indicators before interpreting a rank.
+4. Read the data/UI separation in `market_dashboard_data.py` and `market_dashboard_ui.py`, then the research contracts in `crypto_market_structure/`.
+
+The interview evidence is reproducible calculations, explicit uncertainty, failure handling, and a usable operator workflow. The remaining research question is whether these signals produce an out-of-sample edge after fees, funding, slippage, and realistic execution. The legacy `app.py` remains large; the new workspace isolates data collection and presentation without rewriting unrelated execution tools.
 
 There is a pattern I keep coming back to in small crypto perpetual markets: headline circulation can look plentiful while the effective float is tight; derivatives activity can suddenly expand; price can keep grinding higher; and the number of accounts shorting the move can increase rather than fall. If that short cohort later has to buy, it may become part of the demand that carries the move. This repository turns that observation into something testable.
 
@@ -107,7 +133,7 @@ The fixture is frozen and synthetic. It shows that the observation-to-state-to-e
 
 Once the offline path is clear, the live tools provide faster ways to look at the same questions:
 
-- **Streamlit:** `app.py` presents the radar, lifecycle views, evidence status, and on-demand structural proof.
+- **Streamlit:** `app.py` opens the six-view full-market workspace above. Ownership enrichment is on demand; evidence is not described as proof of manipulation.
 - **Discord:** the bot and watcher provide triage, diagnostics, evidence cards, and outcome archives. See [Discord Alpha Workflow](docs/discord-alpha-workflow.md) for commands and venue rules.
 - **Monitors and execution helpers:** these are isolated operational tools. They are not evidence for the hypothesis and should remain disabled unless deliberately configured and reconciled against the exchange.
 

@@ -10,6 +10,9 @@ def test_offline_review_demo_writes_report_and_manifest(tmp_path: Path) -> None:
     root = tmp_path
     fixture = Path(__file__).resolve().parents[1] / "crypto_market_structure" / "fixtures" / "reflexivity_demo.json"
     output_dir = tmp_path / "review"
+    authored_casebook = root / "docs" / "reflexivity-casebook.md"
+    authored_casebook.parent.mkdir()
+    authored_casebook.write_text("Hand-written research notes", encoding="utf-8")
 
     report = run_demo(root=root, fixture_path=fixture, output_dir=output_dir)
 
@@ -25,6 +28,7 @@ def test_offline_review_demo_writes_report_and_manifest(tmp_path: Path) -> None:
     assert "working_tree_is_clean" in manifest
     assert manifest["inputs"][0]["sha256"]
     assert any(item["path"].endswith("review_report.json") for item in manifest["artifacts"])
-    casebook = (root / "docs" / "reflexivity-casebook.md").read_text(encoding="utf-8")
+    assert authored_casebook.read_text(encoding="utf-8") == "Hand-written research notes"
+    casebook = (output_dir / "reflexivity-casebook.md").read_text(encoding="utf-8")
     assert "- The retracement is observed;" in casebook
     assert "- T\n- h\n- e" not in casebook

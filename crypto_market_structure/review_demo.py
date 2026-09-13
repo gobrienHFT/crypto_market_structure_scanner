@@ -181,7 +181,7 @@ def run_demo(*, root: Path, fixture_path: Path, output_dir: Path) -> dict[str, A
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "review_report.json"
     markdown_path = output_dir / "review_report.md"
-    casebook_path = root / "docs" / "reflexivity-casebook.md"
+    casebook_path = output_dir / "reflexivity-casebook.md"
     manifest_path = output_dir / "manifest.json"
     report["manifest_path"] = str(manifest_path.relative_to(root)).replace("\\", "/")
     report["fixture_sha256"] = sha256_file(fixture_path)

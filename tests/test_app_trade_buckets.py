@@ -91,6 +91,59 @@ def test_all_crypto_run_scan_bypasses_the_heavy_breakout_pipeline(monkeypatch) -
     assert constructor_kwargs["requests_per_second"] == app.ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND
 
 
+def test_breakout_universe_includes_btc_and_all_crypto_pairs_with_eight_flags() -> None:
+    ticker = pd.DataFrame(
+        [
+            {"symbol": "BTCUSDT", "lastPrice": 11.0, "highPrice": 13.0, "lowPrice": 7.0, "quoteVolume": 1_000_000},
+            {"symbol": "AKEUSDT", "lastPrice": 11.0, "highPrice": 13.0, "lowPrice": 7.0, "quoteVolume": 25_000},
+            {"symbol": "SKHYNIXUSDT", "lastPrice": 11.0, "highPrice": 13.0, "lowPrice": 7.0, "quoteVolume": 2_000_000},
+        ]
+    )
+    symbol_meta = {
+        "BTCUSDT": SimpleNamespace(base_asset="BTC", underlying_type="COIN"),
+        "AKEUSDT": SimpleNamespace(base_asset="AKE", underlying_type="COIN"),
+        "SKHYNIXUSDT": SimpleNamespace(base_asset="SKHYNIX", underlying_type="EQUITY"),
+    }
+    closed_days = [
+        [index, "10", "12", "8", "10", "100", index + 1, "1000"]
+        for index in range(181)
+    ]
+    daily_klines = {symbol: [*closed_days, [182, "10", "11", "9", "10", "100", 183, "1000"]] for symbol in ("BTCUSDT", "AKEUSDT")}
+
+    frame = app._build_breakout_universe_frame(ticker, symbol_meta, daily_klines).set_index("symbol")
+
+    assert set(frame.index) == {"BTCUSDT", "AKEUSDT"}
+    assert frame.loc["BTCUSDT", "history_status"] == "ready"
+    assert frame.loc["BTCUSDT", "breakout_count"] == 8
+    assert set(frame.loc["BTCUSDT", "breakout_flags"].split(" | ")) == {
+        "5D high",
+        "5D low",
+        "20D high",
+        "20D low",
+        "90D high",
+        "90D low",
+        "180D high",
+        "180D low",
+    }
+
+
+def test_breakout_universe_keeps_pairs_with_limited_daily_history() -> None:
+    ticker = pd.DataFrame(
+        [{"symbol": "NEWUSDT", "lastPrice": 1.0, "highPrice": 1.2, "lowPrice": 0.8, "quoteVolume": 5_000}]
+    )
+    symbol_meta = {"NEWUSDT": SimpleNamespace(base_asset="NEW", underlying_type="COIN")}
+    daily_klines = {
+        "NEWUSDT": [[index, "1", "1.1", "0.9", "1", "100", index + 1, "100"] for index in range(20)]
+    }
+
+    frame = app._build_breakout_universe_frame(ticker, symbol_meta, daily_klines)
+
+    assert frame["symbol"].tolist() == ["NEWUSDT"]
+    assert frame.iloc[0]["history_status"] == "limited"
+    assert frame.iloc[0]["breakout_count"] == 2
+    assert frame.iloc[0]["breakout_flags"] == "5D high | 5D low"
+
+
 def test_display_frame_injects_sortable_hour_volume_roc_into_every_table() -> None:
     frame = pd.DataFrame([{"symbol": "AKEUSDT", "trade_bucket": "Watch", "hour_volume_roc_1h_pct": 125.0}])
 

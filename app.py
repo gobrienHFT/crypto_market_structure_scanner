@@ -3445,6 +3445,16 @@ LONG_SHORT_RATIO_PERIOD = _env_value("LONG_SHORT_RATIO_PERIOD", default="1h")
 ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND = float(
     _env_value("ALL_CRYPTO_SHORTS_REQUESTS_PER_SECOND", default="8.0")
 )
+BREAKOUT_UNIVERSE_REQUESTS_PER_SECOND = _parse_env_float(
+    _env_value("BREAKOUT_UNIVERSE_REQUESTS_PER_SECOND", default="8.0"),
+    default=8.0,
+    minimum=1.0,
+)
+BREAKOUT_UNIVERSE_KLINE_LIMIT = _parse_env_int(
+    _env_value("BREAKOUT_UNIVERSE_KLINE_LIMIT", default="200"),
+    default=200,
+    minimum=181,
+)
 SQUEEZE_RADAR_REQUESTS_PER_SECOND = _parse_env_float(
     _env_value("SQUEEZE_RADAR_REQUESTS_PER_SECOND", default="6.0"),
     default=6.0,
@@ -3649,7 +3659,7 @@ CEX_DEPOSIT_FLOW_TIMEOUT_SECONDS = _parse_env_int(
 )
 
 if not IMPORT_ONLY:
-    st.set_page_config(page_title="Convex Squeeze Radar", layout="wide")
+    st.set_page_config(page_title="Crypto Market Scanner", layout="wide")
     st.markdown(
         """
         <style>
@@ -4796,6 +4806,171 @@ def _all_crypto_short_account_frame(client: BinanceFuturesPublic) -> pd.DataFram
         ascending=[False, True],
         na_position="last",
     ).reset_index(drop=True)
+
+
+BREAKOUT_UNIVERSE_FLAG_SPECS = (
+    ("5D high", "broke_high_5d"),
+    ("5D low", "broke_low_5d"),
+    ("20D high", "broke_high_20d"),
+    ("20D low", "broke_low_20d"),
+    ("90D high", "broke_high_90d"),
+    ("90D low", "broke_low_90d"),
+    ("180D high", "broke_high_180d"),
+    ("180D low", "broke_low_180d"),
+)
+BREAKOUT_UNIVERSE_COLUMNS = [
+    "symbol",
+    "base_asset",
+    "market_type",
+    "last_price",
+    "quote_volume_24h",
+    "high_24h",
+    "low_24h",
+    "history_days",
+    "history_status",
+    "high_5d",
+    "low_5d",
+    "high_20d",
+    "low_20d",
+    "high_90d",
+    "low_90d",
+    "high_180d",
+    "low_180d",
+    "broke_high_5d",
+    "broke_low_5d",
+    "broke_high_20d",
+    "broke_low_20d",
+    "broke_high_90d",
+    "broke_low_90d",
+    "broke_high_180d",
+    "broke_low_180d",
+    "breakout_count",
+    "breakout_flags",
+    "scan_error",
+]
+
+
+def _build_breakout_universe_frame(
+    ticker: pd.DataFrame,
+    symbol_meta: dict[str, Any],
+    daily_klines_by_symbol: dict[str, list[list[Any]]],
+) -> pd.DataFrame:
+    """Build a complete crypto-perp breakout census from ticker and daily data."""
+
+    if ticker.empty and not symbol_meta:
+        return pd.DataFrame(columns=BREAKOUT_UNIVERSE_COLUMNS)
+
+    ticker_frame = ticker.copy()
+    if "symbol" in ticker_frame.columns:
+        ticker_frame["symbol"] = ticker_frame["symbol"].astype(str).str.upper()
+        ticker_frame = ticker_frame.drop_duplicates(subset=["symbol"], keep="last").set_index("symbol")
+    else:
+        ticker_frame = pd.DataFrame()
+
+    normalized_meta = {str(symbol).upper(): metadata for symbol, metadata in symbol_meta.items()}
+    normalized_daily = {str(symbol).upper(): rows for symbol, rows in daily_klines_by_symbol.items()}
+    crypto_symbols = sorted(
+        symbol
+        for symbol, metadata in normalized_meta.items()
+        if str(getattr(metadata, "underlying_type", "") or "").upper() not in TRADFI_ALWAYS_INCLUDE_TYPES
+    )
+    rows: list[dict[str, Any]] = []
+    for symbol in crypto_symbols:
+        metadata = normalized_meta[symbol]
+        ticker_row = ticker_frame.loc[symbol].to_dict() if symbol in ticker_frame.index else {}
+        daily_klines = normalized_daily.get(symbol) or []
+        levels = levels_from_klines(daily_klines)
+        last_price = _float_nan(ticker_row.get("lastPrice"))
+        high_24h = _float_nan(ticker_row.get("highPrice"))
+        low_24h = _float_nan(ticker_row.get("lowPrice"))
+        flag_values = {
+            column: (
+                _crossed_above(getattr(levels, column.replace("broke_", "")), high_24h)
+                if column.startswith("broke_high_")
+                else _crossed_below(getattr(levels, column.replace("broke_", "")), low_24h)
+            )
+            for _, column in BREAKOUT_UNIVERSE_FLAG_SPECS
+        }
+        history_days = max(0, len(daily_klines) - 1)
+        flags = [label for label, column in BREAKOUT_UNIVERSE_FLAG_SPECS if flag_values[column]]
+        rows.append(
+            {
+                "symbol": symbol,
+                "base_asset": str(getattr(metadata, "base_asset", "") or "").upper(),
+                "market_type": str(getattr(metadata, "underlying_type", "") or "CRYPTO").upper(),
+                "last_price": last_price,
+                "quote_volume_24h": _float_nan(ticker_row.get("quoteVolume")),
+                "high_24h": high_24h,
+                "low_24h": low_24h,
+                "history_days": history_days,
+                "history_status": "ready"
+                if history_days >= 180 and math.isfinite(levels.high_180d) and math.isfinite(levels.low_180d)
+                else "limited",
+                "high_5d": levels.high_5d,
+                "low_5d": levels.low_5d,
+                "high_20d": levels.high_20d,
+                "low_20d": levels.low_20d,
+                "high_90d": levels.high_90d,
+                "low_90d": levels.low_90d,
+                "high_180d": levels.high_180d,
+                "low_180d": levels.low_180d,
+                **flag_values,
+                "breakout_count": len(flags),
+                "breakout_flags": " | ".join(flags),
+                "scan_error": "" if daily_klines else "daily history unavailable",
+            }
+        )
+    return pd.DataFrame(rows, columns=BREAKOUT_UNIVERSE_COLUMNS)
+
+
+@_cache_data(ttl=300, show_spinner=False)
+def run_breakout_universe_scan(refresh_nonce: int) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Scan every currently trading Binance USDT crypto perpetual for daily breaks."""
+
+    _ = refresh_nonce
+    started = _utc_now()
+    client = BinanceFuturesPublic(
+        base_url=BASE_URL,
+        timeout=TIMEOUT,
+        requests_per_second=BREAKOUT_UNIVERSE_REQUESTS_PER_SECOND,
+        retries=RETRIES,
+    )
+    symbol_meta = {
+        item.symbol: item
+        for item in client.perpetual_usdt_symbols()
+        if str(item.underlying_type or "").upper() not in TRADFI_ALWAYS_INCLUDE_TYPES
+    }
+    ticker = pd.DataFrame(client.ticker_24hr())
+    daily_klines_by_symbol: dict[str, list[list[Any]]] = {}
+    for symbol in sorted(symbol_meta):
+        daily_klines_by_symbol[symbol] = _safe_public_fetch(
+            [],
+            client.klines_1d,
+            symbol,
+            limit=BREAKOUT_UNIVERSE_KLINE_LIMIT,
+        )
+
+    frame = _build_breakout_universe_frame(ticker, symbol_meta, daily_klines_by_symbol)
+    scanned_at_utc = _utc_now().isoformat()
+    if not frame.empty:
+        frame["scanned_at_utc"] = scanned_at_utc
+    elapsed = (_utc_now() - started).total_seconds()
+    metadata = {
+        "scanned_at_utc": scanned_at_utc,
+        "universe_count": len(symbol_meta),
+        "ticker_count": int(ticker["symbol"].nunique()) if "symbol" in ticker.columns else 0,
+        "returned_count": len(frame),
+        "history_ready_count": int((frame["history_status"] == "ready").sum()) if not frame.empty else 0,
+        "history_error_count": int(frame["scan_error"].astype(bool).sum()) if not frame.empty else 0,
+        "high_break_count": int(
+            frame[[column for _, column in BREAKOUT_UNIVERSE_FLAG_SPECS if "high" in column]].astype(bool).sum().sum()
+        ) if not frame.empty else 0,
+        "low_break_count": int(
+            frame[[column for _, column in BREAKOUT_UNIVERSE_FLAG_SPECS if "low" in column]].astype(bool).sum().sum()
+        ) if not frame.empty else 0,
+        "elapsed_seconds": elapsed,
+    }
+    return frame, metadata
 
 
 @_cache_data(ttl=60)
@@ -11990,6 +12165,29 @@ def _render_squeeze_table(frame: pd.DataFrame, *, columns: list[str] | None = No
     )
 
 
+def _breakout_universe_column_config() -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "symbol": st.column_config.TextColumn("Pair", width="small"),
+        "base_asset": st.column_config.TextColumn("Asset", width="small"),
+        "market_type": st.column_config.TextColumn("Type", width="small"),
+        "last_price": st.column_config.NumberColumn("Last", format="%.8f"),
+        "quote_volume_24h": st.column_config.NumberColumn("24H Quote Vol", format="$%.0f"),
+        "high_24h": st.column_config.NumberColumn("24H High", format="%.8f"),
+        "low_24h": st.column_config.NumberColumn("24H Low", format="%.8f"),
+        "history_days": st.column_config.NumberColumn("History", format="%dD"),
+        "history_status": st.column_config.TextColumn("History Status", width="small"),
+        "breakout_count": st.column_config.NumberColumn("Breaks", format="%d", width="small"),
+        "breakout_flags": st.column_config.TextColumn("Breakout Flags", width="large"),
+        "scan_error": st.column_config.TextColumn("Coverage Gap", width="medium"),
+    }
+    for label, column in BREAKOUT_UNIVERSE_FLAG_SPECS:
+        config[column] = st.column_config.CheckboxColumn(label, width="small")
+    for window in ("5d", "20d", "90d", "180d"):
+        config[f"high_{window}"] = st.column_config.NumberColumn(f"{window.upper()} High", format="%.8f")
+        config[f"low_{window}"] = st.column_config.NumberColumn(f"{window.upper()} Low", format="%.8f")
+    return config
+
+
 def _scan_age_text(frame: pd.DataFrame) -> str:
     if frame.empty or "scanned_at_utc" not in frame.columns:
         return "no saved scan"
@@ -12128,7 +12326,9 @@ def render_breakout_dashboard() -> None:
     best_score = _safe_float(best.get("squeeze_score"))
     kpi_cols[4].metric("Top ranked", best_symbol, f"score {best_score:.1f}" if best_score else None)
 
-    radar_tab, watch_tab, lifecycle_tab, evidence_tab = st.tabs(["Radar", "Watch", "Lifecycle", "Evidence"])
+    radar_tab, watch_tab, lifecycle_tab, evidence_tab, breakouts_tab = st.tabs(
+        ["Radar", "Watch", "Lifecycle", "Evidence", "Breakouts"]
+    )
 
     with radar_tab:
         st.subheader("Entry-Ready Structures")
@@ -12262,6 +12462,95 @@ def render_breakout_dashboard() -> None:
         ]
         _render_squeeze_table(scored, columns=evidence_columns, height=520)
 
+    with breakouts_tab:
+        st.caption(
+            "Complete Binance USDT crypto-perpetual census. Break levels use prior closed daily candles; "
+            "the current 24h high/low is tested against those levels. Bitcoin appears as BTCUSDT."
+        )
+        breakout_refresh_col, breakout_status_col = st.columns([1.2, 3.0], vertical_alignment="center")
+        with breakout_refresh_col:
+            refresh_breakouts = st.button(
+                "Scan all pairs",
+                type="primary",
+                icon=":material/candlestick_chart:",
+                help=(
+                    "Walk every currently trading Binance USDT crypto perpetual and calculate 5D, 20D, 90D, "
+                    "and 180D high/low break flags. This is deliberately separate from the bounded live radar."
+                ),
+                key="refresh_breakout_universe",
+            )
+        if "breakout_universe_frame" not in st.session_state:
+            st.session_state["breakout_universe_frame"] = pd.DataFrame()
+        if "breakout_universe_metadata" not in st.session_state:
+            st.session_state["breakout_universe_metadata"] = {}
+        if refresh_breakouts:
+            breakout_nonce = int(st.session_state.get("breakout_universe_nonce", 0)) + 1
+            st.session_state["breakout_universe_nonce"] = breakout_nonce
+            try:
+                with st.spinner("Scanning every Binance USDT crypto perpetual for daily breakouts..."):
+                    refreshed_breakouts, breakout_metadata = run_breakout_universe_scan(breakout_nonce)
+                if refreshed_breakouts.empty:
+                    st.error(str(breakout_metadata.get("error") or "The full breakout scan returned no rows."))
+                else:
+                    st.session_state["breakout_universe_frame"] = refreshed_breakouts
+                    st.session_state["breakout_universe_metadata"] = breakout_metadata
+            except Exception as exc:
+                st.error("The full-universe breakout scan failed. The last saved breakout census remains visible.")
+                st.exception(exc)
+
+        breakout_frame = st.session_state.get("breakout_universe_frame", pd.DataFrame())
+        breakout_metadata = st.session_state.get("breakout_universe_metadata", {})
+        with breakout_status_col:
+            if breakout_frame.empty:
+                st.caption("No full-universe breakout census yet. Click Scan all pairs to load it.")
+            else:
+                elapsed = _safe_float(breakout_metadata.get("elapsed_seconds"))
+                elapsed_text = f" | {elapsed:.1f}s" if elapsed > 0 else ""
+                st.caption(
+                    f"{_scan_age_text(breakout_frame)} | {len(breakout_frame)} pairs | "
+                    f"{int(breakout_metadata.get('history_ready_count', 0) or 0)} with 180D history"
+                    f"{elapsed_text}"
+                )
+
+        if not breakout_frame.empty:
+            high_columns = [column for _, column in BREAKOUT_UNIVERSE_FLAG_SPECS if "high" in column]
+            low_columns = [column for _, column in BREAKOUT_UNIVERSE_FLAG_SPECS if "low" in column]
+            breakout_kpis = st.columns(5)
+            breakout_kpis[0].metric("Pairs", len(breakout_frame))
+            breakout_kpis[1].metric("High breaks", int(breakout_frame[high_columns].astype(bool).sum().sum()))
+            breakout_kpis[2].metric("Low breaks", int(breakout_frame[low_columns].astype(bool).sum().sum()))
+            breakout_kpis[3].metric(
+                "Both sides",
+                int((breakout_frame[high_columns].any(axis=1) & breakout_frame[low_columns].any(axis=1)).sum()),
+            )
+            breakout_kpis[4].metric("History gaps", int(breakout_frame["history_status"].ne("ready").sum()))
+
+            breakout_filter = st.selectbox(
+                "Show",
+                options=("All pairs", "Any breakout", "High breakouts", "Low breakouts"),
+                key="breakout_universe_filter",
+            )
+            if breakout_filter == "Any breakout":
+                breakout_mask = breakout_frame["breakout_count"] > 0
+            elif breakout_filter == "High breakouts":
+                breakout_mask = breakout_frame[high_columns].any(axis=1)
+            elif breakout_filter == "Low breakouts":
+                breakout_mask = breakout_frame[low_columns].any(axis=1)
+            else:
+                breakout_mask = pd.Series(True, index=breakout_frame.index)
+            breakout_view = breakout_frame.loc[breakout_mask].sort_values(
+                ["breakout_count", "quote_volume_24h", "symbol"],
+                ascending=[False, False, True],
+                na_position="last",
+            )
+            st.dataframe(
+                breakout_view.loc[:, [column for column in BREAKOUT_UNIVERSE_COLUMNS if column in breakout_view.columns]],
+                use_container_width=True,
+                hide_index=True,
+                height=650,
+                column_config=_breakout_universe_column_config(),
+            )
+
     st.subheader("Setup Drilldown")
     selected_symbol = st.selectbox(
         "Symbol",
@@ -12348,7 +12637,10 @@ def render_breakout_dashboard() -> None:
 
 
 def main_dashboard() -> None:
-    render_breakout_dashboard()
+    import sys
+    from market_dashboard_ui import render
+
+    render(sys.modules[__name__])
 
 
 if not IMPORT_ONLY:
