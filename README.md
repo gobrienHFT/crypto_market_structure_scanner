@@ -6,6 +6,8 @@ A full-market Binance USD-M crypto perpetual dashboard and reproducible market-s
 
 **Start here:** install the [local dependencies](#local-setup), run `run_dashboard.bat` to open the dashboard in Chrome, or run the [deterministic demo](#deterministic-demo) without credentials. The dashboard uses public market data; it does not start the separate execution bots.
 
+For an immediate dashboard walkthrough, run `run_dashboard_demo.bat`. It opens a separate, clearly labelled synthetic workspace on port 8502, with example high and low breakouts, account positioning, volume and OI. It needs no exchange access, credentials, or full-market scan. The ordinary `run_dashboard.bat` remains the live public-data route.
+
 ## Market workspace
 
 | View | What you can inspect |
@@ -23,7 +25,7 @@ Scans run in bounded background workers and retain results locally. Missing endp
 
 1. Run the offline demo and inspect its manifest and synthetic replay. No keys or live orders are needed.
 2. Run `python -m pytest -q` and inspect `tests/test_market_workspace.py` for missing-data, history-gap, timing, and UI coverage.
-3. Open the dashboard, scan the universe, and compare Breakouts with Volume & OI and Reflexivity. Check the coverage and freshness indicators before interpreting a rank.
+3. Open the offline dashboard demo to inspect all six views immediately. Then use the live dashboard for an exchange scan; check coverage and freshness before interpreting a rank.
 4. Read the data/UI separation in `market_dashboard_data.py` and `market_dashboard_ui.py`, then the research contracts in `crypto_market_structure/`.
 
 The interview evidence is reproducible calculations, explicit uncertainty, failure handling, and a usable operator workflow. The remaining research question is whether these signals produce an out-of-sample edge after fees, funding, slippage, and realistic execution. The legacy `app.py` remains large; the new workspace isolates data collection and presentation without rewriting unrelated execution tools.

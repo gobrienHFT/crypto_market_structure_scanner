@@ -283,9 +283,15 @@ class ScanService:
         if self.cancel.is_set():
             raise RuntimeError("Scan stopped")
         key = json.dumps([self.base_url, method, args, kwargs], sort_keys=True)
-        cached = self.cache.get(key, ttl)
-        if cached is not None:
-            return cached
+        entry = self.cache.get_entry(key, ttl)
+        if entry is not None:
+            captured_at, cached = entry
+            # A cached forming candle must be fetched again once its close time passes.
+            if method != "klines" or not cached or not any(
+                int(bar[6]) >= int(captured_at * 1000) and int(bar[6]) < int(time.time() * 1000)
+                for bar in cached if len(bar) >= 7
+            ):
+                return cached
         data_endpoint = method in {"global_long_short_account_ratio", "open_interest_statistics"}
         with self.pacing:
             now = time.monotonic()

@@ -34,5 +34,8 @@ jobs:
       - name: Run deterministic reviewer demo
         run: python -m crypto_market_structure.review_demo
 
+      - name: Build offline dashboard workspace
+        run: python market_dashboard_demo.py
+
       - name: Run tests
         run: python -m pytest

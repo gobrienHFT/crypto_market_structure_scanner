@@ -1,6 +1,7 @@
 """Full-market Streamlit workspace. Network work lives in ScanService."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -105,22 +106,28 @@ CORE = ["symbol", "last_price", "quote_asset", "price_change_24h_pct", "short_ac
 
 
 def render(app: Any):
-    scanner = service(str(app.APP_DIR / "data" / "market_workspace.sqlite"), app.BASE_URL)
+    demo = os.environ.get("MARKET_DASHBOARD_DEMO") == "1"
+    workspace_path = os.environ.get("MARKET_WORKSPACE_DB_PATH") or str(app.APP_DIR / "data" / "market_workspace.sqlite")
+    scanner = service(workspace_path, app.BASE_URL)
     st.markdown("<style>.block-container{max-width:1900px;padding-top:1rem}h1{font-size:1.7rem!important}"
                 "[data-testid=stVerticalBlock]{gap:.65rem}"
                 "[data-testid=stMetric]{background:transparent;border:0;border-bottom:1px solid #303741;"
                 "border-radius:0;padding:.25rem 0;min-height:65px}</style>", unsafe_allow_html=True)
     st.title("Crypto Market Scanner")
-    st.caption("All trading Binance USD-M crypto perpetuals | all quote currencies | account counts, price structure and public market flow")
-    left, middle, right = st.columns([2, 2, 5], vertical_alignment="bottom")
-    with left:
-        if st.button("Scan all pairs", icon=":material/refresh:", type="primary", use_container_width=True):
-            scanner.start(st.session_state.get("minute_events", True))
-    with middle:
-        if st.button("Stop scan", icon=":material/stop:", use_container_width=True):
-            scanner.stop()
-    with right:
-        st.checkbox("Minute-resolution breakout times", value=True, key="minute_events")
+    if demo:
+        st.warning("OFFLINE DEMO | Synthetic examples as of 2026-09-01 12:00 UTC. Prices, rankings and signals are illustrative, not live observations.")
+    else:
+        st.caption("All trading Binance USD-M crypto perpetuals | all quote currencies | account counts, price structure and public market flow")
+    if not demo:
+        left, middle, right = st.columns([2, 2, 5], vertical_alignment="bottom")
+        with left:
+            if st.button("Scan all pairs", icon=":material/refresh:", type="primary", use_container_width=True):
+                scanner.start(st.session_state.get("minute_events", True))
+        with middle:
+            if st.button("Stop scan", icon=":material/stop:", use_container_width=True):
+                scanner.stop()
+        with right:
+            st.checkbox("Minute-resolution breakout times", value=True, key="minute_events")
     search_col, quote_col = st.columns([4, 1])
     with search_col:
         search = st.text_input("Find pairs", placeholder="BTC, LAB, RAVE ...", key="market_search")
@@ -137,8 +144,11 @@ def render(app: Any):
 
 @st.fragment(run_every=5)
 def _scan_status(scanner: ScanService):
+    demo = os.environ.get("MARKET_DASHBOARD_DEMO") == "1"
     raw, status = scanner.snapshot()
-    if status["running"]:
+    if demo:
+        st.caption(f"Fixed synthetic sample | {len(raw)} pairs | 2026-09-01 12:00 UTC")
+    elif status["running"]:
         st.progress(status["completed"] / max(1, status["total"]),
                     text=f"{status['status']} | {status['completed']} / {status['total']} pairs")
         if status.get("remaining_seconds") is not None:
@@ -150,7 +160,7 @@ def _scan_status(scanner: ScanService):
         return
     fresh = pd.to_datetime(raw.get("scanned_at_utc", pd.Series(index=raw.index, dtype=str)), utc=True, errors="coerce")
     oldest = fresh.min()
-    if pd.notna(oldest) and (pd.Timestamp.now(tz="UTC") - oldest).total_seconds() > 900:
+    if not demo and pd.notna(oldest) and (pd.Timestamp.now(tz="UTC") - oldest).total_seconds() > 900:
         st.warning("Some rows are over 15 minutes old. Their observation times are shown; refresh for current conditions.")
     metrics = st.columns(4)
     metrics[0].metric("Pairs", len(raw))
@@ -164,7 +174,7 @@ def _workspace(app: Any, scanner: ScanService, page: str, search: str, quote: st
     raw, _ = scanner.snapshot()
     if raw.empty:
         return
-    frame = age_events(raw)
+    frame = raw.copy() if os.environ.get("MARKET_DASHBOARD_DEMO") == "1" else age_events(raw)
     if quote != "All":
         frame = frame[frame.quote_asset.eq(quote)]
     terms = [s.strip().upper() for s in search.split(",") if s.strip()]
@@ -188,7 +198,7 @@ def _workspace(app: Any, scanner: ScanService, page: str, search: str, quote: st
                           "squeeze_evidence_tier", "structural_evidence_level", "structural_evidence_sources",
                           "structural_evidence_age_days", "squeeze_gate_failures"], "reflexivity", sort="reflexivity_score")
             selected = st.selectbox("Inspect ownership evidence", sorted(scored.symbol), key="ownership_symbol")
-            if st.button("Refresh on-chain evidence", icon=":material/search:", key="refresh_ownership"):
+            if st.button("Refresh on-chain evidence", icon=":material/search:", key="refresh_ownership", disabled=os.environ.get("MARKET_DASHBOARD_DEMO") == "1"):
                 with st.spinner(f"Checking holder evidence for {selected}..."):
                     _, details = app._refresh_squeeze_structural_evidence(scored[scored.symbol.eq(selected)], max_symbols=1)
                 ranked_frame.clear()

@@ -7,6 +7,13 @@ major-coin exclusion, or candidate budget. TradFi contracts, delivery futures,
 spot markets and the separate COIN-M API are outside this universe. Quote
 currencies are exposed as a filter; symbols are never silently renamed.
 
+For an offline UI walkthrough, launch `run_dashboard_demo.bat`. It generates a
+fixed synthetic workspace in ignored `artifacts/dashboard_demo/` and opens
+port 8502. A persistent banner labels every value as synthetic and dates the
+observation; event ages refer to that fixed observation time. Live scan controls
+are hidden and on-chain refresh is disabled. The ordinary launcher on
+port 8501 uses public exchange data and a separate saved workspace.
+
 ## Views
 
 - **All Markets:** sortable price, account-count positioning, funding, volume,
@@ -73,6 +80,10 @@ pending, complete, partial and unavailable rows. Stop interrupts the scan and
 retains completed results. HTTP 418/429 stops further requests for the scan.
 
 Public responses and snapshots persist in `data/market_workspace.sqlite`.
+Cached forming candles are fetched again after their close time passes, so
+an unfinished daily or hourly bar cannot become a historical observation just
+because it was read after a UTC boundary. A saved daily chart likewise keeps
+the capture-time distinction between finished and unfinished bars.
 Cached rows retain timestamps and stale snapshots are identified. The browser
 never promotes a cached unfinished daily candle to a completed chart candle
 just because time has passed. Empty universe responses retain the previous

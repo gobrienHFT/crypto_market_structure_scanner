@@ -615,7 +615,9 @@ def refresh_outcomes(
     client = client or BinanceFuturesPublic(timeout=10, requests_per_second=4)
     archive = archive.copy()
     archive["flagged_at_utc"] = pd.to_datetime(archive["flagged_at_utc"], errors="coerce", utc=True)
-    archive["outcome_updated_at_utc"] = pd.to_datetime(archive["outcome_updated_at_utc"], errors="coerce", utc=True)
+    archive["outcome_updated_at_utc"] = pd.to_datetime(
+        archive["outcome_updated_at_utc"], errors="coerce", utc=True
+    ).astype("datetime64[ns, UTC]")
     archive["flagged_price"] = pd.to_numeric(archive["flagged_price"], errors="coerce")
     archive["structure_invalidated"] = archive["structure_invalidated"].astype("object")
     eligible = archive[

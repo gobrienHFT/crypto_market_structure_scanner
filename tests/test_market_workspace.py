@@ -163,12 +163,66 @@ def test_cached_forming_daily_candle_never_becomes_completed_on_restart(tmp_path
     assert frame.MA200.iloc[-1] == 100
 
 
+def test_forming_kline_cache_refreshes_after_close(tmp_path, monkeypatch):
+    scanner = ScanService(tmp_path / "cache.sqlite")
+    captured = 240 * DAY + DAY // 2
+    current = {"ms": captured}
+    monkeypatch.setattr("market_dashboard_data.time.time", lambda: current["ms"] / 1000)
+    old = history() + [bar(240 * DAY, close=110)]
+    fresh = history() + [bar(240 * DAY, close=120)]
+    class Client:
+        calls = 0
+        def klines(self, *_args, **_kwargs):
+            self.calls += 1
+            return fresh
+    client = Client()
+    assert scanner.fetch(client, "klines", "BTCUSDT", interval="1d", limit=240, ttl=300) == fresh
+    assert client.calls == 1
+    scanner.cache.put(json.dumps([scanner.base_url, "klines", ["BTCUSDT"], {"interval": "1d", "limit": 240}], sort_keys=True), old)
+    assert scanner.fetch(client, "klines", "BTCUSDT", interval="1d", limit=240, ttl=300) == old
+    assert client.calls == 1
+    current["ms"] = 241 * DAY + 1
+    assert scanner.fetch(client, "klines", "BTCUSDT", interval="1d", limit=240, ttl=300) == fresh
+    assert client.calls == 2
+
+
 def test_malformed_cached_json_is_a_cache_miss(tmp_path):
     scanner = ScanService(tmp_path / "cache.sqlite")
     scanner.cache.put("bad", [])
     with sqlite3.connect(scanner.cache.path) as db:
         db.execute("UPDATE responses SET payload=? WHERE key=?", ("invalid-json", "bad"))
     assert scanner.cache.get("bad", 60) is None
+
+
+def test_offline_dashboard_fixture_is_isolated_and_has_both_breakout_directions(tmp_path):
+    from market_dashboard_demo import write_demo
+
+    path = tmp_path / "demo.sqlite"
+    write_demo(path)
+    frame, status = ScanService(path).snapshot()
+    assert status["total"] == 3
+    assert set(frame.symbol) == {"DEMOAUSDT", "DEMOBUSDT", "DEMOCUSDT"}
+    assert frame.source.eq("Synthetic offline dashboard fixture").all()
+    assert frame.set_index("symbol").loc["DEMOAUSDT", "broke_high_90d"]
+    assert frame.set_index("symbol").loc["DEMOBUSDT", "broke_low_90d"]
+    assert not ScanService(tmp_path / "live.sqlite").snapshot()[0].size
+    assert len(ScanService(path).chart("DEMOAUSDT")) == 240
+
+
+def test_offline_dashboard_labels_fixture_and_hides_live_scan(monkeypatch, tmp_path):
+    import os
+    from streamlit.testing.v1 import AppTest
+    from market_dashboard_demo import write_demo
+
+    path = tmp_path / "demo.sqlite"
+    write_demo(path)
+    monkeypatch.setenv("MARKET_DASHBOARD_DEMO", "1")
+    monkeypatch.setenv("MARKET_WORKSPACE_DB_PATH", str(path))
+    os.environ["CRYPTO_SCANNER_IMPORT_ONLY"] = "1"
+    test = AppTest.from_string("import app\nfrom market_dashboard_ui import render\nrender(app)").run(timeout=30)
+    assert not test.exception
+    assert any("OFFLINE DEMO" in item.value for item in test.warning)
+    assert not any(button.label == "Scan all pairs" for button in test.button)
 
 
 def test_minute_refinement_preserves_per_event_resolution(tmp_path, monkeypatch):

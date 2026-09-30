@@ -1349,9 +1349,15 @@ def _apply_dynamic_breakout_window(frame: pd.DataFrame, *, direction: str, days:
     level_column = f"_discord_{direction}_{days}d_level"
     used_days_column = "_discord_breakout_used_days"
     error_column = "_discord_breakout_error"
-    for column in (broke_column, level_column, used_days_column, error_column):
+    if broke_column not in out.columns:
+        out[broke_column] = False
+    for column in (level_column, used_days_column):
         if column not in out.columns:
-            out[column] = False if column == broke_column else ""
+            out[column] = pd.Series(float("nan"), index=out.index, dtype="float64")
+        else:
+            out[column] = pd.to_numeric(out[column], errors="coerce").astype("float64")
+    if error_column not in out.columns:
+        out[error_column] = ""
 
     stats = {"checked": 0, "errors": 0, "insufficient": 0}
     if "symbol" not in out.columns:
