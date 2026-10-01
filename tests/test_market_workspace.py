@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import json
 import sqlite3
+import time
 import pandas as pd
 
 from market_dashboard_data import DAY, ScanService, breakout_events, crypto_universe, daily_levels, market_metrics
@@ -107,6 +108,87 @@ def test_two_hour_gap_is_not_reported_as_one_hour_roc():
     assert result["short_account_pct"] == 70
     assert math.isnan(result["short_account_roc_1h_pct"])
     assert math.isnan(result["oi_delta_pct"])
+
+
+def test_stale_derivatives_samples_cannot_rank_as_current():
+    now = 240 * DAY
+    shorts = [{"timestamp": now - h * 3_600_000, "shortAccount": share, "longAccount": 1 - share}
+              for h, share in [(4, .64), (3, .70)]]
+    oi = [{"timestamp": now - h * 3_600_000, "sumOpenInterestValue": value, "sumOpenInterest": value}
+          for h, value in [(4, 100), (3, 150)]]
+    result = market_metrics({"lastPrice": "110"}, history(), [], shorts, oi, [], {}, history(), now)
+    assert result["short_sample_age_minutes"] == 180
+    assert result["oi_sample_age_minutes"] == 180
+    assert math.isnan(result["short_account_pct"])
+    assert math.isnan(result["short_account_roc_1h_pp"])
+    assert math.isnan(result["oi_value_usdt"])
+    assert math.isnan(result["oi_delta_pct"])
+
+
+def test_successful_funding_info_uses_standard_interval_for_unadjusted_symbols(tmp_path, monkeypatch):
+    scanner = ScanService(tmp_path / "cache.sqlite")
+    item = {"symbol": "BTCUSDT", "status": "TRADING", "contractType": "PERPETUAL",
+            "underlyingType": "COIN", "baseAsset": "BTC", "quoteAsset": "USDT"}
+    seen = []
+    def fetch(client, method, *args, **kwargs):
+        if method == "exchange_info":
+            return {"symbols": [item]}
+        if method == "ticker_24hr":
+            return [{"symbol": "BTCUSDT", "lastPrice": "1", "quoteVolume": "100"}]
+        if method == "mark_price":
+            return [{"symbol": "BTCUSDT", "lastFundingRate": "0.01"}]
+        return []
+    def worker(item, ticker, funding, btc, minute_events):
+        seen.append(funding.copy())
+        return {"scan_status": "Complete"}
+    monkeypatch.setattr(scanner, "fetch", fetch)
+    monkeypatch.setattr(scanner, "_symbol", worker)
+    scanner._run(False)
+    assert len(seen) == 1
+    assert seen[0]["fundingIntervalHours"] == 8
+
+
+def test_failed_funding_info_leaves_interval_unknown(tmp_path, monkeypatch):
+    scanner = ScanService(tmp_path / "cache.sqlite")
+    item = {"symbol": "BTCUSDT", "status": "TRADING", "contractType": "PERPETUAL",
+            "underlyingType": "COIN", "baseAsset": "BTC", "quoteAsset": "USDT"}
+    seen = []
+    def fetch(client, method, *args, **kwargs):
+        if method == "exchange_info":
+            return {"symbols": [item]}
+        if method == "ticker_24hr":
+            return [{"symbol": "BTCUSDT", "lastPrice": "1", "quoteVolume": "100"}]
+        if method == "mark_price":
+            return [{"symbol": "BTCUSDT", "lastFundingRate": "0.01"}]
+        if method == "funding_info":
+            raise OSError("funding endpoint unavailable")
+        return []
+    def worker(item, ticker, funding, btc, minute_events):
+        seen.append(funding.copy())
+        return {"scan_status": "Complete"}
+    monkeypatch.setattr(scanner, "fetch", fetch)
+    monkeypatch.setattr(scanner, "_symbol", worker)
+    scanner._run(False)
+    assert len(seen) == 1
+    assert "fundingIntervalHours" not in seen[0]
+
+
+def test_stale_hourly_samples_mark_scan_partial(tmp_path, monkeypatch):
+    scanner = ScanService(tmp_path / "cache.sqlite")
+    timestamp = int(time.time() * 1000) - 3 * 3_600_000
+    def fetch(client, method, *args, **kwargs):
+        if method == "global_long_short_account_ratio":
+            return [{"timestamp": timestamp, "shortAccount": .7, "longAccount": .3}]
+        if method == "open_interest_statistics" and kwargs.get("period") == "1h":
+            return [{"timestamp": timestamp, "sumOpenInterestValue": 100, "sumOpenInterest": 10}]
+        return []
+    monkeypatch.setattr(scanner, "fetch", fetch)
+    row = scanner._symbol({"symbol": "BTCUSDT"}, {}, {}, [], False)
+    assert row["scan_status"] == "Partial"
+    assert "short accounts: latest hourly sample is stale" in row["scan_error"]
+    assert "open interest: latest hourly sample is stale" in row["scan_error"]
+    assert math.isnan(row["short_account_pct"])
+    assert math.isnan(row["oi_value_usdt"])
 
 
 def test_worker_failure_retains_pair_and_snapshot_survives_restart(tmp_path, monkeypatch):
@@ -276,6 +358,8 @@ def test_populated_workspace_all_tabs_and_search(monkeypatch):
     test = AppTest.from_string("import app\nfrom market_dashboard_ui import render\nrender(app)").run(timeout=30)
     assert not test.exception
     assert [tab.label for tab in test.tabs] == ["All Markets", "Reflexivity", "Breakouts", "Volume & OI", "Correlations", "Market Breadth"]
+    assert any({"short_sample_age_minutes", "oi_sample_age_minutes", "scan_status"}.issubset(item.value.columns)
+               for item in test.dataframe)
     test.text_input(key="market_search").set_value("LAB").run()
     assert not test.exception
     assert test.dataframe[0].value.symbol.tolist() == ["LABUSDT"]

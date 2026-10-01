@@ -20,7 +20,8 @@ port 8501 uses public exchange data and a separate saved workspace.
   OI, BTC correlation and moving-average columns. Expand all columns or export CSV.
 - **Reflexivity:** the existing squeeze and canonical reflexivity models over
   every enriched pair. Cached ownership evidence remains labelled with its
-  source, age and quality. Refresh on-chain evidence for a selected pair.
+  source, age and quality. Hourly sample ages and partial coverage are shown
+  alongside rankings. Refresh on-chain evidence for a selected pair.
 - **Breakouts:** 5/20/90/180-day highs and lows, current flags, recent crossing
   ages, per-event timing resolution, MA200 crossings and daily price history.
 - **Volume & OI:** raw baseline values, observation counts and relative changes.
@@ -64,6 +65,13 @@ because a price increase can raise OI value without increasing contract units.
 Binance only exposes roughly one month of OI history, so 29 baseline observations
 is a normal result and is displayed as 29. Gaps in hourly OI/account samples do
 not get relabelled as one-hour changes.
+
+Short-account and OI readings are suppressed when their latest hourly sample is
+at least 120 minutes old. The actual sample age remains visible, and that pair
+is marked partial with a stale-data reason. Binance's [funding-info response](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data) lists
+adjusted contracts; a successful response implies the standard eight-hour
+interval for unlisted contracts, as described in Binance's [funding FAQ](https://www.binance.com/en/support/faq/detail/360033525031).
+If that request fails, the interval is unknown.
 
 Correlation is Pearson correlation of aligned closed daily percentage returns,
 using at most 180 matched observations and a minimum of three. Missing days are

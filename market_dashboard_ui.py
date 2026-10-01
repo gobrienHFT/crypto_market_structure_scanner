@@ -192,8 +192,10 @@ def _workspace(app: Any, scanner: ScanService, page: str, search: str, quote: st
             scored = ranked_frame(static, app)
             st.caption("Market ranking plus cached ownership evidence. Concentration is not proof of coordinated ownership; scores are research hypotheses.")
             table(scored, ["symbol", "reflexivity_score", "reflexivity_state", "squeeze_score", "reflexivity_data_quality_pct",
-                          "short_account_pct", "short_account_roc_1h_pp", "carry_funding_pct", "hour_volume_roc_1h_pct",
+                          "short_account_pct", "short_account_roc_1h_pp", "short_sample_age_minutes",
+                          "carry_funding_pct", "funding_interval_hours", "hour_volume_roc_1h_pct",
                           "quote_volume_24h_vs_prior_30d_avg_ratio", "oi_delta_pct", "oi_vs_30d_avg_ratio",
+                          "oi_sample_age_minutes", "scan_status",
                           "top10_holder_pct", "top100_holder_pct", "adjusted_top_10_pct", "low_float_score",
                           "squeeze_evidence_tier", "structural_evidence_level", "structural_evidence_sources",
                           "structural_evidence_age_days", "squeeze_gate_failures"], "reflexivity", sort="reflexivity_score")

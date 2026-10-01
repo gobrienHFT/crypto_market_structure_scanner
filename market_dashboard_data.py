@@ -20,6 +20,7 @@ from volume_metrics import closed_daily_anchored_vwap_metrics, closed_hour_volum
 
 DAY = 86_400_000
 WINDOWS = (5, 20, 90, 180)
+HOURLY_SAMPLE_MAX_AGE_MINUTES = 120
 TRADFI = {"COMMODITY", "EQUITY", "HK_EQUITY", "KR_EQUITY", "INDEX", "PREMARKET"}
 
 
@@ -124,8 +125,14 @@ def market_metrics(ticker: dict, daily: list, hourly: list, shorts: list, oi: li
     vol_avg = vol_total / len(volumes) if volumes else float("nan")
     quote = number(ticker.get("quoteVolume"))
     short_rows = contiguous_hourly([r for r in shorts if number(r.get("timestamp")) <= now_ms], ("shortAccount", "longAccount"))
+    short_age_minutes = (now_ms - number(short_rows[-1]["timestamp"])) / 60_000 if short_rows else float("nan")
+    if short_age_minutes >= HOURLY_SAMPLE_MAX_AGE_MINUTES:
+        short_rows = []
     latest = short_rows[-1] if short_rows else {}
     oi = contiguous_hourly([r for r in oi if number(r.get("timestamp")) <= now_ms], ("sumOpenInterestValue", "sumOpenInterest"))
+    oi_age_minutes = (now_ms - number(oi[-1]["timestamp"])) / 60_000 if oi else float("nan")
+    if oi_age_minutes >= HOURLY_SAMPLE_MAX_AGE_MINUTES:
+        oi = []
     oi_stats = oi_history_stats(oi)
     oi_last = oi[-1] if oi else {}
     oi_baseline = sorted({int(r["timestamp"]): r for r in oi_daily
@@ -153,14 +160,14 @@ def market_metrics(ticker: dict, daily: list, hourly: list, shorts: list, oi: li
         "long_short_account_ratio": number(latest.get("longShortRatio")),
         "short_account_peak_pct": max(short_values) if short_values else float("nan"),
         "short_account_peak_drawdown_pp": short_values[-1] - max(short_values) if short_values else float("nan"),
-        "short_sample_age_minutes": (now_ms - number(latest.get("timestamp"))) / 60_000,
+        "short_sample_age_minutes": short_age_minutes,
         "oi_value_usdt": number(oi_last.get("sumOpenInterestValue")),
         "oi_units": number(oi_last.get("sumOpenInterest")),
         "oi_prior_30d_avg": oi_avg, "oi_prior_30d_days": len(oi_baseline),
         "oi_vs_30d_avg_ratio": ratio(number(oi_last.get("sumOpenInterestValue")), oi_avg),
         "oi_units_vs_30d_avg_ratio": ratio(number(oi_last.get("sumOpenInterest")), oi_units_avg),
         "oi_delta_pct": oi_stats.get("oi_change_1h_pct"),
-        "oi_sample_age_minutes": (now_ms - number(oi_last.get("timestamp"))) / 60_000,
+        "oi_sample_age_minutes": oi_age_minutes,
         "history_days": len(closed), "corr_window_days": len(corr),
         "corr_to_btc_6m": corr.coin.corr(corr.btc) if len(corr) >= 3 and corr.coin.std() > 0 and corr.btc.std() > 0 else float("nan"),
         **levels, **short_account_history_stats(short_rows, windows=(1, 3, 4, 6, 12, 24)),
@@ -398,6 +405,9 @@ class ScanService:
             oi_daily = get("open_interest_statistics", symbol, period="1d", limit=30, ttl=3600)
             now_ms = int(time.time() * 1000)
             row = market_metrics(ticker, daily, hourly, shorts, oi, oi_daily, funding, btc, now_ms)
+            for name, field in (("short accounts", "short_sample_age_minutes"), ("open interest", "oi_sample_age_minutes")):
+                if number(row[field]) >= HOURLY_SAMPLE_MAX_AGE_MINUTES:
+                    errors.append(f"{name}: latest hourly sample is stale ({row[field]:.0f} min old)")
             # Refine only actual event hours; one 61-bar request serves all levels in an hour.
             if minute_events:
                 event_groups = {}
