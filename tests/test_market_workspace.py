@@ -125,6 +125,34 @@ def test_stale_derivatives_samples_cannot_rank_as_current():
     assert math.isnan(result["oi_delta_pct"])
 
 
+def test_saved_snapshot_ages_and_excludes_expired_readings():
+    from market_dashboard_ui import age_events
+
+    now = pd.Timestamp("2026-10-01T12:00:00Z")
+    frame = pd.DataFrame([{"symbol": "OLDUSDT", "scanned_at_utc": "2026-10-01T11:10:00Z",
+                           "scan_status": "Complete", "short_sample_age_minutes": 80,
+                           "short_account_pct": 70.0, "short_account_roc_1h_pp": 3.0,
+                           "oi_sample_age_minutes": 90, "oi_value_usdt": 1_000_000,
+                           "oi_delta_pct": 10.0, "high_90d_event_utc": "2026-10-01T11:00:00Z"},
+                          {"symbol": "FRESHUSDT", "scanned_at_utc": "2026-10-01T11:55:00Z",
+                           "scan_status": "Complete", "short_sample_age_minutes": 40,
+                           "short_account_pct": 65.0, "short_account_roc_1h_pp": 1.0,
+                           "oi_sample_age_minutes": 45, "oi_value_usdt": 500_000,
+                           "oi_delta_pct": 2.0, "high_90d_event_utc": None}])
+    result = age_events(frame, as_of=now).set_index("symbol")
+    assert result.loc["OLDUSDT", "scan_status"] == "Stale"
+    assert result.loc["OLDUSDT", "short_sample_age_minutes"] == 130
+    assert result.loc["OLDUSDT", "oi_sample_age_minutes"] == 140
+    assert result.loc["OLDUSDT", "high_90d_age_minutes"] == 60
+    assert math.isnan(result.loc["OLDUSDT", "short_account_pct"])
+    assert math.isnan(result.loc["OLDUSDT", "short_account_roc_1h_pp"])
+    assert math.isnan(result.loc["OLDUSDT", "oi_value_usdt"])
+    assert math.isnan(result.loc["OLDUSDT", "oi_delta_pct"])
+    assert result.loc["FRESHUSDT", "scan_status"] == "Complete"
+    assert result.loc["FRESHUSDT", "short_sample_age_minutes"] == 45
+    assert result.loc["FRESHUSDT", "short_account_pct"] == 65
+
+
 def test_successful_funding_info_uses_standard_interval_for_unadjusted_symbols(tmp_path, monkeypatch):
     scanner = ScanService(tmp_path / "cache.sqlite")
     item = {"symbol": "BTCUSDT", "status": "TRADING", "contractType": "PERPETUAL",

@@ -90,12 +90,28 @@ def table(frame: pd.DataFrame, columns: list[str], key: str, *, sort: str | None
     st.download_button("Download CSV", view.to_csv(index=False).encode(), f"{key}.csv", "text/csv", key=f"download_{key}")
 
 
-def age_events(frame: pd.DataFrame) -> pd.DataFrame:
+def age_events(frame: pd.DataFrame, *, as_of: pd.Timestamp | None = None) -> pd.DataFrame:
     frame = frame.copy()
+    now = as_of if as_of is not None else pd.Timestamp.now(tz="UTC")
+    scanned = pd.to_datetime(frame.get("scanned_at_utc", pd.Series(pd.NaT, index=frame.index)), utc=True, errors="coerce")
+    elapsed = (now - scanned).dt.total_seconds() / 60
     for col in frame:
         if col.endswith("_event_utc"):
             ts = pd.to_datetime(frame[col], utc=True, errors="coerce")
-            frame[col.replace("_event_utc", "_age_minutes")] = (pd.Timestamp.now(tz="UTC") - ts).dt.total_seconds() / 60
+            frame[col.replace("_event_utc", "_age_minutes")] = (now - ts).dt.total_seconds() / 60
+    for age_col, prefixes in (("short_sample_age_minutes", ("short_account_", "long_account_", "long_short_account_ratio")),
+                              ("oi_sample_age_minutes", ("oi_",))):
+        if age_col not in frame:
+            continue
+        frame[age_col] = pd.to_numeric(frame[age_col], errors="coerce") + elapsed
+        expired = frame[age_col].ge(120)
+        for col in frame:
+            if col != age_col and col.startswith(prefixes) and pd.api.types.is_numeric_dtype(frame[col]):
+                frame[col] = pd.to_numeric(frame[col], errors="coerce").astype(float)
+                frame.loc[expired, col] = float("nan")
+    if "scan_status" in frame:
+        stale = (elapsed.isna() | elapsed.gt(15)) & frame.scan_status.isin(["Complete", "Partial"])
+        frame.loc[stale, "scan_status"] = "Stale"
     return frame
 
 
@@ -162,11 +178,13 @@ def _scan_status(scanner: ScanService):
     oldest = fresh.min()
     if not demo and pd.notna(oldest) and (pd.Timestamp.now(tz="UTC") - oldest).total_seconds() > 900:
         st.warning("Some rows are over 15 minutes old. Their observation times are shown; refresh for current conditions.")
+    current = raw if demo else age_events(raw)
+    current = current[current.scan_status.ne("Stale")] if "scan_status" in current else current
     metrics = st.columns(4)
     metrics[0].metric("Pairs", len(raw))
-    metrics[1].metric("Complete", int(raw.scan_status.eq("Complete").sum()) if "scan_status" in raw else 0)
-    metrics[2].metric("Above 90D high", int(raw.get("broke_high_90d", pd.Series(dtype=bool)).fillna(False).sum()))
-    metrics[3].metric("Below 90D low", int(raw.get("broke_low_90d", pd.Series(dtype=bool)).fillna(False).sum()))
+    metrics[1].metric("Complete", int(current.scan_status.eq("Complete").sum()) if "scan_status" in current else 0)
+    metrics[2].metric("Above 90D high", int(current.get("broke_high_90d", pd.Series(dtype=bool)).fillna(False).sum()))
+    metrics[3].metric("Below 90D low", int(current.get("broke_low_90d", pd.Series(dtype=bool)).fillna(False).sum()))
 
 
 @st.fragment(run_every=15)
@@ -186,7 +204,7 @@ def _workspace(app: Any, scanner: ScanService, page: str, search: str, quote: st
     if page == "Reflexivity":
         completed = frame[frame.get("scan_status", pd.Series(index=frame.index, dtype=str)).isin(["Complete", "Partial"])]
         if completed.empty:
-            st.info("Reflexivity metrics appear as pairs finish scanning.")
+            st.info("No recent reflexivity observations. Scan all pairs to refresh this ranking.")
         else:
             static = completed.drop(columns=[c for c in completed if c.endswith("_age_minutes") and c not in {"short_sample_age_minutes", "oi_sample_age_minutes"}])
             scored = ranked_frame(static, app)

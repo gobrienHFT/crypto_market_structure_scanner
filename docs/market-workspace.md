@@ -92,8 +92,11 @@ Cached forming candles are fetched again after their close time passes, so
 an unfinished daily or hourly bar cannot become a historical observation just
 because it was read after a UTC boundary. A saved daily chart likewise keeps
 the capture-time distinction between finished and unfinished bars.
-Cached rows retain timestamps and stale snapshots are identified. The browser
-never promotes a cached unfinished daily candle to a completed chart candle
+Cached rows retain timestamps and stale snapshots are identified. On reopening,
+sample ages advance with elapsed time; expired short-account and OI readings
+are cleared from display, and old rows leave the live Reflexivity ranking and
+current summary counts until the next scan. The browser never promotes a cached
+unfinished daily candle to a completed chart candle
 just because time has passed. Empty universe responses retain the previous
 snapshot, and malformed cached JSON is treated as a cache miss. The browser
 updates individual panels without recreating the tab navigation. A scan is a
