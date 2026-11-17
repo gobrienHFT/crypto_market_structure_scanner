@@ -27,12 +27,12 @@ def build_rows() -> tuple[list[dict], dict[str, list]]:
     specs = [
         ("DEMOAUSDT", 1.35, 0.70, 1.08, 5.0),
         ("DEMOBUSDT", 0.85, 0.35, 1.08, 0.4),
-        ("DEMOCUSDT", 1.02, 0.53, 1.03, 1.2),
+        ("DEMOCUSDT", 1.09, 0.65, 1.03, 2.5),
     ]
     rows = []
     charts = {}
     for symbol, price, short_share, prior_price, volume_multiple in specs:
-        daily = [_bar(day - (240 - i) * DAY, 1 + 0.10 * i / 240 + 0.01 * math.sin(i / 9), 1_000, DAY)
+        daily = [_bar(day - (240 - i) * DAY, 1 + 0.10 * i / 240 + 0.01 * math.sin(i / 9), 24_000, DAY)
                  for i in range(240)]
         hourly = [_bar(now - (73 - i) * HOUR, prior_price if i < 72 else price,
                        1_000 if i < 72 else 1_000 * volume_multiple, HOUR)

@@ -108,6 +108,19 @@ def test_two_hour_gap_is_not_reported_as_one_hour_roc():
     assert result["short_account_pct"] == 70
     assert math.isnan(result["short_account_roc_1h_pct"])
     assert math.isnan(result["oi_delta_pct"])
+    assert math.isnan(result["oi_units_change_1h_pct"])
+
+
+def test_price_driven_oi_growth_and_old_volume_bars():
+    now = 240 * DAY
+    oi = [{"timestamp": now - lag, "sumOpenInterest": 100, "sumOpenInterestValue": value}
+          for lag, value in [(3_600_000, 1000), (0, 1500)]]
+    hours = [bar(now - lag * 3_600_000, span=3_600_000) for lag in (3, 2)]
+    result = market_metrics({}, history(), hours, [], oi, [], {}, history(), now)
+    assert result["oi_delta_pct"] == 50
+    assert result["oi_units_change_1h_pct"] == 0
+    assert result["broke_high_20d"] is None
+    assert math.isnan(result["hour_volume_roc_1h_pct"])
 
 
 def test_stale_derivatives_samples_cannot_rank_as_current():
@@ -333,6 +346,34 @@ def test_offline_dashboard_labels_fixture_and_hides_live_scan(monkeypatch, tmp_p
     assert not test.exception
     assert any("OFFLINE DEMO" in item.value for item in test.warning)
     assert not any(button.label == "Scan all pairs" for button in test.button)
+    test.radio(key="candidate_screen").set_value("Crowded breakouts").run()
+    assert not test.exception
+    view = next(item.value for item in test.dataframe if "reflexivity_score" in item.value)
+    assert view.symbol.tolist() == ["DEMOAUSDT"]
+    assert view.oi_units_change_1h_pct.iloc[0] > 0
+    next(radio for radio in test.radio if radio.label == "Price setup").set_value("Approaching prior high").run()
+    assert not test.exception
+    near = next(item.value for item in test.dataframe if "reflexivity_score" in item.value)
+    assert near.symbol.tolist() == ["DEMOCUSDT"]
+    assert -5 <= near.high_distance_pct.iloc[0] <= 0
+    test.number_input[0].set_value(80.0).run()
+    assert not test.exception
+    assert any("No pairs matched" in item.value for item in test.info)
+
+
+def test_screen_rejects_missing_old_and_price_only_confirmations():
+    from market_dashboard_demo import AS_OF, build_rows
+    from market_dashboard_ui import crowded_breakout_rows
+
+    candidate = build_rows()[0][0]
+    changes = [{}, {"oi_units_change_1h_pct": 0}, {"oi_sample_age_minutes": 120},
+               {"short_sample_age_minutes": None}, {"short_account_roc_1h_pp": 0},
+               {"hour_volume_roc_1h_pct": None}, {"carry_funding_pct": -0.1},
+               {"price_observed_at_utc": AS_OF - pd.Timedelta(minutes=16)}]
+    frame = pd.DataFrame([candidate | change for change in changes])
+    filters = dict(days=20, short_floor=60, volume_multiple=2, as_of=AS_OF)
+    assert list(crowded_breakout_rows(frame, positive_funding=True, **filters).index) == [0]
+    assert list(crowded_breakout_rows(frame, positive_funding=False, **filters).index) == [0, 6]
 
 
 def test_minute_refinement_preserves_per_event_resolution(tmp_path, monkeypatch):

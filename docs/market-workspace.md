@@ -22,6 +22,15 @@ port 8501 uses public exchange data and a separate saved workspace.
   every enriched pair. Cached ownership evidence remains labelled with its
   source, age and quality. Hourly sample ages and partial coverage are shown
   alongside rankings. Refresh on-chain evidence for a selected pair.
+  Select **Crowded breakouts** for pairs with rising short-account share,
+  rising OI in contract units and rising hourly quote volume. Defaults require
+  at least 60% short accounts, positive funding and 24h volume of at least 2x
+  the available prior daily average. Choose a 5/20/90/180-day high and either
+  prices above it or prices approaching it from below with a positive 24h
+  return. The approach distance defaults to 5%. Price observations must be
+  at most 15 minutes old. Missing required measurements leave the pair out.
+  Ownership columns provide a separate check on the float hypothesis.
+  In the offline demo, DEMOAUSDT is above its 20-day high and DEMOCUSDT is approaching it.
 - **Breakouts:** 5/20/90/180-day highs and lows, current flags, recent crossing
   ages, per-event timing resolution, MA200 crossings and daily price history.
 - **Volume & OI:** raw baseline values, observation counts and relative changes.

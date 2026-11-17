@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +164,8 @@ def market_metrics(ticker: dict, daily: list, hourly: list, shorts: list, oi: li
         "short_sample_age_minutes": short_age_minutes,
         "oi_value_usdt": number(oi_last.get("sumOpenInterestValue")),
         "oi_units": number(oi_last.get("sumOpenInterest")),
+        "oi_units_change_1h_pct": (ratio(number(oi_last["sumOpenInterest"]), number(oi[-2]["sumOpenInterest"])) - 1) * 100
+                                  if len(oi) >= 2 else float("nan"),
         "oi_prior_30d_avg": oi_avg, "oi_prior_30d_days": len(oi_baseline),
         "oi_vs_30d_avg_ratio": ratio(number(oi_last.get("sumOpenInterestValue")), oi_avg),
         "oi_units_vs_30d_avg_ratio": ratio(number(oi_last.get("sumOpenInterest")), oi_units_avg),
@@ -176,13 +179,14 @@ def market_metrics(ticker: dict, daily: list, hourly: list, shorts: list, oi: li
         **breakout_events(daily, hourly, now_ms, 60),
     }
     row.update({k: v for k, v in oi_stats.items() if k not in row})
-    if len(hours) < 2 or int(hours[-1][0]) - int(hours[-2][0]) != 3_600_000:
+    latest_closed_hour = now_ms // 3_600_000 * 3_600_000 - 3_600_000
+    if len(hours) < 2 or int(hours[-1][0]) != latest_closed_hour or int(hours[-2][0]) != latest_closed_hour - 3_600_000:
         row["hour_volume_roc_1h_pct"] = float("nan")
     row["price_vs_ma200_pct"] = (ratio(price, levels["ma200"]) - 1) * 100
     for d in WINDOWS:
         for side in ("high", "low"):
             level = levels[f"{side}_{d}d"]
-            row[f"broke_{side}_{d}d"] = (price > level if side == "high" else price < level) if math.isfinite(level) else None
+            row[f"broke_{side}_{d}d"] = (price > level if side == "high" else price < level) if math.isfinite(level) and math.isfinite(price) else None
     if hours:
         last = hours[-1]
         row["hour_return_pct"] = (ratio(number(last[4]), number(last[1])) - 1) * 100
@@ -202,7 +206,7 @@ class PublicCache:
     def __init__(self, path: Path):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS responses (key TEXT PRIMARY KEY, at REAL, payload TEXT)")
 
     def get(self, key: str, ttl: float):
@@ -211,7 +215,7 @@ class PublicCache:
 
     def get_entry(self, key: str, ttl: float):
         """Return capture time with data so cached forming bars stay provisional."""
-        with sqlite3.connect(self.path, timeout=20) as db:
+        with closing(sqlite3.connect(self.path, timeout=20)) as db:
             row = db.execute("SELECT at, payload FROM responses WHERE key=?", (key,)).fetchone()
         if row and 0 <= time.time() - row[0] < ttl:
             try:
@@ -221,7 +225,7 @@ class PublicCache:
         return None
 
     def put(self, key: str, value: Any):
-        with sqlite3.connect(self.path, timeout=20) as db:
+        with closing(sqlite3.connect(self.path, timeout=20)) as db, db:
             db.execute("INSERT OR REPLACE INTO responses VALUES (?, ?, ?)", (key, time.time(), json.dumps(value)))
 
 

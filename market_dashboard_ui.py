@@ -8,7 +8,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from market_dashboard_data import ScanService, WINDOWS
+from crypto_market_structure.reporting import project_reflexivity_assessments
+from market_dashboard_data import HOURLY_SAMPLE_MAX_AGE_MINUTES, ScanService, WINDOWS
 from squeeze_radar import score_squeeze_radar
 
 
@@ -18,7 +19,11 @@ def service(path: str, base_url: str) -> ScanService:
 
 
 @st.cache_data(ttl=60, max_entries=4, show_spinner=False)
-def ranked_frame(frame: pd.DataFrame, _app: Any) -> pd.DataFrame:
+def ranked_frame(frame: pd.DataFrame, _app: Any, demo: bool = False) -> pd.DataFrame:
+    if demo:
+        from market_dashboard_demo import AS_OF
+
+        return project_reflexivity_assessments(score_squeeze_radar(frame, as_of=AS_OF), as_of=AS_OF)
     return _app._attach_reflexivity_assessments(score_squeeze_radar(_app._attach_cached_squeeze_evidence(frame)))
 
 
@@ -33,7 +38,9 @@ LABELS = {
     "quote_volume_prior_30d_days": "Volume baseline days", "quote_volume_24h_vs_prior_30d_avg_ratio": "24h / daily average",
     "hour_quote_volume": "1h quote volume", "hour_quote_volume_previous_1h": "Previous 1h volume",
     "hour_volume_roc_1h_pct": "Volume 1h ROC %", "oi_value_usdt": "OI quote value",
-    "oi_units": "OI units", "oi_delta_pct": "OI 1h change %", "oi_prior_30d_avg": "Prior OI average",
+    "oi_units": "OI units", "oi_delta_pct": "OI value 1h change %", "oi_prior_30d_avg": "Prior OI average",
+    "oi_units_change_1h_pct": "OI units 1h change %",
+    "high_distance_pct": "Price vs selected high %",
     "oi_prior_30d_days": "OI baseline days", "oi_vs_30d_avg_ratio": "OI value / average",
     "oi_units_vs_30d_avg_ratio": "OI units / average", "oi_sample_age_minutes": "OI sample age (min)",
     "corr_to_btc_6m": "BTC return correlation", "corr_window_days": "Correlation observations",
@@ -104,7 +111,7 @@ def age_events(frame: pd.DataFrame, *, as_of: pd.Timestamp | None = None) -> pd.
         if age_col not in frame:
             continue
         frame[age_col] = pd.to_numeric(frame[age_col], errors="coerce") + elapsed
-        expired = frame[age_col].ge(120)
+        expired = frame[age_col].ge(HOURLY_SAMPLE_MAX_AGE_MINUTES)
         for col in frame:
             if col != age_col and col.startswith(prefixes) and pd.api.types.is_numeric_dtype(frame[col]):
                 frame[col] = pd.to_numeric(frame[col], errors="coerce").astype(float)
@@ -115,10 +122,42 @@ def age_events(frame: pd.DataFrame, *, as_of: pd.Timestamp | None = None) -> pd.
     return frame
 
 
+def crowded_breakout_rows(
+    frame: pd.DataFrame, *, days: int, short_floor: float, volume_multiple: float,
+    positive_funding: bool, as_of: pd.Timestamp, approach_pct: float | None = None,
+) -> pd.DataFrame:
+    def metric(column):
+        return pd.to_numeric(frame.get(column, pd.Series(index=frame.index, dtype=float)), errors="coerce")
+
+    price_time = pd.to_datetime(frame.get("price_observed_at_utc", pd.Series(pd.NaT, index=frame.index)), utc=True, errors="coerce")
+    price_age = (as_of - price_time).dt.total_seconds() / 60
+    high = metric(f"high_{days}d")
+    price = metric("last_price")
+    distance = (price.div(high.where(high.gt(0))) - 1) * 100
+    price_matches = price.gt(high) & high.gt(0)
+    if approach_pct is not None:
+        price_matches = (high.gt(0) & price.le(high) & price.ge(high * (1 - approach_pct / 100))
+                         & metric("price_change_24h_pct").gt(0))
+    eligible = (
+        price_age.between(0, 15)
+        & metric("short_sample_age_minutes").between(0, HOURLY_SAMPLE_MAX_AGE_MINUTES, inclusive="left")
+        & metric("oi_sample_age_minutes").between(0, HOURLY_SAMPLE_MAX_AGE_MINUTES, inclusive="left")
+        & price_matches
+        & metric("short_account_pct").ge(short_floor)
+        & metric("short_account_roc_1h_pp").gt(0)
+        & metric("oi_units_change_1h_pct").gt(0)
+        & metric("hour_volume_roc_1h_pct").gt(0)
+        & metric("quote_volume_24h_vs_prior_30d_avg_ratio").ge(volume_multiple)
+    )
+    if positive_funding:
+        eligible &= metric("carry_funding_pct").gt(0)
+    return frame.assign(high_distance_pct=distance).loc[eligible]
+
+
 CORE = ["symbol", "last_price", "quote_asset", "price_change_24h_pct", "short_account_pct", "long_account_pct",
         "short_account_roc_1h_pp", "short_account_roc_1h_pct", "carry_funding_pct", "hour_volume_roc_1h_pct",
         "quote_volume_24h", "quote_volume_24h_vs_prior_30d_avg_ratio", "oi_value_usdt", "oi_delta_pct",
-        "oi_vs_30d_avg_ratio", "corr_to_btc_6m", "ma200", "price_vs_ma200_pct", "scan_status", "scanned_at_utc"]
+        "oi_units_change_1h_pct", "oi_vs_30d_avg_ratio", "corr_to_btc_6m", "ma200", "price_vs_ma200_pct", "scan_status", "scanned_at_utc"]
 
 
 def render(app: Any):
@@ -206,14 +245,43 @@ def _workspace(app: Any, scanner: ScanService, page: str, search: str, quote: st
         if completed.empty:
             st.info("No recent reflexivity observations. Scan all pairs to refresh this ranking.")
         else:
-            static = completed.drop(columns=[c for c in completed if c.endswith("_age_minutes") and c not in {"short_sample_age_minutes", "oi_sample_age_minutes"}])
-            scored = ranked_frame(static, app)
+            demo = os.environ.get("MARKET_DASHBOARD_DEMO") == "1"
+            mode = st.radio("Candidate screen", ["All ranked pairs", "Crowded breakouts"], horizontal=True, key="candidate_screen")
+            if mode == "Crowded breakouts":
+                from market_dashboard_demo import AS_OF
+
+                setup = st.radio("Price setup", ["Above prior high", "Approaching prior high"], horizontal=True)
+                approach = None
+                if setup == "Approaching prior high":
+                    approach = st.slider("Maximum distance below high (%)", 1, 15, 5)
+                controls = st.columns(4, vertical_alignment="bottom")
+                days = controls[0].selectbox("High lookback (days)", WINDOWS, index=1)
+                floor = controls[1].number_input("Minimum short accounts %", 0.0, 100.0, 60.0)
+                multiple = controls[2].number_input("Minimum 24h / daily volume", min_value=0.0, value=2.0, step=0.25)
+                funding = controls[3].checkbox("Require positive funding", value=True)
+                total = len(completed)
+                completed = crowded_breakout_rows(
+                    completed, days=days, short_floor=floor, volume_multiple=multiple, positive_funding=funding,
+                    as_of=AS_OF if demo else pd.Timestamp.now(tz="UTC"), approach_pct=approach,
+                )
+                st.caption(f"{len(completed)} of {total} recent pairs match. Short share, OI units and hourly volume must all rise."
+                           + (" Approaching pairs must also have a positive 24h return." if approach is not None else ""))
+                if completed.empty:
+                    st.info("No pairs matched with the required observations.")
+                    return
+            # Display clocks change every render. Expired metric values already change the cache key.
+            static = completed.drop(columns=[c for c in completed if c.endswith("_age_minutes")])
+            scored = ranked_frame(static, app, demo)
+            observations = completed.set_index("symbol")
+            for age in ("short_sample_age_minutes", "oi_sample_age_minutes"):
+                if age in observations:
+                    scored[age] = scored.symbol.map(observations[age])
             st.caption("Market ranking plus cached ownership evidence. Concentration is not proof of coordinated ownership; scores are research hypotheses.")
             table(scored, ["symbol", "reflexivity_score", "reflexivity_state", "squeeze_score", "reflexivity_data_quality_pct",
-                          "short_account_pct", "short_account_roc_1h_pp", "short_sample_age_minutes",
+                          "high_distance_pct", "short_account_pct", "short_account_roc_1h_pp", "short_sample_age_minutes",
                           "carry_funding_pct", "funding_interval_hours", "hour_volume_roc_1h_pct",
                           "quote_volume_24h_vs_prior_30d_avg_ratio", "oi_delta_pct", "oi_vs_30d_avg_ratio",
-                          "oi_sample_age_minutes", "scan_status",
+                          "oi_units_change_1h_pct", "quote_volume_prior_30d_days", "oi_sample_age_minutes", "scan_status",
                           "top10_holder_pct", "top100_holder_pct", "adjusted_top_10_pct", "low_float_score",
                           "squeeze_evidence_tier", "structural_evidence_level", "structural_evidence_sources",
                           "structural_evidence_age_days", "squeeze_gate_failures"], "reflexivity", sort="reflexivity_score")
@@ -264,7 +332,7 @@ def _workspace(app: Any, scanner: ScanService, page: str, search: str, quote: st
         table(frame, ["symbol", "quote_asset", "last_price", "quote_volume_24h", "quote_volume_prior_30d_total",
                       "quote_volume_prior_30d_daily_avg", "quote_volume_prior_30d_days", "quote_volume_24h_vs_prior_30d_avg_ratio",
                       "hour_quote_volume", "hour_quote_volume_previous_1h", "hour_volume_roc_1h_pct",
-                      "oi_value_usdt", "oi_units", "oi_delta_pct", "oi_prior_30d_avg", "oi_prior_30d_days",
+                      "oi_value_usdt", "oi_units", "oi_delta_pct", "oi_units_change_1h_pct", "oi_prior_30d_avg", "oi_prior_30d_days",
                       "oi_vs_30d_avg_ratio", "oi_units_vs_30d_avg_ratio", "short_account_pct", "long_account_pct",
                       "scan_status"], "volume_oi", sort="quote_volume_24h_vs_prior_30d_avg_ratio")
     if page == "Correlations":

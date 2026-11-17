@@ -19,7 +19,7 @@ from .reflexivity import ReflexivityAssessment, ReflexivityObservation, Reflexiv
 
 
 DEFAULT_HORIZONS_HOURS = (1, 4, 12, 24, 72, 168)
-EVENT_STUDY_VERSION = "event-study-v1.1"
+EVENT_STUDY_VERSION = "event-study-v1.2"
 
 
 def _pct(start: float | None, end: float | None) -> float | None:
@@ -76,12 +76,20 @@ class EventStudyDefinition:
     bootstrap_method: str = "block"
     bootstrap_block_size: int = 3
     version: str = EVENT_STUDY_VERSION
+    bar_interval_minutes: int = 60
+
+    def __post_init__(self):
+        if self.bar_interval_minutes <= 0 or not self.horizons_hours or any(
+            h <= 0 or (60 * h) % self.bar_interval_minutes for h in self.horizons_hours
+        ):
+            raise ValueError("Each horizon must span a positive whole number of bars")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "signal_version": self.signal_version,
             "entry_states": list(self.entry_states),
             "horizons_hours": list(self.horizons_hours),
+            "bar_interval_minutes": self.bar_interval_minutes,
             "positive_return_threshold_pct": self.positive_return_threshold_pct,
             "threshold_return_pct": self.threshold_return_pct,
             "invalidation_return_pct": self.invalidation_return_pct,
@@ -186,6 +194,17 @@ def _event_evidence(observation: ReflexivityObservation, assessment: Reflexivity
     }
 
 
+def _assessed_observations(observations, assessments, definition):
+    by_observation = {
+        (item.symbol, item.event_time, item.observation_id): item
+        for item in assessments if item.signal_version == definition.signal_version
+    }
+    for observation in observations:
+        assessment = by_observation.get((observation.symbol, observation.event_time, observation.observation_id))
+        if assessment is not None and observation.event_time is not None:
+            yield observation, assessment
+
+
 def build_events(
     observations: Sequence[ReflexivityObservation],
     assessments: Sequence[ReflexivityAssessment],
@@ -193,16 +212,10 @@ def build_events(
 ) -> list[FrozenEvent]:
     """Create deduplicated events from same-time observations and assessments."""
 
-    by_id = {assessment.observation_id: assessment for assessment in assessments if assessment.observation_id}
     candidates: list[FrozenEvent] = []
     allowed = {str(state).upper() for state in definition.entry_states}
     holdout = definition.holdout_start
-    for index, observation in enumerate(observations):
-        assessment = by_id.get(observation.observation_id)
-        if assessment is None and index < len(assessments):
-            assessment = assessments[index]
-        if assessment is None or observation.event_time is None:
-            continue
+    for observation, assessment in _assessed_observations(observations, assessments, definition):
         if assessment.state.value not in allowed or not assessment.market_trigger:
             continue
         split = "holdout" if holdout is not None and observation.event_time >= holdout else "development"
@@ -251,7 +264,6 @@ def build_matched_baseline_events(
     claim of causal identification.
     """
 
-    by_id = {assessment.observation_id: assessment for assessment in assessments if assessment.observation_id}
     output: list[FrozenEvent] = []
     excluded = {
         *definition.entry_states,
@@ -259,11 +271,8 @@ def build_matched_baseline_events(
         ReflexivityState.INVALIDATED.value,
     }
     holdout = definition.holdout_start
-    for index, observation in enumerate(observations):
-        assessment = by_id.get(observation.observation_id)
-        if assessment is None and index < len(assessments):
-            assessment = assessments[index]
-        if assessment is None or observation.event_time is None or assessment.state.value in excluded:
+    for observation, assessment in _assessed_observations(observations, assessments, definition):
+        if assessment.state.value in excluded:
             continue
         split = "holdout" if holdout is not None and observation.event_time >= holdout else "development"
         output.append(
@@ -299,15 +308,9 @@ def build_unconditional_baseline_events(
     a causal comparison.
     """
 
-    by_id = {assessment.observation_id: assessment for assessment in assessments if assessment.observation_id}
     holdout = definition.holdout_start
     output: list[FrozenEvent] = []
-    for index, observation in enumerate(observations):
-        assessment = by_id.get(observation.observation_id)
-        if assessment is None and index < len(assessments):
-            assessment = assessments[index]
-        if assessment is None or observation.event_time is None:
-            continue
+    for observation, assessment in _assessed_observations(observations, assessments, definition):
         split = "holdout" if holdout is not None and observation.event_time >= holdout else "development"
         output.append(
             FrozenEvent(
@@ -341,18 +344,14 @@ def build_token_history_baseline_events(
     predictive skill.
     """
 
-    by_id = {assessment.observation_id: assessment for assessment in assessments if assessment.observation_id}
     excluded = set(definition.entry_states) | {
         ReflexivityState.EXHAUSTION_RISK.value,
         ReflexivityState.INVALIDATED.value,
     }
     holdout = definition.holdout_start
     candidates: list[FrozenEvent] = []
-    for index, observation in enumerate(observations):
-        assessment = by_id.get(observation.observation_id)
-        if assessment is None and index < len(assessments):
-            assessment = assessments[index]
-        if assessment is None or observation.event_time is None or assessment.state.value in excluded:
+    for observation, assessment in _assessed_observations(observations, assessments, definition):
+        if assessment.state.value in excluded:
             continue
         split = "holdout" if holdout is not None and observation.event_time >= holdout else "development"
         candidates.append(
@@ -376,26 +375,21 @@ def build_token_history_baseline_events(
 
 
 def _normalize_bars(bars: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
+    by_time = {}
     for row in bars:
         timestamp = parse_utc(row.get("event_time") or row.get("timestamp") or row.get("time"))
         if timestamp is None:
             continue
-        normalized.append(
-            {
-                "event_time": timestamp,
-                "open": _number(row.get("open")),
-                "high": _number(row.get("high")),
-                "low": _number(row.get("low")),
-                "close": _number(row.get("close")),
-            }
-        )
-    return sorted(normalized, key=lambda row: row["event_time"])
-
-
-def _bar_at_or_before(bars: Sequence[Mapping[str, Any]], timestamp: datetime) -> Mapping[str, Any] | None:
-    previous = [bar for bar in bars if bar["event_time"] <= timestamp and bar.get("close") is not None]
-    return previous[-1] if previous else None
+        prices = {}
+        for field in ("high", "low", "close"):
+            value = _number(row.get(field))
+            prices[field] = value if value is not None and value > 0 else None
+        if prices["high"] is not None and prices["low"] is not None and prices["low"] > prices["high"]:
+            prices["high"] = prices["low"] = None
+        if timestamp in by_time:
+            prices = {field: value if value == by_time[timestamp][field] else None for field, value in prices.items()}
+        by_time[timestamp] = prices
+    return [dict(event_time=timestamp, **by_time[timestamp]) for timestamp in sorted(by_time)]
 
 
 def _forward_window(bars: Sequence[Mapping[str, Any]], event_time: datetime, horizon: timedelta) -> list[Mapping[str, Any]]:
@@ -406,6 +400,30 @@ def _forward_window(bars: Sequence[Mapping[str, Any]], event_time: datetime, hor
 def _threshold_label(value: float) -> str:
     text = f"{float(value):g}"
     return text.replace("-", "minus").replace(".", "p")
+
+
+def _touches_high(price: float, level: float) -> bool:
+    return price >= level or math.isclose(price, level, rel_tol=1e-12)
+
+
+def _touches_low(price: float, level: float) -> bool:
+    return price <= level or math.isclose(price, level, rel_tol=1e-12)
+
+
+def _barrier_order(window, start, cadence, expected, upside, downside):
+    previous = start
+    for bar in window:
+        high, low = bar["high"], bar["low"]
+        if bar["event_time"] - previous != cadence or high is None or low is None or not 0 < low <= high:
+            return "unknown"
+        target = _touches_high(high, upside)
+        invalidated = _touches_low(low, downside)
+        if target and invalidated:
+            return "same_bar"
+        if target or invalidated:
+            return "target_first" if target else "invalidation_first"
+        previous = bar["event_time"]
+    return "neither" if len(window) == expected else "unknown"
 
 
 def _normalize_fuel_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -435,9 +453,17 @@ def evaluate_event(
     """Calculate future outcomes without adding future values to the event."""
 
     normalized = _normalize_bars(bars)
-    normalized_fuel = _normalize_fuel_rows(fuel_bars)
-    baseline_bar = _bar_at_or_before(normalized, event.event_time)
-    baseline = _number(baseline_bar.get("close")) if baseline_bar else None
+    max_horizon = timedelta(hours=max(definition.horizons_hours))
+    cutoff = definition.holdout_start if event.split == "development" else None
+    if cutoff is not None:
+        normalized = [row for row in normalized if row["event_time"] < cutoff]
+    normalized_fuel = [
+        row for row in _normalize_fuel_rows(fuel_bars)
+        if event.event_time < row["event_time"] <= event.event_time + max_horizon
+        and (cutoff is None or row["event_time"] < cutoff)
+        and any(row[k] is not None for k in ("short_account_pct", "short_account_roc_1h_pp", "short_account_peak_drawdown_pp"))
+    ]
+    baseline = next((bar["close"] for bar in normalized if bar["event_time"] == event.event_time), None)
     output: dict[str, Any] = {
         "event_id": event.event_id,
         "symbol": event.symbol,
@@ -446,7 +472,7 @@ def evaluate_event(
         "state": event.state,
         "score": event.score,
         "baseline_close": baseline,
-        "baseline_bar_time": _iso(baseline_bar.get("event_time")) if baseline_bar else None,
+        "baseline_bar_time": _iso(event.event_time) if baseline is not None else None,
         "fuel_observation_count": len(normalized_fuel),
         "fuel_coverage_status": "observed" if normalized_fuel else "missing",
     }
@@ -457,6 +483,7 @@ def evaluate_event(
             output[f"mae_{horizon}h_pct"] = None
             output[f"threshold_{horizon}h_hit"] = None
             output[f"invalidation_{horizon}h_hit"] = None
+            output[f"barrier_order_{horizon}h"] = "unknown"
             for threshold in definition.profit_thresholds_pct:
                 output[f"profit_{_threshold_label(threshold)}_{horizon}h_hit"] = None
         for threshold in definition.profit_thresholds_pct:
@@ -465,6 +492,7 @@ def evaluate_event(
         output["peak_return_before_short_unwind_pct"] = None
         return output
 
+    cadence = timedelta(minutes=definition.bar_interval_minutes)
     for horizon in definition.horizons_hours:
         window = _forward_window(normalized, event.event_time, timedelta(hours=horizon))
         target_time = event.event_time + timedelta(hours=horizon)
@@ -473,14 +501,31 @@ def evaluate_event(
         lows = [_number(bar.get("low")) for bar in window]
         highs = [value for value in highs if value is not None]
         lows = [value for value in lows if value is not None]
+        expected = horizon * 60 // definition.bar_interval_minutes
+        contiguous = len(window) == expected and all(
+            bar["event_time"] == event.event_time + cadence * index for index, bar in enumerate(window, 1)
+        )
+        full_highs = contiguous and len(highs) == expected
+        full_lows = contiguous and len(lows) == expected
+
+        def high_hit(pct):
+            if highs and _touches_high(max(highs), baseline * (1 + pct / 100)):
+                return True
+            return False if full_highs else None
+
         output[f"return_{horizon}h_pct"] = _pct(baseline, _number(target.get("close")) if target else None)
-        output[f"mfe_{horizon}h_pct"] = _pct(baseline, max(highs)) if highs else None
-        output[f"mae_{horizon}h_pct"] = _pct(baseline, min(lows)) if lows else None
-        output[f"threshold_{horizon}h_hit"] = bool(highs and max(highs) >= baseline * (1.0 + definition.threshold_return_pct / 100.0)) if window else None
-        output[f"invalidation_{horizon}h_hit"] = bool(lows and min(lows) <= baseline * (1.0 + definition.invalidation_return_pct / 100.0)) if window else None
+        output[f"mfe_{horizon}h_pct"] = _pct(baseline, max(baseline, max(highs))) if full_highs else None
+        output[f"mae_{horizon}h_pct"] = _pct(baseline, min(baseline, min(lows))) if full_lows else None
+        output[f"threshold_{horizon}h_hit"] = high_hit(definition.threshold_return_pct)
+        downside = baseline * (1 + definition.invalidation_return_pct / 100)
+        low_hit = bool(lows and _touches_low(min(lows), downside))
+        output[f"invalidation_{horizon}h_hit"] = low_hit if low_hit or full_lows else None
+        output[f"barrier_order_{horizon}h"] = _barrier_order(
+            window, event.event_time, cadence, expected, baseline * (1 + definition.threshold_return_pct / 100), downside
+        )
         for threshold in definition.profit_thresholds_pct:
             label = _threshold_label(threshold)
-            output[f"profit_{label}_{horizon}h_hit"] = bool(highs and max(highs) >= baseline * (1.0 + threshold / 100.0)) if window else None
+            output[f"profit_{label}_{horizon}h_hit"] = high_hit(threshold)
         output[f"target_bar_time_{horizon}h"] = _iso(target.get("event_time")) if target else None
 
     threshold_time: float | None = None
@@ -489,22 +534,21 @@ def evaluate_event(
         high = _number(bar.get("high"))
         low = _number(bar.get("low"))
         elapsed = (bar["event_time"] - event.event_time).total_seconds() / 60.0
-        if threshold_time is None and high is not None and high >= baseline * (1.0 + definition.threshold_return_pct / 100.0):
+        if threshold_time is None and high is not None and _touches_high(high, baseline * (1.0 + definition.threshold_return_pct / 100.0)):
             threshold_time = elapsed
-        if invalidation_time is None and low is not None and low <= baseline * (1.0 + definition.invalidation_return_pct / 100.0):
+        if invalidation_time is None and low is not None and _touches_low(low, baseline * (1.0 + definition.invalidation_return_pct / 100.0)):
             invalidation_time = elapsed
     output["time_to_threshold_minutes"] = threshold_time
     output["time_to_invalidation_minutes"] = invalidation_time
 
     threshold_times: dict[float, float | None] = {threshold: None for threshold in definition.profit_thresholds_pct}
-    max_horizon = timedelta(hours=max(definition.horizons_hours))
     for bar in _forward_window(normalized, event.event_time, max_horizon):
         high = _number(bar.get("high"))
         if high is None:
             continue
         elapsed = (bar["event_time"] - event.event_time).total_seconds() / 60.0
         for threshold in definition.profit_thresholds_pct:
-            if threshold_times[threshold] is None and high >= baseline * (1.0 + threshold / 100.0):
+            if threshold_times[threshold] is None and _touches_high(high, baseline * (1.0 + threshold / 100.0)):
                 threshold_times[threshold] = elapsed
     for threshold, minutes in threshold_times.items():
         output[f"time_to_plus_{_threshold_label(threshold)}_minutes"] = minutes
@@ -512,8 +556,6 @@ def evaluate_event(
     unwind_time: float | None = None
     unwind_timestamp: datetime | None = None
     for row in normalized_fuel:
-        if row["event_time"] <= event.event_time or row["event_time"] > event.event_time + max_horizon:
-            continue
         short_level = row.get("short_account_pct")
         short_roc = row.get("short_account_roc_1h_pp")
         drawdown = row.get("short_account_peak_drawdown_pp")
@@ -534,7 +576,7 @@ def evaluate_event(
     pre_unwind_highs = [_number(bar.get("high")) for bar in pre_unwind_bars]
     pre_unwind_highs = [value for value in pre_unwind_highs if value is not None]
     output["time_to_short_unwind_minutes"] = unwind_time
-    output["peak_return_before_short_unwind_pct"] = _pct(baseline, max(pre_unwind_highs)) if pre_unwind_highs else None
+    output["peak_return_before_short_unwind_pct"] = _pct(baseline, max(pre_unwind_highs)) if pre_unwind_highs and unwind_timestamp else None
     return output
 
 
@@ -589,6 +631,12 @@ def _summarize_horizon(rows: Sequence[Mapping[str, Any]], horizon: int, definiti
         "event_count": len(rows),
         "outcome_count": len(clean_returns),
         "missing_outcome_count": len(rows) - len(clean_returns),
+        "barrier_order_counts": {
+            state: sum(row.get(f"barrier_order_{horizon}h", "unknown") == state for row in rows)
+            for state in ("target_first", "invalidation_first", "same_bar", "neither", "unknown")
+        },
+        "threshold_known_count": len(threshold_values),
+        "invalidation_known_count": len(invalidation_values),
         "coverage_pct": round(len(clean_returns) / len(rows) * 100.0, 2) if rows else 0.0,
         "positive_hit_rate_pct": round(len(positive) / len(clean_returns) * 100.0, 2) if clean_returns else None,
         "threshold_hit_rate_pct": round(sum(bool(value) for value in threshold_values) / len(threshold_values) * 100.0, 2) if threshold_values else None,
@@ -624,10 +672,15 @@ def summarize_outcomes(
         key = f"time_to_plus_{_threshold_label(threshold)}_minutes"
         values = [_number(row.get(key)) for row in rows]
         clean = [value for value in values if value is not None]
+        hit_key = f"profit_{_threshold_label(threshold)}_{max(definition.horizons_hours)}h_hit"
+        known = [row[hit_key] for row in rows if row.get(hit_key) is not None]
+        hits = sum(known)
         threshold_summary[str(threshold)] = {
             "event_count": len(rows),
-            "hit_count": len(clean),
-            "hit_rate_pct": round(len(clean) / len(rows) * 100.0, 2) if rows else 0.0,
+            "known_count": len(known),
+            "unknown_count": len(rows) - len(known),
+            "hit_count": hits,
+            "hit_rate_pct": round(hits / len(known) * 100.0, 2) if known else None,
             "median_minutes": median(clean) if clean else None,
         }
     unwind_values = [_number(row.get("time_to_short_unwind_minutes")) for row in rows]
@@ -672,7 +725,8 @@ def run_event_study(
     benchmark_paths: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
     benchmark_symbol: str = "BTCUSDT",
 ) -> dict[str, Any]:
-    fuel_paths = fuel_paths or {}
+    price_paths = {symbol: tuple(path) for symbol, path in price_paths.items()}
+    fuel_paths = {symbol: tuple(path) for symbol, path in (fuel_paths or {}).items()}
     benchmark_bars = tuple(benchmark_paths.get(benchmark_symbol, ())) if benchmark_paths else ()
 
     def evaluate_collection(collection: Sequence[FrozenEvent]) -> list[dict[str, Any]]:

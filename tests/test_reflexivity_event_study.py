@@ -175,9 +175,9 @@ def test_event_study_tracks_profit_thresholds_short_unwind_and_benchmark_excess(
     assert outcome["time_to_plus_50_minutes"] == 240.0
     assert outcome["time_to_short_unwind_minutes"] == 120.0
     assert outcome["peak_return_before_short_unwind_pct"] == pytest.approx(25.0)
-    assert outcome["fuel_observation_count"] == 2
+    assert outcome["fuel_observation_count"] == 1
     assert outcome["fuel_coverage_status"] == "observed"
-    assert report["event_study_version"] == "event-study-v1.1"
+    assert report["event_study_version"] == "event-study-v1.2"
     assert report["benchmark_symbol"] == "BTCUSDT"
     assert report["summary"]["horizons"]["1"]["median_excess_return_pct"] == pytest.approx(9.0)
     assert report["summary"]["horizons"]["1"]["bootstrap_method"] == "block"
@@ -224,3 +224,71 @@ def test_unconditional_and_token_history_baselines_are_explicitly_separate() -> 
     assert len(token_history) == 1
     assert token_history[0].symbol == "XUSDT"
     assert token_history[0].state == "TOKEN_HISTORICAL_BASELINE"
+
+
+@pytest.mark.parametrize(("bars", "order", "hit"), [
+    ([(1, 121, 95), (2, 105, 88)], "target_first", True),
+    ([(1, 115, 88), (2, 125, 90)], "invalidation_first", True),
+    ([(1, 121, 88)], "same_bar", True),
+    ([(1, 110, 93), (2, 110, 91)], "neither", False),
+    ([(2, 125, 95)], "unknown", True),
+    ([(1, 110, 95)], "unknown", None),
+    ([(1, None, 95), (2, 110, 95)], "unknown", None),
+])
+def test_barrier_order_and_censored_outcomes(bars, order, hit):
+    observation = observation_from_row(_row("XUSDT", "2026-01-01T00:00:00Z"), observation_id="signal")
+    definition = EventStudyDefinition(signal_version=SIGNAL_VERSION, horizons_hours=(2,), profit_thresholds_pct=(20,))
+    assessment = assess_reflexivity(observation, as_of=observation.received_at)
+    event = build_events([observation], [assessment], definition)[0]
+    prices = [{"event_time": observation.event_time, "close": 100}]
+    prices.extend({"event_time": f"2026-01-01T{hour:02d}:00:00Z", "high": high, "low": low, "close": 100}
+                  for hour, high, low in bars)
+    report = run_event_study([event], {"XUSDT": iter(prices)}, definition, unconditional_events=[event],
+                             fuel_paths={"XUSDT": [{"event_time": "2025-12-31T00:00:00Z", "short_account_pct": 50}]})
+    outcome = report["outcomes"][0]
+    assert outcome == report["unconditional_outcomes"][0]
+    assert outcome["threshold_2h_hit"] is hit
+    assert outcome["barrier_order_2h"] == order
+    assert outcome["fuel_observation_count"] == 0
+    assert report["summary"]["time_to_profit_thresholds"]["20"]["unknown_count"] == int(hit is None)
+    assert report["summary"]["horizons"]["2"]["barrier_order_counts"][order] == 1
+    if order == "unknown":
+        assert outcome["mfe_2h_pct"] is None
+
+
+def test_mismatched_assessments_and_stale_baseline_cannot_create_outcomes():
+    obs = observation_from_row(_row("XUSDT", "2026-01-01T00:00:00Z"), observation_id="x")
+    other = observation_from_row(_row("YUSDT", "2026-01-01T00:00:00Z"), observation_id="y")
+    assessment = assess_reflexivity(other, as_of=other.received_at)
+    definition = EventStudyDefinition(signal_version=SIGNAL_VERSION, horizons_hours=(1,))
+    assert not build_events([obs], [assessment], definition)
+    event = build_events([other], [assessment], definition)[0]
+    outcome = evaluate_event(event, [{"event_time": "2025-12-30T00:00:00Z", "close": 1},
+                                     {"event_time": "2026-01-01T01:00:00Z", "close": 3}], definition)
+    assert outcome["return_1h_pct"] is None
+    assert outcome["barrier_order_1h"] == "unknown"
+
+
+def test_holdout_boundary_censors_development_outcomes_and_fuel():
+    obs = observation_from_row(_row("XUSDT", "2026-01-01T00:00:00Z"), observation_id="signal")
+    definition = EventStudyDefinition(signal_version=SIGNAL_VERSION, horizons_hours=(1,),
+                                      holdout_start=datetime(2026, 1, 1, 1, tzinfo=timezone.utc))
+    event = build_events([obs], [assess_reflexivity(obs, as_of=obs.received_at)], definition)[0]
+    outcome = evaluate_event(event, [{"event_time": event.event_time, "close": 100},
+                                     {"event_time": definition.holdout_start, "close": 150, "high": 155, "low": 101}],
+                             definition, fuel_bars=[{"event_time": definition.holdout_start, "short_account_pct": 50}])
+    assert outcome["return_1h_pct"] is None
+    assert outcome["threshold_1h_hit"] is None
+    assert outcome["fuel_observation_count"] == 0
+
+
+def test_decimal_target_touch_counts_at_the_exact_level():
+    obs = observation_from_row(_row("XUSDT", "2026-01-01T00:00:00Z"), observation_id="signal")
+    definition = EventStudyDefinition(signal_version=SIGNAL_VERSION, horizons_hours=(1,), threshold_return_pct=10)
+    event = build_events([obs], [assess_reflexivity(obs, as_of=obs.received_at)], definition)[0]
+    outcome = evaluate_event(event, [{"event_time": event.event_time, "close": 100},
+                                     {"event_time": "2026-01-01T01:00:00Z", "close": 109, "high": 110, "low": 99}],
+                             definition)
+    assert outcome["barrier_order_1h"] == "target_first"
+    assert outcome["profit_10_1h_hit"] is True
+    assert outcome["time_to_plus_10_minutes"] == 60

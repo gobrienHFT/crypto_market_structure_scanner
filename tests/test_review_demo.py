@@ -24,7 +24,8 @@ def test_offline_review_demo_writes_report_and_manifest(tmp_path: Path) -> None:
     assert (output_dir / "review_report.md").exists()
     assert (output_dir / "manifest.json").exists()
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["event_study_version"] == "event-study-v1.1"
+    assert manifest["event_study_version"] == "event-study-v1.2"
+    assert "Which level was reached first?" in (output_dir / "review_report.md").read_text(encoding="utf-8")
     assert "working_tree_is_clean" in manifest
     assert manifest["inputs"][0]["sha256"]
     assert any(item["path"].endswith("review_report.json") for item in manifest["artifacts"])

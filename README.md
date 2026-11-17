@@ -13,7 +13,7 @@ For an immediate dashboard walkthrough, run `run_dashboard_demo.bat`. It opens a
 | View | What you can inspect |
 | --- | --- |
 | All Markets | Every eligible Binance USD-M crypto perpetual, including majors, with sortable metrics and visible partial-data status |
-| Reflexivity | Multi-factor candidate ranking, short-account changes, funding, and explicitly sourced ownership evidence |
+| Reflexivity | Rank all pairs or screen crowded shorts approaching or exceeding a prior high. Inspect short-account changes, OI in units, and ownership evidence for each match |
 | Breakouts | 5/20/90/180-day highs and lows, sortable crossing ages, and a daily close/MA200 chart |
 | Volume & OI | Hourly volume changes, 24-hour versus prior-30-day volume, and OI value/unit comparisons |
 | Correlations | BTC daily-return correlation with the actual matched observation count |
@@ -107,6 +107,13 @@ point-in-time observations -> state -> frozen event -> forward outcomes -> basel
 `crypto_market_structure/event_study.py` evaluates forward paths at 1h, 4h, 12h, 24h, 72h, and 168h. It records coverage, median returns, maximum favorable excursion, maximum adverse excursion, threshold hits, invalidation, short-unwind context, and fuel coverage. The review path also keeps matched non-events, unconditional-universe observations, token-history comparisons, benchmark excess, and chronological holdout views where the data supports them.
 
 The question is incremental information: does account-count short breadth add anything after OI, funding, price, volume, liquidity, token age, top-trader positioning, market regime, and data quality are considered? Does the result survive removal of the largest winners, realistic fees and slippage, listing and delisting controls, and a final untouched period?
+
+The offline report also counts how often the upside target or downside invalidation was reached first.
+Same-candle touches and incomplete paths have their own counts. Close-to-close returns can still be
+measured across an interior gap if both endpoint closes are observed. Full-horizon excursions require
+continuous bars. These measurements start at the event-time close and describe the price path;
+receipt latency, fills and trade costs would enter a separate execution study. Development paths
+end before the holdout boundary.
 
 ## RAVE and LAB
 

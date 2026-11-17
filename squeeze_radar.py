@@ -469,6 +469,7 @@ def score_squeeze_radar(
     frame: pd.DataFrame,
     *,
     profile: SqueezeRadarProfile | str = "Primary",
+    as_of: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Score live squeeze mechanics without treating account count as short notional."""
     if isinstance(profile, str):
@@ -771,7 +772,7 @@ def score_squeeze_radar(
         else pd.Series(pd.NaT, index=index, dtype="datetime64[ns, UTC]")
     )
     snapshot_age_minutes = (
-        (pd.Timestamp.now(tz="UTC") - snapshot_at).dt.total_seconds() / 60.0
+        ((as_of if as_of is not None else pd.Timestamp.now(tz="UTC")) - snapshot_at).dt.total_seconds() / 60.0
     )
     snapshot_stale = snapshot_age_minutes > SQUEEZE_SNAPSHOT_MAX_AGE_MINUTES
     stage.loc[snapshot_stale.fillna(False)] = "STALE"

@@ -71,12 +71,27 @@ def _markdown_report(report: dict[str, Any], *, fixture_kind: str, fixture_path:
         )
     lines.extend(["", "## Event-Study Summary", "", "| Horizon | Events | Outcomes | Coverage | Median return | Median MFE | Median MAE | Positive hit rate |", "|---:|---:|---:|---:|---:|---:|---:|---:|"])
     for horizon, summary in report["event_study"]["summary"]["horizons"].items():
-        fmt = lambda value: "n/a" if value is None else f"{value:.2f}"
+        fmt = lambda value: "n/a" if value is None else f"{value:.2f}%"
         lines.append(
             f"| {horizon}h | {summary['event_count']} | {summary['outcome_count']} | {summary['coverage_pct']:.1f}% | "
-            f"{fmt(summary['median_return_pct'])}% | {fmt(summary['median_mfe_pct'])}% | "
-            f"{fmt(summary['median_mae_pct'])}% | {fmt(summary['positive_hit_rate_pct'])}% |"
+            f"{fmt(summary['median_return_pct'])} | {fmt(summary['median_mfe_pct'])} | "
+            f"{fmt(summary['median_mae_pct'])} | {fmt(summary['positive_hit_rate_pct'])} |"
         )
+    study = report["event_study"]
+    rule = study["definition"]
+    lines.extend([
+        "", "### Which level was reached first?", "",
+        f"Upside target {rule['threshold_return_pct']:+g}% and downside invalidation {rule['invalidation_return_pct']:+g}% "
+        f"from the event-time close, using {rule['bar_interval_minutes']}-minute bars. "
+        "Same-bar touches have unknown order. A gap before either touch leaves the sequence unknown. "
+        "A return can still be measured when both endpoint closes are available.",
+        "", "| Horizon | Target first | Invalidation first | Same bar | Neither | Unknown |",
+        "|---:|---:|---:|---:|---:|---:|",
+    ])
+    for horizon, summary in study["summary"]["horizons"].items():
+        counts = summary["barrier_order_counts"]
+        lines.append(f"| {horizon}h | {counts['target_first']} | {counts['invalidation_first']} | "
+                     f"{counts['same_bar']} | {counts['neither']} | {counts['unknown']} |")
     lines.extend(["", "### Baseline comparison", "", "The bundled baseline is a transparent same-universe non-event set. It is deliberately not described as causal matching; a production study should add and freeze richer regime matching.", "", "| Horizon | Event median | Baseline median | Event coverage | Baseline coverage |", "|---:|---:|---:|---:|---:|"])
     baseline_horizons = report["event_study"]["baseline_summary"]["horizons"]
     for horizon, summary in report["event_study"]["summary"]["horizons"].items():
